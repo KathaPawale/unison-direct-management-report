@@ -1,0 +1,13 @@
+# ===================================================================
+# robots.txt for impactfulpitch.com
+#
+# This file provides instructions for web crawlers.
+# ===================================================================
+
+# Allow all content to all web crawlers by default.
+User-agent: *
+Disallow:
+
+# Specify the location of the sitemap to help crawlers
+# discover all the important pages on the site.
+Sitemap: https://www.impactfulpitch.com/sitemap.xml
