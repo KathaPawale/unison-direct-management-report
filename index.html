@@ -1,108 +1,14 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <meta name="description" content="Unison Direct Management Reporting" />
-  <title>Unison Direct | Management Reporting</title>
-  <link rel="stylesheet" href="./css/style.css" />
-</head>
-<body>
-<div class="app-shell">
-  <aside class="sidebar">
-    <div class="sidebar-brand">
-      <img src="./assets/unison-logo.svg" alt="Unison Direct" />
-      <div class="brand-copy"><strong>Unison Direct</strong><span>GCC INC</span></div>
-    </div>
-    <div class="sidebar-rule"></div>
-    <nav class="sidebar-nav">
-      <button class="nav-item active" data-page="dashboard"><span class="dot"></span>Dashboard</button>
-      <button class="nav-item" data-page="uploads"><span class="dot"></span>Financial Uploads</button>
-      <button class="nav-item" data-page="data"><span class="dot"></span>Review &amp; Edit Data</button>
-      <button class="nav-item" data-page="statements"><span class="dot"></span>Financial Statements</button>
-      <button class="nav-item" data-page="aging"><span class="dot"></span>A/R &amp; A/P Aging</button>
-      <button class="nav-item" data-page="report"><span class="dot"></span>Report Preview</button>
-    </nav>
-    <div class="sidebar-footer">Unison Direct GCC INC<br/>Management Reporting Prototype</div>
-  </aside>
-
-  <main class="main-area">
-    <header class="topbar">
-      <div><h1 id="pageTitle">Dashboard</h1><p id="clientLine">Client • For the period ended</p></div>
-      <div class="top-actions">
-        <button class="btn" id="uploadTop">Upload Sheet</button>
-        <button class="btn primary" id="saveTop">Save Report PDF</button>
-      </div>
-    </header>
-
-    <div class="workspace">
-      <section class="page active" id="dashboard">
-        <div class="section-head dashboard-head">
-          <div><h2>Analytical Dashboard</h2><p>All values below refresh automatically after processing or editing the uploaded workbook.</p></div>
-          <div class="status-pills"><span id="sheetCount" class="pill green">0 sheets processed</span><span class="pill blue">Live calculations</span></div>
-        </div>
-        <div class="kpi-grid" id="kpis"></div>
-        <div class="dashboard-grid">
-          <div class="panel chart-panel">
-            <h3>Monthly Revenue vs Net Income</h3>
-            <div class="chart-legend"><span><i class="legend-dot revenue"></i>Revenue</span><span><i class="legend-dot net"></i>Net Income</span></div>
-            <div class="chart" id="chart"></div>
-            <div class="comparison-wrap"><table id="monthComparison" class="comparison-table"></table></div>
-          </div>
-          <div class="panel attention-panel"><h3>Management Attention</h3><div id="alerts" class="alerts"></div></div>
-        </div>
-      </section>
-
-      <section class="page" id="uploads">
-        <div class="section-head"><div><h2>Financial Uploads</h2><p>Upload the client workbook and process all available financial sheets.</p></div></div>
-        <div class="panel upload-box">
-          <input type="file" id="file" accept=".xlsx,.xls,.csv" />
-          <div id="fileStatus" class="muted">No file selected</div>
-          <button class="btn primary" id="process">Process Workbook</button>
-        </div>
-      </section>
-
-      <section class="page" id="data">
-        <div class="section-head"><div><h2>Review &amp; Edit Data</h2><p>Edit imported workbook values. Apply Changes refreshes the dashboard and report.</p></div><button class="btn" id="downloadExcel">Download Excel</button></div>
-        <div class="toolbar"><select id="sheetSelect" class="select"></select><button class="btn primary" id="refresh">Apply Changes</button></div>
-        <div class="table-card"><table id="editTable"></table></div>
-        <div class="panel notes-editor">
-          <h3>Notes to Financial Statements</h3>
-          <p class="muted">Editable notes will be included in Report Preview and the PDF.</p>
-          <textarea id="notesEditor" rows="10" placeholder="Enter or edit financial statement notes here..."></textarea>
-          <button class="btn primary" id="saveNotes">Apply Notes</button>
-        </div>
-      </section>
-
-      <section class="page" id="statements">
-        <div class="section-head"><div><h2>Financial Statements</h2><p>Automatically populated from the processed workbook.</p></div></div>
-        <div class="statement-grid"><div class="panel"><h3>Profit and Loss</h3><div class="statement-scroll" id="statementPL"></div></div><div class="panel"><h3>Balance Sheet</h3><div class="statement-scroll" id="statementBS"></div></div></div>
-      </section>
-
-      <section class="page" id="aging">
-        <div class="section-head"><div><h2>A/R &amp; A/P Aging</h2><p>Receivables and payables aging schedules from the uploaded workbook.</p></div></div>
-        <div class="statement-grid"><div class="panel"><h3>A/R Aging Summary</h3><div class="statement-scroll" id="agingAR"></div></div><div class="panel"><h3>A/P Aging Summary</h3><div class="statement-scroll" id="agingAP"></div></div></div>
-      </section>
-
-      <section class="page" id="report">
-        <div class="section-head"><div><h2>Report Preview</h2><p>Preview the management report before saving the PDF.</p></div><div class="top-actions"><button class="btn" id="openPdf">Open PDF</button><button class="btn primary" id="savePdf">Save PDF</button></div></div>
-        <div class="report-tabs"><button class="btn" data-report="cover">Cover</button><button class="btn" data-report="dash">Dashboard</button><button class="btn" data-report="pl">P&amp;L</button><button class="btn" data-report="bs">Balance Sheet</button><button class="btn" data-report="notes">Notes</button><button class="btn" data-report="disc">Disclaimer</button></div>
-        <div class="report-stage">
-          <div class="report-sheet cover active" id="r-cover"><img class="page-logo" src="./assets/unison-logo.svg" alt="Unison Direct"/><div class="cover-top"><h2>Management Report</h2><p id="coverClient">Client</p><p id="coverPeriod">For the period ended</p></div><div class="cover-bottom"></div></div>
-          <div class="report-sheet" id="r-dash"><img class="page-logo" src="./assets/unison-logo.svg" alt="Unison Direct"/><h2 class="report-title">Analytical Dashboard</h2><div class="report-period" id="rperiod"></div><div class="report-line"></div><div id="rdash"></div><h3>Monthly Comparison</h3><div id="rmonth"></div></div>
-          <div class="report-sheet" id="r-pl"><img class="page-logo" src="./assets/unison-logo.svg" alt="Unison Direct"/><h2 class="report-title">Profit and Loss</h2><div class="report-period" id="plperiod"></div><div class="report-line"></div><div id="rpl"></div></div>
-          <div class="report-sheet" id="r-bs"><img class="page-logo" src="./assets/unison-logo.svg" alt="Unison Direct"/><h2 class="report-title">Balance Sheet</h2><div class="report-period" id="bsperiod"></div><div class="report-line"></div><div id="rbs"></div></div>
-          <div class="report-sheet" id="r-notes"><img class="page-logo" src="./assets/unison-logo.svg" alt="Unison Direct"/><h2 class="report-title">Notes to Financial Statements</h2><div class="report-period" id="notesperiod"></div><div class="report-line"></div><div id="rnotes" class="notes-text"></div></div>
-          <div class="report-sheet disclaimer" id="r-disc"><img class="page-logo" src="./assets/unison-logo.svg" alt="Unison Direct"/><h2 class="report-title">Management Purpose Disclaimer</h2><div class="report-line"></div><p><b>“The report we are submitting is for management purpose only. The numbers are based on data submitted and instructed by client”</b></p><p>Prepared by Unison Direct GCC INC</p></div>
-        </div>
-      </section>
-    </div>
-  </main>
-</div>
-<div class="toast" id="toast"></div>
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="./js/config.js"></script>
-<script src="./js/pdf-generator.js"></script>
-<script src="./js/app.js"></script>
-</body>
-</html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unison Direct | Management Reporting</title>
+<link rel="stylesheet" href="./css/style.css"></head><body>
+<div class="app"><aside class="sidebar" id="sidebar"><div class="brand"><img alt="Unison Direct logo" src="./assets/unison-logo.png"><div><strong>Unison Direct</strong><small>GCC INC</small></div></div><div class="nav">
+<button class="active" data-page="dashboard"><span class="dot"></span>Dashboard</button><button data-page="uploads"><span class="dot"></span>Financial Uploads</button><button data-page="editor"><span class="dot"></span>Review & Edit Data</button><button data-page="financials"><span class="dot"></span>Financial Statements</button><button data-page="aging"><span class="dot"></span>A/R & A/P Aging</button><button data-page="report"><span class="dot"></span>Report Preview</button></div><div class="sidefoot">Unison Direct GCC INC<br>Management Reporting Prototype</div></aside>
+<main class="main"><header class="topbar"><div style="display:flex;gap:10px;align-items:center"><button id="menuBtn" class="btn mobileMenu">☰</button><div class="title"><h1 id="pageTitle">Dashboard</h1><p id="clientLine">Upload a client workbook to begin</p></div></div><div class="actions"><button class="btn desktop" onclick="goPage('uploads')">Upload Sheet</button><button class="btn primary" id="downloadPdfTop">Save Report PDF</button></div></header><div class="content">
+<section class="page active" id="dashboard"><div class="hero"><div><h2>Analytical Dashboard</h2><p>All values below refresh automatically after processing or editing the uploaded workbook.</p></div><div class="status"><span class="pill" id="loadedStatus">Reference data loaded</span><span class="pill blue">Live calculations</span></div></div><div class="grid6" id="kpiGrid"></div><div class="two"><div class="card"><h3>Monthly Revenue vs Net Income</h3><div class="legend"><span><i></i>Revenue</span><span><i class="red"></i>Net Income</span></div><div class="chart" id="monthlyChart"></div></div><div class="card"><h3>Management Attention</h3><div class="attention" id="attention"></div></div></div></section>
+<section class="page" id="uploads"><div class="hero"><div><h2>Upload & Process Financials</h2><p>Upload XLSX or CSV. The app reads the workbook, recalculates supported formulas, and updates the dashboard, statements and final report.</p></div></div><div class="card"><div class="uploadzone" id="dropZone"><h3>Drop client financial workbook here</h3><p>or select a file from your computer</p><input id="fileInput" type="file" accept=".xlsx,.csv"><div id="fileName" class="help">No new file selected</div><div style="margin-top:16px"><button class="btn primary" id="processBtn">Process Selected Sheet</button></div></div><div class="process"><div class="step" id="s1"><b>1. Read workbook</b><small>Read worksheet names and cell values.</small></div><div class="step" id="s2"><b>2. Map financial data</b><small>Detect P&L, Balance Sheet, A/R and A/P.</small></div><div class="step" id="s3"><b>3. Refresh report</b><small>Dashboard, editor and report update together.</small></div></div></div><div class="note" style="margin-top:16px"><b>Privacy:</b> this prototype processes the workbook inside your browser. The selected file is not sent to a server.</div></section>
+<section class="page" id="editor"><div class="hero"><div><h2>Review & Edit Imported Data</h2><p>Change any imported cell. Supported Excel arithmetic formulas are recalculated, and the dashboard, statements and report refresh immediately.</p></div><div class="status"><span class="pill amber">Editable before final PDF</span></div></div><div class="editor-layout"><div class="sheet-tabs" id="sheetTabs"></div><div class="card"><div class="toolbar"><button class="btn" id="addRow">+ Add row</button><button class="btn" id="downloadCsv">Download current sheet CSV</button><span class="pill blue" id="editStatus">Live recalculation on</span><button class="btn danger" id="resetData">Reset reference data</button></div><div id="editorTable"></div></div></div></section>
+<section class="page" id="financials"><div class="hero"><div><h2>Financial Statements</h2><p>Automatically populated from the processed workbook.</p></div></div><div class="section-grid"><div class="card"><h3>Profit and Loss</h3><div class="table-wrap" id="plView"></div></div><div class="card"><h3>Balance Sheet</h3><div class="table-wrap" id="bsView"></div></div></div></section>
+<section class="page" id="aging"><div class="hero"><div><h2>A/R and A/P Aging</h2><p>Automatically populated from aging worksheets when present.</p></div></div><div class="section-grid"><div class="card"><h3>A/R Aging Summary</h3><div class="table-wrap" id="arView"></div></div><div class="card"><h3>A/P Aging Summary</h3><div class="table-wrap" id="apView"></div></div></div></section>
+<section class="page" id="report"><div class="hero"><div><h2>Management Report Preview</h2><p>Follows the supplied report structure: cover, TOC, financial statements, aging, notes, and mandatory last-page disclaimer.</p></div><div class="actions"><button class="btn" id="openPdf">Open PDF</button><button class="btn primary" id="downloadPdf">Save PDF</button></div></div><div class="report-layout"><div class="report-nav" id="reportNav"></div><div class="report-stage" id="reportStage"></div></div></section>
+</div></main></div><div class="toast" id="toast"></div>
+<script src="./src/app.js"></script></body></html>
