@@ -1,0 +1,14 @@
+{
+  "name": "unison-direct-management-report",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Unison Direct GCC INC management reporting web application",
+  "scripts": {
+    "dev": "npx serve .",
+    "start": "npx serve ."
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "serve": "^14.2.4"
+  }
+}
