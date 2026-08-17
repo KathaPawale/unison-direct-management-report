@@ -8,96 +8,92 @@
   <link rel="stylesheet" href="./css/style.css" />
 </head>
 <body>
-<div class="app">
-  <aside class="side">
-    <div class="brand">
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="sidebar-brand">
       <img src="./assets/unison-logo.svg" alt="Unison Direct" />
+      <div class="brand-copy"><strong>Unison Direct</strong><span>GCC INC</span></div>
     </div>
-    <div class="nav">
-      <button class="active" data-page="dashboard">Dashboard</button>
-      <button data-page="uploads">Financial Uploads</button>
-      <button data-page="data">Editable Data</button>
-      <button data-page="report">Report Preview</button>
-    </div>
+    <div class="sidebar-rule"></div>
+    <nav class="sidebar-nav">
+      <button class="nav-item active" data-page="dashboard"><span class="dot"></span>Dashboard</button>
+      <button class="nav-item" data-page="uploads"><span class="dot"></span>Financial Uploads</button>
+      <button class="nav-item" data-page="data"><span class="dot"></span>Review &amp; Edit Data</button>
+      <button class="nav-item" data-page="statements"><span class="dot"></span>Financial Statements</button>
+      <button class="nav-item" data-page="aging"><span class="dot"></span>A/R &amp; A/P Aging</button>
+      <button class="nav-item" data-page="report"><span class="dot"></span>Report Preview</button>
+    </nav>
+    <div class="sidebar-footer">Unison Direct GCC INC<br/>Management Reporting Prototype</div>
   </aside>
 
-  <main class="main">
-    <header class="top">
-      <div>
-        <h1 id="title">Dashboard</h1>
-        <p id="clientLine">Upload a client workbook to begin</p>
-      </div>
-      <div class="topActions">
-        <button class="btn" id="downloadExcel">Download Excel</button>
+  <main class="main-area">
+    <header class="topbar">
+      <div><h1 id="pageTitle">Dashboard</h1><p id="clientLine">Client • For the period ended</p></div>
+      <div class="top-actions">
+        <button class="btn" id="uploadTop">Upload Sheet</button>
         <button class="btn primary" id="saveTop">Save Report PDF</button>
       </div>
     </header>
 
-    <div class="content">
+    <div class="workspace">
       <section class="page active" id="dashboard">
-        <div class="hero"><div><h2>Analytical Dashboard</h2><p>Automatically updates from the uploaded workbook.</p></div></div>
-        <div class="grid6" id="kpis"></div>
-        <div class="two">
-          <div class="card">
+        <div class="section-head dashboard-head">
+          <div><h2>Analytical Dashboard</h2><p>All values below refresh automatically after processing or editing the uploaded workbook.</p></div>
+          <div class="status-pills"><span id="sheetCount" class="pill green">0 sheets processed</span><span class="pill blue">Live calculations</span></div>
+        </div>
+        <div class="kpi-grid" id="kpis"></div>
+        <div class="dashboard-grid">
+          <div class="panel chart-panel">
             <h3>Monthly Revenue vs Net Income</h3>
-            <div class="legend"><span><i class="blue"></i>Revenue</span><span><i class="red"></i>Net Income</span></div>
+            <div class="chart-legend"><span><i class="legend-dot revenue"></i>Revenue</span><span><i class="legend-dot net"></i>Net Income</span></div>
             <div class="chart" id="chart"></div>
-            <div class="comparisonWrap"><table class="comparisonTable" id="monthComparison"></table></div>
+            <div class="comparison-wrap"><table id="monthComparison" class="comparison-table"></table></div>
           </div>
-          <div class="card"><h3>Management Attention</h3><div class="alerts" id="alerts"></div></div>
+          <div class="panel attention-panel"><h3>Management Attention</h3><div id="alerts" class="alerts"></div></div>
         </div>
       </section>
 
       <section class="page" id="uploads">
-        <div class="hero"><div><h2>Upload Client Financials</h2><p>Excel and CSV files are processed in your browser.</p></div></div>
-        <div class="upload">
-          <b>Select a client workbook</b><br />
+        <div class="section-head"><div><h2>Financial Uploads</h2><p>Upload the client workbook and process all available financial sheets.</p></div></div>
+        <div class="panel upload-box">
           <input type="file" id="file" accept=".xlsx,.xls,.csv" />
-          <div class="toolbar" style="justify-content:center"><button class="btn primary" id="process">Process Workbook</button></div>
           <div id="fileStatus" class="muted">No file selected</div>
+          <button class="btn primary" id="process">Process Workbook</button>
         </div>
       </section>
 
       <section class="page" id="data">
-        <div class="hero"><div><h2>Editable Imported Data</h2><p>Edit imported values, then apply changes to refresh the dashboard and report.</p></div></div>
-        <div class="toolbar">
-          <select class="btn" id="sheetSelect"></select>
-          <button class="btn primary" id="refresh">Apply Changes</button>
-          <button class="btn" id="downloadExcel2">Download Excel</button>
-        </div>
-        <div class="tablewrap"><table id="editTable"></table></div>
-        <div class="card notesEditorCard">
+        <div class="section-head"><div><h2>Review &amp; Edit Data</h2><p>Edit imported workbook values. Apply Changes refreshes the dashboard and report.</p></div><button class="btn" id="downloadExcel">Download Excel</button></div>
+        <div class="toolbar"><select id="sheetSelect" class="select"></select><button class="btn primary" id="refresh">Apply Changes</button></div>
+        <div class="table-card"><table id="editTable"></table></div>
+        <div class="panel notes-editor">
           <h3>Notes to Financial Statements</h3>
-          <p class="muted">Editable notes are included in the generated report.</p>
+          <p class="muted">Editable notes will be included in Report Preview and the PDF.</p>
           <textarea id="notesEditor" rows="10" placeholder="Enter or edit financial statement notes here..."></textarea>
-          <div class="toolbar"><button class="btn primary" id="saveNotes">Apply Notes</button></div>
+          <button class="btn primary" id="saveNotes">Apply Notes</button>
         </div>
       </section>
 
+      <section class="page" id="statements">
+        <div class="section-head"><div><h2>Financial Statements</h2><p>Automatically populated from the processed workbook.</p></div></div>
+        <div class="statement-grid"><div class="panel"><h3>Profit and Loss</h3><div class="statement-scroll" id="statementPL"></div></div><div class="panel"><h3>Balance Sheet</h3><div class="statement-scroll" id="statementBS"></div></div></div>
+      </section>
+
+      <section class="page" id="aging">
+        <div class="section-head"><div><h2>A/R &amp; A/P Aging</h2><p>Receivables and payables aging schedules from the uploaded workbook.</p></div></div>
+        <div class="statement-grid"><div class="panel"><h3>A/R Aging Summary</h3><div class="statement-scroll" id="agingAR"></div></div><div class="panel"><h3>A/P Aging Summary</h3><div class="statement-scroll" id="agingAP"></div></div></div>
+      </section>
+
       <section class="page" id="report">
-        <div class="hero">
-          <div><h2>Management Report Preview</h2><p>Uses the supplied management-report styling and current edited data.</p></div>
-          <div><button class="btn" id="openPdf">Open PDF</button> <button class="btn primary" id="savePdf">Save PDF</button></div>
-        </div>
-        <div class="reportnav">
-          <button class="btn" data-report="cover">Cover</button>
-          <button class="btn" data-report="dash">Analytical Dashboard</button>
-          <button class="btn" data-report="pl">Profit & Loss</button>
-          <button class="btn" data-report="bs">Balance Sheet</button>
-          <button class="btn" data-report="notes">Notes</button>
-          <button class="btn" data-report="disc">Disclaimer</button>
-        </div>
-        <div class="reportstage">
-          <div class="sheet cover active" id="r-cover">
-            <img class="reportLogo coverLogo" src="./assets/unison-logo.svg" alt="Unison Direct" />
-            <div class="coverTop"><h2>Management Report</h2><p id="coverClient">Client</p><p id="coverPeriod">For the period ended</p></div>
-            <div class="coverBottom"></div>
-          </div>
-          <div class="sheet" id="r-dash"><img class="reportLogo" src="./assets/unison-logo.svg" alt="Unison Direct" /><h2 class="rtitle">Analytical Dashboard</h2><div class="rperiod" id="rperiod"></div><div class="rline"></div><div id="rdash"></div><h3 class="sectionTitle">Monthly Comparison</h3><div id="rmonth"></div></div>
-          <div class="sheet" id="r-pl"><img class="reportLogo" src="./assets/unison-logo.svg" alt="Unison Direct" /><h2 class="rtitle">Profit and Loss</h2><div class="rperiod" id="plperiod"></div><div class="rline"></div><div id="rpl"></div></div>
-          <div class="sheet" id="r-bs"><img class="reportLogo" src="./assets/unison-logo.svg" alt="Unison Direct" /><h2 class="rtitle">Balance Sheet</h2><div class="rperiod" id="bsperiod"></div><div class="rline"></div><div id="rbs"></div></div>
-          <div class="sheet" id="r-notes"><img class="reportLogo" src="./assets/unison-logo.svg" alt="Unison Direct" /><h2 class="rtitle">Notes to Financial Statements</h2><div class="rperiod" id="notesperiod"></div><div class="rline"></div><div id="rnotes" class="notesText"></div></div>
-          <div class="sheet disclaimer" id="r-disc"><img class="reportLogo" src="./assets/unison-logo.svg" alt="Unison Direct" /><h2 class="rtitle">Management Purpose Disclaimer</h2><div class="rline"></div><p><b>“The report we are submitting is for management purpose only. The numbers are based on data submitted and instructed by client”</b></p><p>Prepared by Unison Direct GCC INC</p></div>
+        <div class="section-head"><div><h2>Report Preview</h2><p>Preview the management report before saving the PDF.</p></div><div class="top-actions"><button class="btn" id="openPdf">Open PDF</button><button class="btn primary" id="savePdf">Save PDF</button></div></div>
+        <div class="report-tabs"><button class="btn" data-report="cover">Cover</button><button class="btn" data-report="dash">Dashboard</button><button class="btn" data-report="pl">P&amp;L</button><button class="btn" data-report="bs">Balance Sheet</button><button class="btn" data-report="notes">Notes</button><button class="btn" data-report="disc">Disclaimer</button></div>
+        <div class="report-stage">
+          <div class="report-sheet cover active" id="r-cover"><img class="page-logo" src="./assets/unison-logo.svg" alt="Unison Direct"/><div class="cover-top"><h2>Management Report</h2><p id="coverClient">Client</p><p id="coverPeriod">For the period ended</p></div><div class="cover-bottom"></div></div>
+          <div class="report-sheet" id="r-dash"><img class="page-logo" src="./assets/unison-logo.svg" alt="Unison Direct"/><h2 class="report-title">Analytical Dashboard</h2><div class="report-period" id="rperiod"></div><div class="report-line"></div><div id="rdash"></div><h3>Monthly Comparison</h3><div id="rmonth"></div></div>
+          <div class="report-sheet" id="r-pl"><img class="page-logo" src="./assets/unison-logo.svg" alt="Unison Direct"/><h2 class="report-title">Profit and Loss</h2><div class="report-period" id="plperiod"></div><div class="report-line"></div><div id="rpl"></div></div>
+          <div class="report-sheet" id="r-bs"><img class="page-logo" src="./assets/unison-logo.svg" alt="Unison Direct"/><h2 class="report-title">Balance Sheet</h2><div class="report-period" id="bsperiod"></div><div class="report-line"></div><div id="rbs"></div></div>
+          <div class="report-sheet" id="r-notes"><img class="page-logo" src="./assets/unison-logo.svg" alt="Unison Direct"/><h2 class="report-title">Notes to Financial Statements</h2><div class="report-period" id="notesperiod"></div><div class="report-line"></div><div id="rnotes" class="notes-text"></div></div>
+          <div class="report-sheet disclaimer" id="r-disc"><img class="page-logo" src="./assets/unison-logo.svg" alt="Unison Direct"/><h2 class="report-title">Management Purpose Disclaimer</h2><div class="report-line"></div><p><b>“The report we are submitting is for management purpose only. The numbers are based on data submitted and instructed by client”</b></p><p>Prepared by Unison Direct GCC INC</p></div>
         </div>
       </section>
     </div>
