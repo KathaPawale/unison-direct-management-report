@@ -1,34 +1,516 @@
-const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
-const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-const money=n=>Number(n||0).toLocaleString('en-US',{style:'currency',currency:'USD',minimumFractionDigits:2,maximumFractionDigits:2});
-const num=v=>{if(typeof v==='number')return v;const s=String(v??'').trim(),n=parseFloat(s.replace(/[$,()]/g,''));return Number.isFinite(n)?(s.includes('(')?-n:n):0};
-const state={sheets:{},active:'',file:'',client:'Client',period:'For the period ended',notes:'',edited:new Set(),metrics:{income:0,gross:0,net:0,bank:0,ar:0,ap:0},months:[],monthlyNet:[],priorMonths:[],priorNet:[],priorYear:{income:null,gross:null,net:null,bank:null,ar:null,ap:null},reportPage:0};
-function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),2300)}
-window.goPage=id=>{$$('.page').forEach(x=>x.classList.toggle('active',x.id===id));$$('.nav button').forEach(x=>x.classList.toggle('active',x.dataset.page===id));$('#pageTitle').textContent=$(`.nav button[data-page="${id}"]`)?.textContent.trim()||'Dashboard';if(id==='report')renderReport();if(innerWidth<801)$('#sidebar').classList.remove('open')};
-$$('.nav button').forEach(b=>b.onclick=()=>goPage(b.dataset.page));$('#menuBtn').onclick=()=>$('#sidebar').classList.toggle('open');
-function findSheet(re){return Object.entries(state.sheets).find(([n])=>re.test(n))?.[1]||[]}function findName(re){return Object.keys(state.sheets).find(n=>re.test(n))||''}
-function findValue(rows,re){for(const r of rows)if(re.test(String(r[0]??'')))for(let i=r.length-1;i>0;i--){const n=num(r[i]);if(n||String(r[i]??'').trim()==='0')return n}return 0}
-function rowSeries(rows,re){for(const r of rows)if(re.test(String(r[0]??''))){const vals=r.slice(1).map(num);return vals.filter((_,i)=>i<24)}return []}
-function detectMeta(){for(const rows of Object.values(state.sheets))for(const r of rows.slice(0,12)){const t=r.map(x=>String(x??'')).join(' '),c=t.match(/([A-Z][A-Za-z0-9 .,&'-]{3,}(?:Inc\.?|LLC|Ltd\.?|Services|Corp\.?))/);if(c&&state.client==='Client')state.client=c[1].trim();const p=t.match(/(?:For the period ended|As of|January\s*-\s*June|Jan\s*-\s*Jun|December\s+31)[^|]{0,80}/i);if(p)state.period=p[0].trim()}}
-function loadNotes(){if(state.notes)return;const rows=findSheet(/notes?.*financial|financial.*notes/i);if(rows.length)state.notes=rows.flat().filter(v=>String(v??'').trim()).join('\n')}
-function detectPriorYear(){const candidates=Object.entries(state.sheets).filter(([n])=>/prior|previous|2025|2024|comparative/i.test(n));for(const [,rows] of candidates){state.priorYear.income=findValue(rows,/total.*income|revenue/i)||state.priorYear.income;state.priorYear.gross=findValue(rows,/gross profit/i)||state.priorYear.gross;state.priorYear.net=findValue(rows,/net income/i)||state.priorYear.net;state.priorYear.bank=findValue(rows,/total.*bank|cash.*bank|total cash/i)||state.priorYear.bank;state.priorYear.ar=findValue(rows,/accounts receivable/i)||state.priorYear.ar;state.priorYear.ap=findValue(rows,/accounts payable/i)||state.priorYear.ap}}
-function analyze(){const pl=findSheet(/profit.*loss|p&l|income statement/i),bs=findSheet(/balance sheet/i),ar=findSheet(/a.?r.*aging/i),ap=findSheet(/a.?p.*aging/i);state.metrics.income=findValue(pl,/^total.*income$|revenue/i);state.metrics.gross=findValue(pl,/gross profit/i)||state.metrics.income;state.metrics.net=findValue(pl,/net income/i);state.metrics.bank=findValue(bs,/total.*bank|cash.*bank|total cash/i)||findValue(bs,/bank/i);state.metrics.ar=findValue(bs,/total.*accounts receivable/i)||findValue(ar,/^total/i);state.metrics.ap=findValue(bs,/total.*accounts payable/i)||findValue(ap,/^total/i);const rev=rowSeries(pl,/^total.*income$|revenue/i),net=rowSeries(pl,/net income/i);state.months=rev.slice(0,12);state.monthlyNet=net.slice(0,12);state.priorMonths=rev.slice(12,24);state.priorNet=net.slice(12,24);detectMeta();loadNotes();detectPriorYear();render()}
-function formatCell(v){const s=String(v??'');if(typeof v==='number'||/^\(?\$?[\d,]+(?:\.\d+)?\)?$/.test(s.trim()))return money(num(v));return s}
-function table(rows,editable=false,sheet=''){if(!rows.length)return '<div class="empty">No matching worksheet was included in the uploaded workbook.</div>';return `<div class="table-wrap"><table class="fin-table ${editable?'edit-table':''}">${rows.slice(0,220).map((r,ri)=>`<tr class="${/\btotal\b/i.test(String(r[0]||''))?'total':''}">${r.slice(0,14).map((v,ci)=>{const key=`${sheet}:${ri}:${ci}`,ed=state.edited.has(key);return `<td class="${num(v)<0?'neg ':''}${ed?'edited':''}">${editable?`<input data-r="${ri}" data-c="${ci}" value="${String(v??'').replaceAll('"','&quot;')}">`:formatCell(v)}</td>`}).join('')}</tr>`).join('')}</table></div>`}
-function variance(current,prior){if(prior===null||prior===undefined||prior===0)return '—';const d=current-prior,p=d/Math.abs(prior)*100;return `${d>=0?'▲':'▼'} ${Math.abs(p).toFixed(1)}% (${money(d)})`}
-function renderChart(){const count=Math.max(state.months.length,state.monthlyNet.length,6),months=MONTHS.slice(0,count),max=Math.max(...state.months.map(Math.abs),...state.monthlyNet.map(Math.abs),1);$('#monthlyChart').innerHTML=months.map((m,i)=>`<div class="bar-group"><div class="bar ${state.months[i]<0?'bar-neg':''}" title="Revenue ${money(state.months[i]||0)}" style="height:${Math.max(3,Math.abs(state.months[i]||0)/max*180)}px"></div><div class="bar net ${state.monthlyNet[i]<0?'bar-neg':''}" title="Net Income ${money(state.monthlyNet[i]||0)}" style="height:${Math.max(3,Math.abs(state.monthlyNet[i]||0)/max*180)}px"></div><span class="bar-label">${m}</span></div>`).join('');
-const ttmRev=state.months.slice(-12).reduce((a,b)=>a+b,0),ttmNet=state.monthlyNet.slice(-12).reduce((a,b)=>a+b,0);$('#comparisonTable').innerHTML=`<table><tr><th>Comparison</th>${months.map(x=>`<th>${x}</th>`).join('')}<th>TTM</th></tr><tr><td>Revenue</td>${months.map((_,i)=>`<td>${money(state.months[i]||0)}</td>`).join('')}<td>${money(ttmRev)}</td></tr><tr><td>Net Income</td>${months.map((_,i)=>`<td class="${(state.monthlyNet[i]||0)<0?'neg':''}">${money(state.monthlyNet[i]||0)}</td>`).join('')}<td class="${ttmNet<0?'neg':''}">${money(ttmNet)}</td></tr>${state.priorMonths.length?`<tr><td>Prior Year Revenue</td>${months.map((_,i)=>`<td>${money(state.priorMonths[i]||0)}</td>`).join('')}<td>${money(state.priorMonths.slice(-12).reduce((a,b)=>a+b,0))}</td></tr>`:''}</table><div class="help">Prior-month, prior-year and trailing-12-month figures are shown when the uploaded workbook contains those periods.</div>`}
-function render(){const m=state.metrics,items=[['Revenue / Income',m.income,'Processed P&L',state.priorYear.income],['Gross Profit',m.gross,m.income?`${(m.gross/m.income*100).toFixed(2)}% gross margin`:'Gross margin',state.priorYear.gross],['Net Income',m.net,m.net<0?'Net loss for period':'Net income',state.priorYear.net],['Cash / Bank',m.bank,'Balance Sheet',state.priorYear.bank],['A/R Total',m.ar,'Receivables',state.priorYear.ar],['A/P Total',m.ap,'Payables',state.priorYear.ap]];$('#clientLine').textContent=state.file?`${state.client} · ${state.period}`:'Upload a client workbook to begin';$('#kpiGrid').innerHTML=items.map(([l,v,s,p])=>`<div class="kpi"><div class="label">${l}</div><div class="value ${v<0?'neg':''}">${money(v)}</div><div class="sub">${s}</div>${p!==null&&p!==undefined?`<div class="prior ${v-p<0?'neg':''}">vs prior year: ${variance(v,p)}</div>`:''}</div>`).join('');$('#attention').innerHTML=(m.net<0?`<div class="alert"><div><b>Net loss for the period</b><small>${money(m.net)}</small></div><span class="sev">High</span></div>`:'')+(m.ar?`<div class="alert"><div><b>A/R requires review</b><small>${money(m.ar)}</small></div><span class="sev">Review</span></div>`:'')+(m.ap?`<div class="alert"><div><b>A/P requires review</b><small>${money(m.ap)}</small></div><span class="sev">Review</span></div>`:'')||'<div class="empty">No major alerts detected</div>';renderChart();renderTables();renderEditor();renderReport()}
-function renderTables(){$('#plView').innerHTML=table(findSheet(/profit.*loss|p&l|income statement/i));$('#bsView').innerHTML=table(findSheet(/balance sheet/i));$('#arView').innerHTML=table(findSheet(/a.?r.*aging/i));$('#apView').innerHTML=table(findSheet(/a.?p.*aging/i))}
-function balanceCheck(){const bs=findSheet(/balance sheet/i);const assets=findValue(bs,/total assets/i),liab=findValue(bs,/total liabilities/i),equity=findValue(bs,/total equity/i),diff=assets-(liab+equity);return {assets,liab,equity,diff,balanced:Math.abs(diff)<0.01}}
-function impact(sheet,row){const label=String(state.sheets[sheet]?.[row]?.[0]||'').trim(),b=balanceCheck();let msg=/receivable/i.test(label+sheet)?'This edit may affect Accounts Receivable, the Balance Sheet, cash flow analysis and dashboard totals.':/payable/i.test(label+sheet)?'This edit may affect Accounts Payable, the Balance Sheet, expense/liability analysis and dashboard totals.':/income|revenue|expense|profit/i.test(label+sheet)?'This edit may affect Profit & Loss, retained earnings/equity relationships, Net Income and analytical dashboard totals.':/balance|asset|liabil|equity|bank|cash/i.test(label+sheet)?'This edit affects Balance Sheet reporting and should be checked against Assets = Liabilities + Equity.':'This manual edit will be reflected in the dashboard, statements and management report.';msg+=b.assets||b.liab||b.equity?` QuickBooks-style balance check: Assets ${money(b.assets)} vs Liabilities + Equity ${money(b.liab+b.equity)} — ${b.balanced?'balanced':'difference '+money(b.diff)+', review required'}.`:'';const e=$('#impactPrompt');e.innerHTML=`<b>Financial impact check:</b> ${msg}`;e.classList.remove('hidden')}
-function renderEditor(){const names=Object.keys(state.sheets);if(!state.active)state.active=names[0]||'';$('#sheetTabs').innerHTML=names.map(n=>`<button class="${n===state.active?'active':''}" data-s="${n}">${n}</button>`).join('');$('#editorTable').innerHTML=table(state.sheets[state.active]||[],true,state.active);$$('#sheetTabs button').forEach(b=>b.onclick=()=>{state.active=b.dataset.s;renderEditor()});$$('#editorTable input').forEach(i=>i.onchange=()=>{const r=+i.dataset.r,c=+i.dataset.c;state.sheets[state.active][r][c]=i.value;state.edited.add(`${state.active}:${r}:${c}`);impact(state.active,r);analyze()});if($('#notesEditor'))$('#notesEditor').value=state.notes}
-const pageDefs=[['Cover','cover'],['Table of Contents','toc'],['Analytical Dashboard','dash'],['Profit and Loss','pl'],['Balance Sheet','bs'],['Trial Balance','trial'],['A/R Aging Summary Report','ar'],['A/P Aging Summary Report','ap'],['Notes to Financial Statements','notes'],['Management Purpose Disclaimer','disc']];
-function footer(){return `<div class="report-footer"><span class="confidential">CONFIDENTIAL — MANAGEMENT PURPOSE ONLY</span><span>Unison Direct GCC INC</span></div>`}function logo(){return `<img class="report-logo" src="./assets/unison-logo.svg" alt="Unison Direct">`}function reportTable(rows){return table(rows,false).replace('class="table-wrap"','class="report-table-wrap"').replaceAll('fin-table','report-table')}
-function pageHtml(type){const m=state.metrics,head=t=>`${logo()}<h2 class="report-title">${t}</h2><div class="report-sub">${state.period}</div><div class="report-rule"></div>`;if(type==='cover')return `<div class="report-page cover-page"><div class="cover-band"><div class="cover-brand">${logo()}</div><h1>Management Report</h1><p>${state.client}</p><p>${state.period}</p></div><div class="cover-mid"></div><div class="cover-body"><div class="cover-confidential">CONFIDENTIAL — Prepared for management use only</div></div>${footer()}</div>`;if(type==='toc')return `<div class="report-page">${logo()}<h2 class="report-title">Table of Contents</h2><div class="report-rule"></div><div class="toc-list">${pageDefs.slice(2).map((p,i)=>`<div class="toc-item"><span>${i+3}. ${p[0]}</span><b>${i+3}</b></div>`).join('')}</div>${footer()}</div>`;if(type==='dash')return `<div class="report-page">${head('Analytical Dashboard')}<div class="report-section-title">Key Financial Indicators — Amounts in US Dollars ($)</div>${[['Revenue / Income',m.income],['Gross Profit',m.gross],['Net Income',m.net],['Cash / Bank',m.bank],['Accounts Receivable',m.ar],['Accounts Payable',m.ap]].map(x=>`<div class="report-row"><span>${x[0]}</span><b class="${x[1]<0?'neg':''}">${money(x[1])}</b></div>`).join('')}<div class="report-section-title">Prior Month / Prior Year / Trailing 12 Months</div>${$('#comparisonTable')?.innerHTML||''}${footer()}</div>`;const map={pl:['Profit and Loss',/profit.*loss|p&l|income statement/i],bs:['Balance Sheet',/balance sheet/i],trial:['Trial Balance',/trial balance/i],ar:['A/R Aging Summary Report',/a.?r.*aging/i],ap:['A/P Aging Summary Report',/a.?p.*aging/i]};if(map[type])return `<div class="report-page">${head(map[type][0]+' — Amounts in US Dollars ($)')}${reportTable(findSheet(map[type][1]))}${footer()}</div>`;if(type==='notes')return `<div class="report-page">${head('Notes to Financial Statements')}<div class="report-notes">${(state.notes||'No management notes entered.').replaceAll('<','&lt;')}</div>${footer()}</div>`;return `<div class="report-page">${head('Management Purpose Disclaimer')}<div class="disclaimer-text"><b>“The report we are submitting is for management purpose only. The numbers are based on data submitted and instructed by client”</b><p>This report is confidential and intended solely for management use.</p></div>${footer()}</div>`}
-function renderReport(){if(!$('#reportNav'))return;$('#reportNav').innerHTML=pageDefs.map((p,i)=>`<button class="${i===state.reportPage?'active':''}" data-i="${i}">${i+1}. ${p[0]}</button>`).join('');$('#reportStage').innerHTML=pageHtml(pageDefs[state.reportPage][1]);$$('#reportNav button').forEach(b=>b.onclick=()=>{state.reportPage=+b.dataset.i;renderReport()})}
-function allReport(){return pageDefs.map(p=>pageHtml(p[1])).join('')}
-function downloadExcel(){if(!Object.keys(state.sheets).length)return alert('Upload a workbook first.');const wb=XLSX.utils.book_new();Object.entries(state.sheets).forEach(([n,r])=>XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(r),n.slice(0,31)));XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['Notes to Financial Statements'],[state.notes||'']]),'Management Notes');const summary=[['Metric','Current','Prior Year','Variance'],['Revenue / Income',state.metrics.income,state.priorYear.income??'',state.priorYear.income!=null?state.metrics.income-state.priorYear.income:''],['Gross Profit',state.metrics.gross,state.priorYear.gross??'',state.priorYear.gross!=null?state.metrics.gross-state.priorYear.gross:''],['Net Income',state.metrics.net,state.priorYear.net??'',state.priorYear.net!=null?state.metrics.net-state.priorYear.net:''],['Cash / Bank',state.metrics.bank,state.priorYear.bank??'',state.priorYear.bank!=null?state.metrics.bank-state.priorYear.bank:''],['A/R Total',state.metrics.ar,state.priorYear.ar??'',state.priorYear.ar!=null?state.metrics.ar-state.priorYear.ar:''],['A/P Total',state.metrics.ap,state.priorYear.ap??'',state.priorYear.ap!=null?state.metrics.ap-state.priorYear.ap:'']];XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(summary),'Analytical Summary');XLSX.writeFile(wb,(state.client||'Client').replace(/[^a-z0-9]+/gi,'-')+'-Management-Data.xlsx')}
-async function savePdf(open=false){if(!Object.keys(state.sheets).length)return alert('Upload a workbook first.');const root=$('#pdfExport');root.innerHTML=allReport();const opt={margin:0,filename:(state.client||'Client').replace(/[^a-z0-9]+/gi,'-')+'-Management-Report.pdf',image:{type:'jpeg',quality:.98},html2canvas:{scale:1.5,useCORS:true},jsPDF:{unit:'pt',format:'letter',orientation:'portrait'},pagebreak:{mode:['css','legacy']}};if(open){const blob=await html2pdf().set(opt).from(root).outputPdf('blob');window.open(URL.createObjectURL(blob),'_blank')}else await html2pdf().set(opt).from(root).save();toast('PDF download started')}
-$('#fileInput').onchange=e=>$('#fileName').textContent=e.target.files[0]?.name||'No new file selected';$('#processBtn').onclick=async()=>{const f=$('#fileInput').files[0];if(!f)return alert('Select a workbook first.');const wb=XLSX.read(await f.arrayBuffer(),{type:'array'});state.sheets={};wb.SheetNames.forEach(n=>state.sheets[n]=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:true,defval:''}));state.active=wb.SheetNames[0]||'';state.file=f.name;state.client='Client';state.period='For the period ended';state.notes='';state.edited.clear();state.priorYear={income:null,gross:null,net:null,bank:null,ar:null,ap:null};$('#loadedStatus').textContent=`${wb.SheetNames.length} sheets processed`;['s1','s2','s3'].forEach(id=>$('#'+id).classList.add('done'));analyze();goPage('dashboard');toast('Workbook processed')};
-$('#downloadCsv').onclick=()=>{if(!state.active)return;const csv=XLSX.utils.sheet_to_csv(XLSX.utils.aoa_to_sheet(state.sheets[state.active])),a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download=state.active+'.csv';a.click()};$('#addRow').onclick=()=>{if(state.active){state.sheets[state.active].push(['']);renderEditor()}};$('#resetData').onclick=()=>{state.sheets={};state.active='';state.notes='';state.edited.clear();analyze();toast('Data cleared')};$('#applyNotes').onclick=()=>{state.notes=$('#notesEditor').value;renderReport();toast('Notes updated')};$('#downloadExcel').onclick=downloadExcel;$('#downloadExcelTop').onclick=downloadExcel;$('#downloadExcelReport').onclick=downloadExcel;$('#downloadPdfTop').onclick=()=>savePdf(false);$('#downloadPdf').onclick=()=>savePdf(false);$('#openPdf').onclick=()=>savePdf(true);render();
+/* Unison Direct Management Reporting — application shell
+ * Navigation, upload flow, live dashboard, statement views, editor with the
+ * impact-analysis modal, settings, boot. */
+'use strict';
+
+/* ---------- navigation ---------- */
+
+window.goPage = function(id){
+  $$('.page').forEach(p => p.classList.toggle('active', p.id === id));
+  $$('.nav button').forEach(b => b.classList.toggle('active', b.dataset.page === id));
+  const btn = $(`.nav button[data-page="${id}"]`);
+  if (btn) $('#pageTitle').textContent = btn.textContent.trim();
+  if (id === 'report') renderReport();
+  if (window.innerWidth <= 800) $('#sidebar').classList.remove('open');
+};
+
+/* ---------- analysis + render fan-out ---------- */
+
+function analyze(){
+  state.model = hasData() ? parseWorkbook(state.sheets) : null;
+  if (state.model){
+    if (state.client === 'Client') state.client = state.model.client;
+    if (state.period === 'For the period ended') state.period = state.model.period;
+  }
+  render();
+  persist();
+}
+
+function render(){
+  renderTopbar();
+  renderDashboard();
+  renderStatements();
+  renderEditor();
+  renderReport();
+}
+
+function renderTopbar(){
+  $('#clientLine').textContent = hasData()
+    ? `${state.client} · ${state.period}`
+    : 'Upload a client workbook to begin';
+  $('#loadedStatus').textContent = hasData()
+    ? `${Object.keys(state.sheets).length} sheets processed`
+    : 'No workbook processed';
+  $('#loadedStatus').classList.toggle('ok', hasData());
+}
+
+/* ---------- dashboard ---------- */
+
+function renderDashboard(){
+  const md = state.model;
+  const kg = $('#kpiGrid');
+  if (!md){
+    kg.innerHTML = ['Revenue / Income', 'Gross Profit', 'Net Income', 'Cash / Bank', 'A/R Total', 'A/P Total']
+      .map(l => `<div class="kpi"><small>${l}</small><b>$0.00</b><span class="help">—</span></div>`).join('');
+    $('#chartMonthly').innerHTML = '<div class="empty">Upload a workbook to see monthly performance.</div>';
+    $('#chartCyPy').innerHTML = '';
+    $('#chartExpenses').innerHTML = '';
+    $('#chartAging').innerHTML = '';
+    $('#chartBs').innerHTML = '';
+    $('#comparisonTable').innerHTML = '';
+    $('#attention').innerHTML = '<div class="empty">No major alerts detected</div>';
+    return;
+  }
+  const m = md.metrics, p = md.prior;
+  const grossMargin = m.income ? m.gross / m.income * 100 : 0;
+  const netMargin = m.income ? m.net / m.income * 100 : 0;
+  const chip = (cur, pri) => {
+    if (pri === null || pri === undefined || pri === 0) return '—';
+    const d = (cur - pri) / Math.abs(pri) * 100;
+    return `<span class="${d >= 0 ? 'good' : 'bad'}">${d >= 0 ? '▲' : '▼'} ${Math.abs(d).toFixed(1)}% vs PY (${money(pri)})</span>`;
+  };
+  const kpis = [
+    ['Revenue / Income', m.income, chip(m.income, p.income)],
+    ['Gross Profit', m.gross, pct(grossMargin) + ' gross margin'],
+    ['Net Income', m.net, (m.net < 0 ? 'Net loss · ' : '') + chip(m.net, p.net)],
+    ['Cash / Bank', m.bank, chip(m.bank, p.bank)],
+    ['A/R Total', m.ar, chip(m.ar, p.ar)],
+    ['A/P Total', m.ap, chip(m.ap, p.ap)]
+  ];
+  kg.innerHTML = kpis.map(([l, v, sub]) =>
+    `<div class="kpi"><small>${l}</small><b class="${v < 0 ? 'neg' : ''}">${money(v)}</b><span class="help">${sub}</span></div>`).join('');
+
+  const labels = md.months.length ? md.months.map(x => x.short)
+    : MONTHS_FALLBACK.slice(0, Math.max(md.monthlyRevenue.length, 6));
+  const revNet = [
+    { name: 'Revenue / Income', color: CHART_COLORS.blue, values: md.monthlyRevenue },
+    { name: 'Net Income', color: CHART_COLORS.red, values: md.monthlyNet }
+  ];
+  const margins = md.monthlyRevenue.map((r, i) => r ? (md.monthlyNet[i] || 0) / Math.abs(r) * 100 : null);
+  const marginsOk = margins.filter(v => v !== null).length >= labels.length / 2 &&
+    margins.every(v => v === null || Math.abs(v) <= 300);
+  $('#chartMonthly').innerHTML = chartLegend(revNet) +
+    svgGroupedBars({ series: revNet, labels, height: 230 }) +
+    (marginsOk
+      ? '<div class="chart-sub">Net margin trend</div>' +
+        svgLineTrend({ values: margins.map(v => v ?? 0), labels, height: 130 })
+      : '');
+
+  if (p.income !== null){
+    const cyPy = [
+      { name: 'Current period', color: CHART_COLORS.navy, values: [m.income, m.gross, m.expenses, m.net] },
+      { name: 'Prior year', color: CHART_COLORS.grey, values: [p.income ?? 0, p.gross ?? 0, p.expenses ?? 0, p.net ?? 0] }
+    ];
+    $('#chartCyPy').innerHTML = '<h3>Current Period vs Prior Year</h3>' + chartLegend(cyPy) +
+      svgGroupedBars({ series: cyPy, labels: ['Income', 'Gross', 'Expenses', 'Net'], height: 210 });
+  } else $('#chartCyPy').innerHTML = '';
+
+  $('#chartExpenses').innerHTML = md.expenseGroups.length
+    ? '<h3>Expense Breakdown — Top ' + Math.min(md.expenseGroups.length, 8) + '</h3>' +
+      svgHBars({ items: md.expenseGroups.slice(0, 8), totalForPct: m.expenses || null, color: CHART_COLORS.teal, width: 720 })
+    : '';
+
+  if (md.arAging || md.apAging){
+    const buckets = (md.arAging || md.apAging).buckets.map(b => b.label);
+    const series = [];
+    if (md.arAging) series.push({ name: 'A/R', color: CHART_COLORS.blue, values: md.arAging.buckets.map(b => b.value) });
+    if (md.apAging) series.push({ name: 'A/P', color: CHART_COLORS.amber, values: md.apAging.buckets.map(b => b.value) });
+    $('#chartAging').innerHTML = '<h3>Receivables & Payables Aging</h3>' + chartLegend(series) +
+      svgGroupedBars({ series, labels: buckets, height: 200 });
+  } else $('#chartAging').innerHTML = '';
+
+  $('#chartBs').innerHTML = md.bsComposition.assets.length
+    ? '<h3>Balance Sheet Composition</h3><div class="donut-row">' +
+      donutChart({ items: md.bsComposition.assets, title: 'Assets', size: 140 }) +
+      donutChart({ items: md.bsComposition.liabEquity, title: 'Liabilities & Equity', size: 140 }) + '</div>'
+    : '';
+
+  /* comparison table */
+  const compRows = [
+    ['Revenue', md.monthlyRevenue], ['Net Income', md.monthlyNet]
+  ];
+  $('#comparisonTable').innerHTML =
+    '<table><tr><th>Comparison</th>' + labels.map(l => `<th>${l}</th>`).join('') + '<th>YTD</th></tr>' +
+    compRows.map(([name, series]) =>
+      `<tr><td>${name}</td>` + labels.map((_, i) =>
+        `<td class="${(series[i] || 0) < 0 ? 'neg' : ''}">${money(series[i] || 0)}</td>`).join('') +
+      `<td class="${series.reduce((a, b) => a + (b || 0), 0) < 0 ? 'neg' : ''}"><b>${money(series.reduce((a, b) => a + (b || 0), 0))}</b></td></tr>`).join('') +
+    '</table>';
+
+  /* attention panel */
+  const alerts = [];
+  if (m.net < 0) alerts.push(['High', `Net loss of ${money(Math.abs(m.net))} for the period. Review the expense breakdown and monthly trend.`]);
+  const bal = m.assets - (m.liabilities + m.equity);
+  if (md.roles.bs && Math.abs(bal) >= 0.01)
+    alerts.push(['High', `Balance Sheet difference of ${money(bal)} between Assets and Liabilities + Equity.`]);
+  if (md.arAging){
+    const over90 = md.arAging.buckets.find(b => /91/.test(b.label));
+    if (over90 && over90.value > 0 && md.arAging.total)
+      alerts.push(['Review', `${pct(over90.value / md.arAging.total * 100)} of A/R (${money(over90.value)}) is aged over 90 days.`]);
+  }
+  if (md.apAging && md.apAging.total > 0)
+    alerts.push(['Review', `Outstanding payables of ${money(md.apAging.total)} — verify payment schedule.`]);
+  if (p.income !== null && p.income !== 0){
+    const d = (m.income - p.income) / Math.abs(p.income) * 100;
+    if (d < -20) alerts.push(['High', `Revenue is down ${Math.abs(d).toFixed(1)}% vs the prior-year period.`]);
+  }
+  if (state.edited.size || state.adjusted.size)
+    alerts.push(['Info', `${state.edited.size} manual edit(s) and ${state.adjusted.size} automatic adjustment(s) are reflected in this report (highlighted in the preview, not in downloads).`]);
+  $('#attention').innerHTML = alerts.length
+    ? alerts.map(([sev, msg]) =>
+        `<div class="alert"><span class="sev ${sev.toLowerCase()}">${sev}</span><p>${msg}</p></div>`).join('')
+    : '<div class="empty">No major alerts detected</div>';
+}
+
+/* ---------- statement views (read-only) ---------- */
+
+function statementViewHtml(sm){
+  if (!sm) return '<div class="empty">No matching worksheet was included in the uploaded workbook.</div>';
+  const { theadHtml, rows } = reportTableParts(sm, { forExport: false });
+  return `<div class="table-wrap"><table class="fin-table stmt-table"><thead>${theadHtml}</thead><tbody>` +
+         rows.map(r => r.html).join('') + '</tbody></table></div>';
+}
+
+function renderStatements(){
+  const md = state.model;
+  const get = role => md && md.roles[role] ? md.sheetModels[md.roles[role]] : null;
+  $('#plView').innerHTML = statementViewHtml(get('plMonthly') || get('pl') || get('plComparative'));
+  $('#plCompView').innerHTML = md && md.roles.plComparative && md.roles.plMonthly
+    ? '<h3>Profit and Loss — Comparative <span class="heading-amount">($)</span></h3>' + statementViewHtml(get('plComparative'))
+    : '';
+  $('#bsView').innerHTML = statementViewHtml(get('bs'));
+  $('#arView').innerHTML = statementViewHtml(get('ar'));
+  $('#apView').innerHTML = statementViewHtml(get('ap'));
+}
+
+/* ---------- editor ---------- */
+
+function editorTableHtml(sheetName){
+  const rows = state.sheets[sheetName] || [];
+  const width = Math.min(Math.max(...rows.map(r => (r || []).length), 1), 16);
+  const shown = rows.slice(0, 400);
+  let html = '<div class="table-wrap"><table class="fin-table edit-table"><tbody>';
+  shown.forEach((row, ri) => {
+    const isTotal = /\btotal\b/i.test(String((row || [])[0] ?? ''));
+    html += `<tr${isTotal ? ' class="row-total"' : ''}>`;
+    for (let ci = 0; ci < width; ci++){
+      const v = (row || [])[ci] ?? '';
+      const key = `${sheetName}:${ri}:${ci}`;
+      const cls = [
+        state.edited.has(key) ? 'edited' : '',
+        state.adjusted.has(key) ? 'adjusted' : '',
+        isNumericCell(v) && num(v) < 0 ? 'neg' : ''
+      ].filter(Boolean).join(' ');
+      html += `<td class="${cls}"><input data-r="${ri}" data-c="${ci}" value="${escapeAttr(v)}"></td>`;
+    }
+    html += '</tr>';
+  });
+  html += '</tbody></table></div>';
+  if (rows.length > 400) html += `<div class="help">Showing first 400 of ${rows.length} rows.</div>`;
+  return html;
+}
+
+function renderEditor(){
+  const tabs = $('#sheetTabs'), tableBox = $('#editorTable');
+  const names = Object.keys(state.sheets);
+  if (!names.length){
+    tabs.innerHTML = '';
+    tableBox.innerHTML = '<div class="empty">Upload a workbook to review and edit the imported data.</div>';
+    return;
+  }
+  if (!state.active || !state.sheets[state.active]) state.active = names[0];
+  tabs.innerHTML = names.map(n =>
+    `<button data-s="${escapeAttr(n)}" class="${n === state.active ? 'active' : ''}">${escapeHtml(n)}</button>`).join('');
+  tabs.querySelectorAll('button').forEach(b =>
+    b.onclick = () => { state.active = b.dataset.s; renderEditor(); });
+  tableBox.innerHTML = editorTableHtml(state.active);
+  tableBox.querySelectorAll('input').forEach(inp => {
+    inp.dataset.old = inp.value;
+    inp.onchange = () => onCellEdit(inp);
+  });
+  const ne = $('#notesEditor');
+  if (ne && document.activeElement !== ne) ne.value = state.notes;
+}
+
+/* ---------- impact modal flow ---------- */
+
+let _pendingEdit = null;
+
+function onCellEdit(inp){
+  const r = +inp.dataset.r, c = +inp.dataset.c;
+  const sheet = state.active;
+  const oldVal = inp.dataset.old ?? '';
+  const newVal = inp.value;
+  if (String(oldVal) === String(newVal)) return;
+
+  /* Text cells (labels, comments) apply directly — no financial cascade. */
+  if (!isNumericCell(newVal) && !isNumericCell(oldVal)){
+    state.sheets[sheet][r][c] = newVal;
+    state.edited.add(`${sheet}:${r}:${c}`);
+    analyze();
+    toast('Cell updated');
+    return;
+  }
+
+  const impact = computeImpact(sheet, r, c, num(oldVal), num(newVal));
+  _pendingEdit = { sheet, r, c, oldVal, newVal, impact };
+  openImpactModal(_pendingEdit);
+}
+
+function _fmtCell(v){ return money(v); }
+
+function openImpactModal(pe){
+  const { sheet, r, c, oldVal, newVal, impact } = pe;
+  const md = state.model;
+  const sm = md.sheetModels[sheet];
+  const line = sm.lines.find(l => l.r === r);
+  const label = line ? line.label : String((state.sheets[sheet][r] || [])[0] ?? '').trim() || `Row ${r + 1}`;
+  const colLabel = (sm.cols.find(x => x.idx === c) || {}).label || '';
+
+  $('#imTitle').innerHTML = `Edit impact — <b>${escapeHtml(label)}</b>` +
+    `<span class="im-context">${escapeHtml(sheet)}${colLabel ? ' · ' + escapeHtml(colLabel) : ''}</span>`;
+  $('#imChange').innerHTML =
+    `<span class="im-old">${_fmtCell(num(oldVal))}</span><span class="im-arrow">→</span>` +
+    `<span class="im-new">${_fmtCell(num(newVal))}</span>`;
+
+  let body = '';
+  if (impact.blocked){
+    body += `<div class="im-blocked">${escapeHtml(impact.blockReason)}</div>`;
+  } else if (impact.steps.length){
+    body += `<div class="im-section">Automatic adjustments (${impact.steps.length})</div>` +
+      '<div class="im-steps-wrap"><table class="im-steps"><tr><th>Worksheet</th><th>Line</th><th>Column</th><th>Before</th><th>After</th></tr>' +
+      impact.steps.map(st =>
+        `<tr><td>${escapeHtml(st.sheet)}</td><td>${escapeHtml(st.label)}</td><td>${escapeHtml(st.colLabel || '')}</td>` +
+        `<td class="num">${_fmtCell(st.before)}</td><td class="num im-after">${_fmtCell(st.after)}</td></tr>`).join('') +
+      '</table></div>';
+  } else {
+    body += '<div class="im-section">No dependent totals detected — only this cell will change.</div>';
+  }
+  if (impact.balance){
+    const b = impact.balance;
+    body += `<div class="im-balance ${b.balanced ? 'ok' : 'warn'}">Balance check: Assets ${money(b.assets)} vs Liabilities + Equity ${money(b.liabEquity)} — ` +
+      (b.balanced ? 'balanced ✓' : `difference ${money(b.diff)}, review required`) + '</div>';
+  }
+  if (impact.advisories.length)
+    body += '<div class="im-advisories">' + impact.advisories.map(a => `<div>• ${escapeHtml(a)}</div>`).join('') + '</div>';
+  $('#imBody').innerHTML = body;
+
+  /* buttons */
+  $('#imConfirm').style.display = impact.blocked ? 'none' : '';
+  $('#imConfirm').textContent = impact.steps.length ? `Confirm & adjust ${impact.steps.length} value(s)` : 'Confirm edit';
+  $('#imEditOnly').textContent = impact.blocked ? 'Apply as manual override' : 'Apply edit only';
+
+  /* AI panel */
+  const ai = $('#imAI');
+  if (!state.settings.aiEnabled){
+    ai.innerHTML = '';
+  } else if (!state.settings.groqKey){
+    ai.innerHTML = '<div class="im-ai-off">AI analysis unavailable — deterministic impact shown above. Add a Groq API key in Settings to enable plain-English explanations.</div>';
+  } else if (impact.blocked){
+    ai.innerHTML = '';
+  } else {
+    ai.innerHTML = '<div class="im-ai-loading">⏳ Asking AI for a plain-English impact summary…</div>';
+    explainImpact({ sheetName: sheet, label, colLabel, oldVal: num(oldVal), newVal: num(newVal),
+                    steps: impact.steps, advisories: impact.advisories, balance: impact.balance })
+      .then(res => {
+        if (_pendingEdit !== pe) return;   // modal moved on
+        ai.innerHTML = '<div class="im-ai"><div class="im-ai-title">AI impact analysis</div>' +
+          `<p>${escapeHtml(res.explanation)}</p>` +
+          (res.cautions.length ? '<ul>' + res.cautions.map(x => `<li>${escapeHtml(x)}</li>`).join('') + '</ul>' : '') +
+          '</div>';
+      })
+      .catch(err => {
+        if (_pendingEdit !== pe) return;
+        const msg = err.message === 'NO_KEY' ? 'no API key configured'
+          : err.name === 'AbortError' ? 'request timed out' : err.message;
+        ai.innerHTML = `<div class="im-ai-off">AI analysis unavailable (${escapeHtml(msg)}) — deterministic impact shown above.</div>`;
+      });
+  }
+
+  $('#impactModal').classList.remove('hidden');
+}
+
+function closeImpactModal(revert){
+  $('#impactModal').classList.add('hidden');
+  if (revert && _pendingEdit){
+    const inp = $(`#editorTable input[data-r="${_pendingEdit.r}"][data-c="${_pendingEdit.c}"]`);
+    if (inp) inp.value = _pendingEdit.oldVal;
+  }
+  _pendingEdit = null;
+}
+
+function confirmImpact(withCascade){
+  if (!_pendingEdit) return;
+  const { sheet, r, c, newVal, impact } = _pendingEdit;
+  const rows = state.sheets[sheet];
+  while (rows.length <= r) rows.push([]);
+  rows[r][c] = isNumericCell(newVal) ? num(newVal) : newVal;
+  state.edited.add(`${sheet}:${r}:${c}`);
+  if (withCascade && !impact.blocked) applyImpact(impact.steps);
+  _pendingEdit = null;
+  $('#impactModal').classList.add('hidden');
+  analyze();
+  toast(withCascade && impact.steps.length
+    ? `Edit applied with ${impact.steps.length} automatic adjustment(s)`
+    : 'Edit applied');
+}
+
+/* ---------- settings ---------- */
+
+function renderSettings(){
+  $('#groqKeyInput').value = state.settings.groqKey;
+  $('#groqModelSelect').value = state.settings.groqModel;
+  $('#aiEnabledToggle').checked = !!state.settings.aiEnabled;
+}
+
+function wireSettings(){
+  $('#groqKeySave').onclick = () => {
+    state.settings.groqKey = $('#groqKeyInput').value.trim();
+    state.settings.groqModel = $('#groqModelSelect').value;
+    state.settings.aiEnabled = $('#aiEnabledToggle').checked;
+    saveSettings();
+    toast('Settings saved');
+  };
+  $('#groqKeyShow').onclick = () => {
+    const i = $('#groqKeyInput');
+    i.type = i.type === 'password' ? 'text' : 'password';
+    $('#groqKeyShow').textContent = i.type === 'password' ? 'Show' : 'Hide';
+  };
+  $('#groqTest').onclick = async () => {
+    const status = $('#groqTestStatus');
+    state.settings.groqKey = $('#groqKeyInput').value.trim();
+    state.settings.groqModel = $('#groqModelSelect').value;
+    saveSettings();
+    status.textContent = 'Testing…'; status.className = 'test-status';
+    try {
+      await testGroqConnection();
+      status.textContent = '✓ Connected — model responded'; status.className = 'test-status ok';
+    } catch (e) {
+      status.textContent = '✗ ' + (e.message === 'NO_KEY' ? 'Enter an API key first' : e.message);
+      status.className = 'test-status err';
+    }
+  };
+  $('#clearSessionBtn').onclick = () => {
+    resetState();
+    analyze();
+    $('#fileName').textContent = 'No new file selected';
+    $$('.step').forEach(s => s.classList.remove('done'));
+    toast('Saved session cleared');
+  };
+}
+
+/* ---------- upload / reset ---------- */
+
+function wireUpload(){
+  $('#fileInput').onchange = () => {
+    const f = $('#fileInput').files[0];
+    $('#fileName').textContent = f ? f.name : 'No new file selected';
+  };
+  $('#processBtn').onclick = async () => {
+    const f = $('#fileInput').files[0];
+    if (!f){ toast('Choose an XLSX or CSV file first.'); return; }
+    try {
+      const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
+      resetState();
+      state.fileName = f.name;
+      wb.SheetNames.forEach(n => {
+        state.sheets[n] = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' });
+      });
+      ['s1', 's2', 's3'].forEach(id => $('#' + id).classList.add('done'));
+      analyze();
+      goPage('dashboard');
+      toast(`Processed ${wb.SheetNames.length} worksheet(s) from ${f.name}`);
+    } catch (e) {
+      console.error(e);
+      toast('Could not read the workbook: ' + (e.message || e));
+    }
+  };
+  $('#resetData').onclick = () => {
+    resetState();
+    $('#fileName').textContent = 'No new file selected';
+    $$('.step').forEach(s => s.classList.remove('done'));
+    analyze();
+    toast('Data cleared');
+  };
+  $('#addRow').onclick = () => {
+    if (!state.active) return;
+    const rows = state.sheets[state.active];
+    const width = Math.max(...rows.map(r => (r || []).length), 1);
+    rows.push(Array(width).fill(''));
+    renderEditor();
+    const inputs = $('#editorTable').querySelectorAll('tr:last-child input');
+    if (inputs.length) inputs[0].focus();
+  };
+}
+
+/* ---------- signatory ---------- */
+
+function wireSignatory(){
+  const apply = () => {
+    state.signatory = {
+      name: $('#sigName').value.trim(),
+      title: $('#sigTitle').value.trim(),
+      date: $('#sigDate').value.trim()
+    };
+    persist();
+    renderReport();
+    toast('Signatory updated');
+  };
+  $('#sigApply').onclick = apply;
+}
+
+function renderSignatoryForm(){
+  $('#sigName').value = state.signatory.name;
+  $('#sigTitle').value = state.signatory.title;
+  $('#sigDate').value = state.signatory.date;
+}
+
+/* ---------- boot ---------- */
+
+function wireGlobal(){
+  $$('.nav button').forEach(b => b.onclick = () => goPage(b.dataset.page));
+  $('#menuBtn').onclick = () => $('#sidebar').classList.toggle('open');
+
+  $('#downloadPdfTop').onclick = () => savePdf(false);
+  $('#downloadPdf').onclick = () => savePdf(false);
+  $('#openPdf').onclick = () => savePdf(true);
+  $('#downloadExcelTop').onclick = downloadReportExcel;
+  $('#downloadExcelReport').onclick = downloadReportExcel;
+  $('#downloadDataExcel').onclick = downloadDataExcel;
+  $('#downloadCsv').onclick = downloadCurrentSheetCsv;
+
+  $('#applyNotes').onclick = () => {
+    state.notes = $('#notesEditor').value;
+    persist();
+    renderReport();
+    toast('Notes updated');
+  };
+
+  /* impact modal buttons */
+  $('#imConfirm').onclick = () => confirmImpact(true);
+  $('#imEditOnly').onclick = () => confirmImpact(false);
+  $('#imCancel').onclick = () => closeImpactModal(true);
+  $('#impactModal').addEventListener('click', e => {
+    if (e.target === $('#impactModal')) closeImpactModal(true);
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !$('#impactModal').classList.contains('hidden'))
+      closeImpactModal(true);
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadSettings();
+  wireGlobal();
+  wireUpload();
+  wireSettings();
+  wireSignatory();
+  renderSettings();
+  const restored = restoreSession();
+  if (restored){
+    ['s1', 's2', 's3'].forEach(id => $('#' + id).classList.add('done'));
+    toast('Previous session restored');
+  }
+  analyze();
+  renderSignatoryForm();
+});
