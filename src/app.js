@@ -125,10 +125,7 @@ function renderDashboard(){
       donutChart({ items: md.bsComposition.liabEquity, title: 'Liabilities & Equity', size: 140 }) + '</div>'
     : '';
 
-  /* comparison table */
-  const compRows = [
-    ['Revenue', md.monthlyRevenue], ['Net Income', md.monthlyNet]
-  ];
+  const compRows = [['Revenue', md.monthlyRevenue], ['Net Income', md.monthlyNet]];
   $('#comparisonTable').innerHTML =
     '<table><tr><th>Comparison</th>' + labels.map(l => `<th>${l}</th>`).join('') + '<th>YTD</th></tr>' +
     compRows.map(([name, series]) =>
@@ -137,28 +134,22 @@ function renderDashboard(){
       `<td class="${series.reduce((a, b) => a + (b || 0), 0) < 0 ? 'neg' : ''}"><b>${money(series.reduce((a, b) => a + (b || 0), 0))}</b></td></tr>`).join('') +
     '</table>';
 
-  /* attention panel */
   const alerts = [];
   if (m.net < 0) alerts.push(['High', `Net loss of ${money(Math.abs(m.net))} for the period. Review the expense breakdown and monthly trend.`]);
   const bal = m.assets - (m.liabilities + m.equity);
-  if (md.roles.bs && Math.abs(bal) >= 0.01)
-    alerts.push(['High', `Balance Sheet difference of ${money(bal)} between Assets and Liabilities + Equity.`]);
+  if (md.roles.bs && Math.abs(bal) >= 0.01) alerts.push(['High', `Balance Sheet difference of ${money(bal)} between Assets and Liabilities + Equity.`]);
   if (md.arAging){
     const over90 = md.arAging.buckets.find(b => /91/.test(b.label));
-    if (over90 && over90.value > 0 && md.arAging.total)
-      alerts.push(['Review', `${pct(over90.value / md.arAging.total * 100)} of A/R (${money(over90.value)}) is aged over 90 days.`]);
+    if (over90 && over90.value > 0 && md.arAging.total) alerts.push(['Review', `${pct(over90.value / md.arAging.total * 100)} of A/R (${money(over90.value)}) is aged over 90 days.`]);
   }
-  if (md.apAging && md.apAging.total > 0)
-    alerts.push(['Review', `Outstanding payables of ${money(md.apAging.total)} — verify payment schedule.`]);
+  if (md.apAging && md.apAging.total > 0) alerts.push(['Review', `Outstanding payables of ${money(md.apAging.total)} — verify payment schedule.`]);
   if (p.income !== null && p.income !== 0){
     const d = (m.income - p.income) / Math.abs(p.income) * 100;
     if (d < -20) alerts.push(['High', `Revenue is down ${Math.abs(d).toFixed(1)}% vs the prior-year period.`]);
   }
-  if (state.edited.size || state.adjusted.size)
-    alerts.push(['Info', `${state.edited.size} manual edit(s) and ${state.adjusted.size} automatic adjustment(s) are reflected in this report (highlighted in the preview, not in downloads).`]);
+  if (state.edited.size || state.adjusted.size) alerts.push(['Info', `${state.edited.size} manual edit(s) and ${state.adjusted.size} automatic adjustment(s) are reflected in this report (highlighted in the preview, not in downloads).`]);
   $('#attention').innerHTML = alerts.length
-    ? alerts.map(([sev, msg]) =>
-        `<div class="alert"><span class="sev ${sev.toLowerCase()}">${sev}</span><p>${msg}</p></div>`).join('')
+    ? alerts.map(([sev, msg]) => `<div class="alert"><span class="sev ${sev.toLowerCase()}">${sev}</span><p>${msg}</p></div>`).join('')
     : '<div class="empty">No major alerts detected</div>';
 }
 
@@ -167,8 +158,7 @@ function renderDashboard(){
 function statementViewHtml(sm){
   if (!sm) return '<div class="empty">No matching worksheet was included in the uploaded workbook.</div>';
   const { theadHtml, rows } = reportTableParts(sm, { forExport: false });
-  return `<div class="table-wrap"><table class="fin-table stmt-table"><thead>${theadHtml}</thead><tbody>` +
-         rows.map(r => r.html).join('') + '</tbody></table></div>';
+  return `<div class="table-wrap"><table class="fin-table stmt-table"><thead>${theadHtml}</thead><tbody>` + rows.map(r => r.html).join('') + '</tbody></table></div>';
 }
 
 function renderStatements(){
@@ -176,14 +166,22 @@ function renderStatements(){
   const get = role => md && md.roles[role] ? md.sheetModels[md.roles[role]] : null;
   $('#plView').innerHTML = statementViewHtml(get('plMonthly') || get('pl') || get('plComparative'));
   $('#plCompView').innerHTML = md && md.roles.plComparative && md.roles.plMonthly
-    ? '<h3>Profit and Loss — Comparative <span class="heading-amount">($)</span></h3>' + statementViewHtml(get('plComparative'))
-    : '';
+    ? '<h3>Profit and Loss — Comparative <span class="heading-amount">($)</span></h3>' + statementViewHtml(get('plComparative')) : '';
   $('#bsView').innerHTML = statementViewHtml(get('bs'));
   $('#arView').innerHTML = statementViewHtml(get('ar'));
   $('#apView').innerHTML = statementViewHtml(get('ap'));
 }
 
 /* ---------- editor ---------- */
+
+function editorAccountingValue(v){
+  const n = num(v);
+  const abs = Math.abs(round2(n)).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+  return n < 0 ? `(${abs})` : abs;
+}
 
 function editorTableHtml(sheetName){
   const rows = state.sheets[sheetName] || [];
@@ -196,12 +194,14 @@ function editorTableHtml(sheetName){
     for (let ci = 0; ci < width; ci++){
       const v = (row || [])[ci] ?? '';
       const key = `${sheetName}:${ri}:${ci}`;
+      const numeric = ci > 0 && isNumericCell(v);
       const cls = [
         state.edited.has(key) ? 'edited' : '',
         state.adjusted.has(key) ? 'adjusted' : '',
-        isNumericCell(v) && num(v) < 0 ? 'neg' : ''
+        numeric && num(v) < 0 ? 'neg' : ''
       ].filter(Boolean).join(' ');
-      html += `<td class="${cls}"><input data-r="${ri}" data-c="${ci}" value="${escapeAttr(v)}"></td>`;
+      const display = numeric ? editorAccountingValue(v) : v;
+      html += `<td class="${cls}"><input data-r="${ri}" data-c="${ci}" value="${escapeAttr(display)}"></td>`;
     }
     html += '</tr>';
   });
@@ -219,10 +219,8 @@ function renderEditor(){
     return;
   }
   if (!state.active || !state.sheets[state.active]) state.active = names[0];
-  tabs.innerHTML = names.map(n =>
-    `<button data-s="${escapeAttr(n)}" class="${n === state.active ? 'active' : ''}">${escapeHtml(n)}</button>`).join('');
-  tabs.querySelectorAll('button').forEach(b =>
-    b.onclick = () => { state.active = b.dataset.s; renderEditor(); });
+  tabs.innerHTML = names.map(n => `<button data-s="${escapeAttr(n)}" class="${n === state.active ? 'active' : ''}">${escapeHtml(n)}</button>`).join('');
+  tabs.querySelectorAll('button').forEach(b => b.onclick = () => { state.active = b.dataset.s; renderEditor(); });
   tableBox.innerHTML = editorTableHtml(state.active);
   tableBox.querySelectorAll('input').forEach(inp => {
     inp.dataset.old = inp.value;
@@ -243,7 +241,6 @@ function onCellEdit(inp){
   const newVal = inp.value;
   if (String(oldVal) === String(newVal)) return;
 
-  /* Text cells (labels, comments) apply directly — no financial cascade. */
   if (!isNumericCell(newVal) && !isNumericCell(oldVal)){
     state.sheets[sheet][r][c] = newVal;
     state.edited.add(`${sheet}:${r}:${c}`);
@@ -267,11 +264,8 @@ function openImpactModal(pe){
   const label = line ? line.label : String((state.sheets[sheet][r] || [])[0] ?? '').trim() || `Row ${r + 1}`;
   const colLabel = (sm.cols.find(x => x.idx === c) || {}).label || '';
 
-  $('#imTitle').innerHTML = `Edit impact — <b>${escapeHtml(label)}</b>` +
-    `<span class="im-context">${escapeHtml(sheet)}${colLabel ? ' · ' + escapeHtml(colLabel) : ''}</span>`;
-  $('#imChange').innerHTML =
-    `<span class="im-old">${_fmtCell(num(oldVal))}</span><span class="im-arrow">→</span>` +
-    `<span class="im-new">${_fmtCell(num(newVal))}</span>`;
+  $('#imTitle').innerHTML = `Edit impact — <b>${escapeHtml(label)}</b>` + `<span class="im-context">${escapeHtml(sheet)}${colLabel ? ' · ' + escapeHtml(colLabel) : ''}</span>`;
+  $('#imChange').innerHTML = `<span class="im-old">${_fmtCell(num(oldVal))}</span><span class="im-arrow">→</span>` + `<span class="im-new">${_fmtCell(num(newVal))}</span>`;
 
   let body = '';
   if (impact.blocked){
@@ -279,28 +273,21 @@ function openImpactModal(pe){
   } else if (impact.steps.length){
     body += `<div class="im-section">Automatic adjustments (${impact.steps.length})</div>` +
       '<div class="im-steps-wrap"><table class="im-steps"><tr><th>Worksheet</th><th>Line</th><th>Column</th><th>Before</th><th>After</th></tr>' +
-      impact.steps.map(st =>
-        `<tr><td>${escapeHtml(st.sheet)}</td><td>${escapeHtml(st.label)}</td><td>${escapeHtml(st.colLabel || '')}</td>` +
-        `<td class="num">${_fmtCell(st.before)}</td><td class="num im-after">${_fmtCell(st.after)}</td></tr>`).join('') +
-      '</table></div>';
+      impact.steps.map(st => `<tr><td>${escapeHtml(st.sheet)}</td><td>${escapeHtml(st.label)}</td><td>${escapeHtml(st.colLabel || '')}</td><td class="num">${_fmtCell(st.before)}</td><td class="num im-after">${_fmtCell(st.after)}</td></tr>`).join('') + '</table></div>';
   } else {
     body += '<div class="im-section">No dependent totals detected — only this cell will change.</div>';
   }
   if (impact.balance){
     const b = impact.balance;
-    body += `<div class="im-balance ${b.balanced ? 'ok' : 'warn'}">Balance check: Assets ${money(b.assets)} vs Liabilities + Equity ${money(b.liabEquity)} — ` +
-      (b.balanced ? 'balanced ✓' : `difference ${money(b.diff)}, review required`) + '</div>';
+    body += `<div class="im-balance ${b.balanced ? 'ok' : 'warn'}">Balance check: Assets ${money(b.assets)} vs Liabilities + Equity ${money(b.liabEquity)} — ` + (b.balanced ? 'balanced ✓' : `difference ${money(b.diff)}, review required`) + '</div>';
   }
-  if (impact.advisories.length)
-    body += '<div class="im-advisories">' + impact.advisories.map(a => `<div>• ${escapeHtml(a)}</div>`).join('') + '</div>';
+  if (impact.advisories.length) body += '<div class="im-advisories">' + impact.advisories.map(a => `<div>• ${escapeHtml(a)}</div>`).join('') + '</div>';
   $('#imBody').innerHTML = body;
 
-  /* buttons */
   $('#imConfirm').style.display = impact.blocked ? 'none' : '';
   $('#imConfirm').textContent = impact.steps.length ? `Confirm & adjust ${impact.steps.length} value(s)` : 'Confirm edit';
   $('#imEditOnly').textContent = impact.blocked ? 'Apply as manual override' : 'Apply edit only';
 
-  /* AI panel */
   const ai = $('#imAI');
   if (!state.settings.aiEnabled){
     ai.innerHTML = '';
@@ -310,19 +297,14 @@ function openImpactModal(pe){
     ai.innerHTML = '';
   } else {
     ai.innerHTML = '<div class="im-ai-loading">⏳ Asking AI for a plain-English impact summary…</div>';
-    explainImpact({ sheetName: sheet, label, colLabel, oldVal: num(oldVal), newVal: num(newVal),
-                    steps: impact.steps, advisories: impact.advisories, balance: impact.balance })
+    explainImpact({ sheetName: sheet, label, colLabel, oldVal: num(oldVal), newVal: num(newVal), steps: impact.steps, advisories: impact.advisories, balance: impact.balance })
       .then(res => {
-        if (_pendingEdit !== pe) return;   // modal moved on
-        ai.innerHTML = '<div class="im-ai"><div class="im-ai-title">AI impact analysis</div>' +
-          `<p>${escapeHtml(res.explanation)}</p>` +
-          (res.cautions.length ? '<ul>' + res.cautions.map(x => `<li>${escapeHtml(x)}</li>`).join('') + '</ul>' : '') +
-          '</div>';
+        if (_pendingEdit !== pe) return;
+        ai.innerHTML = '<div class="im-ai"><div class="im-ai-title">AI impact analysis</div>' + `<p>${escapeHtml(res.explanation)}</p>` + (res.cautions.length ? '<ul>' + res.cautions.map(x => `<li>${escapeHtml(x)}</li>`).join('') + '</ul>' : '') + '</div>';
       })
       .catch(err => {
         if (_pendingEdit !== pe) return;
-        const msg = err.message === 'NO_KEY' ? 'no API key configured'
-          : err.name === 'AbortError' ? 'request timed out' : err.message;
+        const msg = err.message === 'NO_KEY' ? 'no API key configured' : err.name === 'AbortError' ? 'request timed out' : err.message;
         ai.innerHTML = `<div class="im-ai-off">AI analysis unavailable (${escapeHtml(msg)}) — deterministic impact shown above.</div>`;
       });
   }
@@ -344,15 +326,13 @@ function confirmImpact(withCascade){
   const { sheet, r, c, newVal, impact } = _pendingEdit;
   const rows = state.sheets[sheet];
   while (rows.length <= r) rows.push([]);
-  rows[r][c] = isNumericCell(newVal) ? num(newVal) : newVal;
+  rows[r][c] = isNumericCell(newVal) ? round2(num(newVal)) : newVal;
   state.edited.add(`${sheet}:${r}:${c}`);
   if (withCascade && !impact.blocked) applyImpact(impact.steps);
   _pendingEdit = null;
   $('#impactModal').classList.add('hidden');
   analyze();
-  toast(withCascade && impact.steps.length
-    ? `Edit applied with ${impact.steps.length} automatic adjustment(s)`
-    : 'Edit applied');
+  toast(withCascade && impact.steps.length ? `Edit applied with ${impact.steps.length} automatic adjustment(s)` : 'Edit applied');
 }
 
 /* ---------- settings ---------- */
@@ -486,7 +466,6 @@ function wireGlobal(){
     toast('Notes updated');
   };
 
-  /* impact modal buttons */
   $('#imConfirm').onclick = () => confirmImpact(true);
   $('#imEditOnly').onclick = () => confirmImpact(false);
   $('#imCancel').onclick = () => closeImpactModal(true);
@@ -494,8 +473,7 @@ function wireGlobal(){
     if (e.target === $('#impactModal')) closeImpactModal(true);
   });
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && !$('#impactModal').classList.contains('hidden'))
-      closeImpactModal(true);
+    if (e.key === 'Escape' && !$('#impactModal').classList.contains('hidden')) closeImpactModal(true);
   });
 }
 
