@@ -340,8 +340,11 @@ function buildPages({ forExport = false } = {}){
   const md = state.model;
   const pages = [];   // {sectionNo, sectionId, title, body}
 
-  sections.forEach((sec, si) => {
-    const no = si + 1;
+  /* Cover and Table of Contents are front matter and carry no section number;
+     the numbered sequence starts at 1 on the first content section. */
+  let contentNo = 0;
+  sections.forEach(sec => {
+    const no = (sec.id === 'cover' || sec.id === 'toc') ? null : ++contentNo;
     let bodies = [];
     switch (sec.id){
       case 'cover': bodies = [coverBody()]; break;
@@ -373,7 +376,7 @@ function buildPages({ forExport = false } = {}){
     .map(x => `<div class="toc-item"><span>${x.no}. ${escapeHtml(x.title)}</span>` +
               `<span class="toc-page">${x.first === x.last ? x.first : x.first + '–' + x.last}</span></div>`)
     .join('');
-  pages[tocIdx].body = sectionHead(2, 'Table of Contents', state.client) +
+  pages[tocIdx].body = sectionHead(null, 'Table of Contents', state.client) +
     `<div class="toc-list">${tocRows}</div>`;
 
   const count = pages.length;
@@ -403,14 +406,14 @@ function renderReport(){
   });
   nav.innerHTML = [...bySection.values()].map(s =>
     `<button data-i="${s.first}" class="${current.sectionId !== 'x' && s.first <= state.reportPage && state.reportPage <= s.last ? 'active' : ''}">` +
-    `${s.no}. ${escapeHtml(s.title)}<span class="nav-pages">p. ${s.first + 1}${s.last > s.first ? '–' + (s.last + 1) : ''}</span></button>`).join('');
+    `${s.no ? s.no + '. ' : ''}${escapeHtml(s.title)}<span class="nav-pages">p. ${s.first + 1}${s.last > s.first ? '–' + (s.last + 1) : ''}</span></button>`).join('');
   nav.querySelectorAll('button').forEach(b =>
     b.onclick = () => { state.reportPage = +b.dataset.i; renderReport(); });
 
   stage.innerHTML =
     `<div class="stage-bar">
        <button class="btn" id="pgPrev" ${state.reportPage === 0 ? 'disabled' : ''}>‹ Prev</button>
-       <span class="stage-pageno">Page ${current.pageNo} of ${pages.length} — ${current.sectionNo}. ${escapeHtml(current.title)}</span>
+       <span class="stage-pageno">Page ${current.pageNo} of ${pages.length} — ${current.sectionNo ? current.sectionNo + '. ' : ''}${escapeHtml(current.title)}</span>
        <button class="btn" id="pgNext" ${state.reportPage === pages.length - 1 ? 'disabled' : ''}>Next ›</button>
        ${current.sectionId === 'notes' ? '<button class="btn primary" id="notesEditBtn">✎ Edit notes</button>' : ''}
      </div>` + current.html;

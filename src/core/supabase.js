@@ -1,7 +1,7 @@
 /* Supabase persistence + quality fixes for Unison Direct Management Reporting */
 'use strict';
 
-const dbState = { config:null, reportId:null, ready:false, saving:false, accessToken:null };
+const dbState = { config:null, reportId:null, ready:false, checked:false, saving:false, accessToken:null };
 function browserAccessToken(){
   if (dbState.accessToken) return dbState.accessToken;
   const key='udmr.db.token';
@@ -13,8 +13,12 @@ function browserAccessToken(){
   return dbState.accessToken;
 }
 async function initSupabase(){
+  /* Probe once per page load. When /api/config is absent (local preview, or a Vercel
+     deployment without the Supabase env vars) the app stays browser-only and silent. */
+  if (dbState.checked) return dbState.ready;
+  dbState.checked = true;
   try { const r=await fetch('/api/config',{cache:'no-store'}); const c=await r.json(); if(!r.ok||!c.ok) throw new Error(c.error||'Supabase configuration unavailable'); dbState.config=c; dbState.ready=true; browserAccessToken(); return true; }
-  catch(e){ console.warn('Supabase disabled:',e); dbState.ready=false; return false; }
+  catch(e){ console.info('Supabase not configured — running in browser-only mode.'); dbState.ready=false; return false; }
 }
 async function sbRequest(table,{method='GET',body=null,query='',prefer=''}={}){
   if(!dbState.ready) await initSupabase(); if(!dbState.ready) throw new Error('Supabase is not configured');
@@ -126,20 +130,12 @@ function installQualityFixes(){
     const monthDashRe=new RegExp('\\b('+monthNames+')\\s*[-–—]\\s*('+monthNames+')\\b','g');
     buildPages=function(opts={}){
       const pages=baseBuildPages(opts);
-      const mapping=new Map();
-      pages.forEach(p=>{ if(p.sectionId!=='cover'&&p.sectionId!=='toc') mapping.set(Number(p.sectionNo),Number(p.sectionNo)-2); });
+      /* Section numbering is owned by buildPages() in report.js: cover and TOC are
+         unnumbered front matter and content sections count from 1. Nothing to renumber here. */
       pages.forEach(p=>{
         let html=p.html.replace(monthDashRe,'$1 – $2').replace(/\bP&L\b/g,'P &amp; L').replace(/\bL&D\b/g,'L &amp; D');
         html=html.replace(/class="val neg([^"]*)"/g,'class="val neg$1" style="color:#c93438!important"');
-        if(p.sectionId!=='cover'&&p.sectionId!=='toc'){
-          const old=Number(p.sectionNo), neu=mapping.get(old);
-          html=html.replace(new RegExp('(<h2 class="report-title">)'+old+'\\.\\s*','g'),'$1'+neu+'. ');
-          p.sectionNo=neu;
-          if(p.sectionId==='dash') html=html.replace('class="report-page"','class="report-page report-analytics-page"');
-        } else if(p.sectionId==='toc'){
-          html=html.replace(/(<h2 class="report-title">)2\.\s*/,'$1');
-          mapping.forEach((neu,old)=>{ html=html.replace(new RegExp('(<span>)'+old+'\\.\\s*','g'),'$1'+neu+'. '); });
-        }
+        if(p.sectionId==='dash') html=html.replace('class="report-page"','class="report-page report-analytics-page"');
         if(state.model?.roles?.plComparative && !state.model?.roles?.plMonthly && p.sectionId==='dash'){
           html=html.replace(/Monthly Revenue vs Net Income/g,'Current Period Revenue vs Net Income').replace(/Net Margin by Month/g,'Current Period Net Margin');
         }
@@ -185,7 +181,7 @@ function installQualityFixes(){
 document.addEventListener('DOMContentLoaded',()=>{
  installQualityFixes();
  initSupabase(); const processBtn=document.getElementById('processBtn');
- if(processBtn) processBtn.addEventListener('click',()=>{const expected=document.getElementById('fileInput')?.files?.[0]?.name;if(!expected)return;dbState.reportId=null;let tries=0;const wait=setInterval(async()=>{tries++;if(state.fileName===expected&&state.model&&hasData()){clearInterval(wait);try{await saveReportToSupabase();toast('Processed and saved to Supabase');}catch(e){console.error(e);toast('Workbook processed, but database save failed: '+(e.message||e));}}else if(tries>100)clearInterval(wait);},100);});
+ if(processBtn) processBtn.addEventListener('click',()=>{const expected=document.getElementById('fileInput')?.files?.[0]?.name;if(!expected)return;dbState.reportId=null;let tries=0;const wait=setInterval(async()=>{tries++;if(state.fileName===expected&&state.model&&hasData()){clearInterval(wait);if(!dbState.ready) await initSupabase();if(!dbState.ready) return;/* browser-only mode: nothing to save, nothing to report */try{await saveReportToSupabase();toast('Processed and saved to Supabase');}catch(e){console.error(e);toast('Workbook processed, but database save failed: '+(e.message||e));}}else if(tries>100)clearInterval(wait);},100);});
  const editor=document.getElementById('editorTable'); if(editor) editor.addEventListener('change',e=>{const inp=e.target.closest('input[data-r][data-c]');if(!inp)return;logManualEdit(state.active,Number(inp.dataset.r),Number(inp.dataset.c),inp.dataset.old??'',inp.value);});
  document.getElementById('applyNotes')?.addEventListener('click',()=>setTimeout(()=>updateReportNotes().catch(console.warn),0));
  ['downloadPdfTop','downloadPdf','openPdf'].forEach(id=>document.getElementById(id)?.addEventListener('click',()=>logReportExport('pdf',(state.client||'Client')+'-Management-Report.pdf')));
