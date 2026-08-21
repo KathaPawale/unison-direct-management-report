@@ -1,7 +1,7 @@
 /* Excel report formatting: clean management-report layout with OUTSIDE borders only. */
 'use strict';
 (function(){
-  const LINE='9EADBC'; const side={style:'thin',color:{rgb:LINE}};
+  const LINE='5F6F80'; const side={style:'medium',color:{rgb:LINE}};
   const clone=x=>x?JSON.parse(JSON.stringify(x)):{};
   const addr=(r,c)=>XLSX.utils.encode_cell({r,c});
   function ensure(ws,r,c){const a=addr(r,c);if(!ws[a])ws[a]={t:'s',v:''};return ws[a];}
