@@ -12,14 +12,15 @@ const DEFAULT_SETTINGS = {
 
 const state = {
   fileName: '',
-  sheets: {},            // { sheetName: any[][] } — raw truth, mutated by the editor
-  model: null,           // parser output (parseWorkbook), rebuilt on every mutation
-  active: '',            // sheet selected in the editor
+  sheets: {},
+  model: null,
+  active: '',
   client: 'Client',
   period: 'For the period ended',
+  basis: 'Amounts in US Dollars ($)',
   notes: '',
-  edited: new Set(),     // "sheet:r:c" cells typed by the user  → red in preview
-  adjusted: new Set(),   // "sheet:r:c" cells recomputed by the engine → red in preview
+  edited: new Set(),
+  adjusted: new Set(),
   signatory: { name: '', title: '', date: '' },
   reportPage: 0,
   settings: { ...DEFAULT_SETTINGS }
@@ -31,7 +32,7 @@ function loadSettings(){
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (raw) state.settings = { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
-  } catch (e) { /* corrupted settings — keep defaults */ }
+  } catch (e) {}
 }
 
 function saveSettings(){
@@ -42,9 +43,7 @@ function saveSettings(){
 function sessionSnapshot(includeOtherSheets = true){
   const sheets = {};
   for (const [name, rows] of Object.entries(state.sheets)){
-    if (!includeOtherSheets && state.model &&
-        state.model.sheetModels[name] &&
-        state.model.sheetModels[name].role === 'other') continue;
+    if (!includeOtherSheets && state.model && state.model.sheetModels[name] && state.model.sheetModels[name].role === 'other') continue;
     sheets[name] = rows;
   }
   return JSON.stringify({
@@ -52,6 +51,7 @@ function sessionSnapshot(includeOtherSheets = true){
     sheets,
     client: state.client,
     period: state.period,
+    basis: state.basis,
     notes: state.notes,
     edited: [...state.edited],
     adjusted: [...state.adjusted],
@@ -78,7 +78,6 @@ const persist = debounce(() => {
   }
 }, 500);
 
-/* Returns true if a saved session was restored into state (caller re-analyzes). */
 function restoreSession(){
   let raw = null;
   try { raw = localStorage.getItem(SESSION_KEY); } catch (e) { return false; }
@@ -90,8 +89,9 @@ function restoreSession(){
     state.sheets   = s.sheets;
     state.client   = s.client || 'Client';
     state.period   = s.period || 'For the period ended';
-    state.notes    = s.notes  || '';
-    state.edited   = new Set(s.edited   || []);
+    state.basis    = s.basis || 'Amounts in US Dollars ($)';
+    state.notes    = s.notes || '';
+    state.edited   = new Set(s.edited || []);
     state.adjusted = new Set(s.adjusted || []);
     state.signatory = { name: '', title: '', date: '', ...(s.signatory || {}) };
     return true;
@@ -105,7 +105,6 @@ function clearSession(){
   try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
 }
 
-/* Full reset — everything except settings. */
 function resetState(){
   state.fileName = '';
   state.sheets = {};
@@ -113,6 +112,7 @@ function resetState(){
   state.active = '';
   state.client = 'Client';
   state.period = 'For the period ended';
+  state.basis = 'Amounts in US Dollars ($)';
   state.notes = '';
   state.edited = new Set();
   state.adjusted = new Set();
