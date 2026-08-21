@@ -78,27 +78,12 @@ const persist = debounce(() => {
   }
 }, 500);
 
+/* Deliberately do not restore old report data when the site opens.
+ * Every fresh page load starts blank and waits for a new workbook upload.
+ * Settings (such as Groq/model preferences) are still loaded separately. */
 function restoreSession(){
-  let raw = null;
-  try { raw = localStorage.getItem(SESSION_KEY); } catch (e) { return false; }
-  if (!raw) return false;
-  try {
-    const s = JSON.parse(raw);
-    if (!s.sheets || !Object.keys(s.sheets).length) return false;
-    state.fileName = s.fileName || '';
-    state.sheets   = s.sheets;
-    state.client   = s.client || 'Client';
-    state.period   = s.period || 'For the period ended';
-    state.basis    = s.basis || 'Amounts in US Dollars ($)';
-    state.notes    = s.notes || '';
-    state.edited   = new Set(s.edited || []);
-    state.adjusted = new Set(s.adjusted || []);
-    state.signatory = { name: '', title: '', date: '', ...(s.signatory || {}) };
-    return true;
-  } catch (e) {
-    try { localStorage.removeItem(SESSION_KEY); } catch (e2) {}
-    return false;
-  }
+  try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
+  return false;
 }
 
 function clearSession(){
