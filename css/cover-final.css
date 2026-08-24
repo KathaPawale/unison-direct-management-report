@@ -1,10 +1,11 @@
 /* Final approved Unison Direct cover overrides */
 .cover-page{padding:0!important}
 .cover-top{height:120px;padding:28px 38px 0;position:relative;background:#fff}
-.cover-top .report-logo{top:18px;right:38px;width:128px;height:62px}
+.cover-top .report-logo{top:18px;right:38px;width:128px;height:62px;object-fit:contain!important;object-position:center!important;overflow:visible!important}
 .cover-client-top{margin:0;padding:0 165px 0 0;color:#0b2f59;font-size:34px;line-height:1.15;font-weight:800}
 .cover-brand-rule{position:absolute;left:38px;right:38px;bottom:14px;height:3px;background:linear-gradient(90deg,#25A9E0 0 76%,#EF4B43 76% 100%)}
-.cover-page .cover-hero{height:370px;background:url('../assets/cover-bg.jpg') center center/cover no-repeat}
+/* Keep the full skyline/tower visible on the cover instead of cropping the top. */
+.cover-page .cover-hero{height:370px;background-color:#eef7fd;background-image:url('../assets/cover-bg.jpg');background-repeat:no-repeat;background-position:center top;background-size:100% auto}
 .cover-page .cover-band{height:225px;padding:34px 48px;background:linear-gradient(90deg,#0b2f59,#123c6e)}
 .cover-page .cover-band h1{font-size:35px;margin:8px 0 8px}
 .cover-page .cover-body{padding:25px 48px 20px}
