@@ -1,19 +1,113 @@
 /* Final presentation fixes requested for PDF and Excel. */
 'use strict';
 (function(){
-  if(typeof document!=='undefined'&&!document.getElementById('udmr-equity-border-fix')){const st=document.createElement('style');st.id='udmr-equity-border-fix';st.textContent='.row-equity-total td,.row-equity-total th,.row-liab-equity-total td,.row-liab-equity-total th{border-top:2px solid #0B2F59!important;border-bottom:0!important;border-left:0!important;border-right:0!important;background:#EAF2FB!important;font-weight:700!important}.row-liab-equity-total+tr td,.row-liab-equity-total+tr th{border-top:0!important}';document.head.appendChild(st);}
-  if(typeof reportTableParts==='function'&&!window.__udmrTablePolish){window.__udmrTablePolish=true;const baseParts=reportTableParts;reportTableParts=function(sm,opts){const out=baseParts(sm,opts);if(sm&&sm.role==='bs'){out.rows=out.rows.map(row=>{let h=row.html;const text=h.replace(/<[^>]+>/g,' ').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim();if(/^Net Income\b/i.test(text))h=h.replace(/\s*row-grand\b/g,'').replace(/\s*row-total\b/g,'').replace(/class="\s*"/g,'');if(/^Total (for )?Equity\b/i.test(text))h=h.replace('<tr','<tr class="row-equity-total"');if(/^Total (for )?Liabilities and Equity\b/i.test(text)||/^Total Liabilities & Equity\b/i.test(text))h=h.replace('<tr','<tr class="row-liab-equity-total"');return{...row,html:h};});}return out;};}
-  if(typeof dashboardBodies==='function'&&!window.__udmrDashboardPolish){window.__udmrDashboardPolish=true;const baseDashboardBodies=dashboardBodies;dashboardBodies=function(no,title){const bodies=baseDashboardBodies(no,title);if(!state.model||bodies.length<2)return bodies;const md=state.model,p2=bodies[1];if(!p2)return bodies;let agingHtml='',agingSeries=[],labels=[];if(md.arAging&&md.arAging.buckets?.length){labels=md.arAging.buckets.map(b=>b.label);agingSeries.push({name:'A/R',color:CHART_COLORS.blue,values:md.arAging.buckets.map(b=>b.value)});}if(md.apAging&&md.apAging.buckets?.length){if(!labels.length)labels=md.apAging.buckets.map(b=>b.label);agingSeries.push({name:'A/P',color:CHART_COLORS.teal,values:md.apAging.buckets.map(b=>b.value)});}if(agingSeries.length)agingHtml='<div class="report-section-title dashboard-aging-title">Receivables & Payables Aging</div>'+chartLegend(agingSeries)+svgGroupedBars({series:agingSeries,labels,height:145});else if((md.metrics?.ar||0)||(md.metrics?.ap||0))agingHtml='<div class="report-section-title dashboard-aging-title">Receivables & Payables</div>'+svgHBars({items:[{label:'Accounts Receivable',value:md.metrics.ar||0},{label:'Accounts Payable',value:md.metrics.ap||0}],totalForPct:null,color:CHART_COLORS.teal});if(agingHtml)bodies[1]=p2+'<div class="dashboard-aging-block">'+agingHtml+'</div>';return bodies;};}
-  function set(ws,r,c,v,s){const a=XLSX.utils.encode_cell({r,c});ws[a]={v:v,t:typeof v==='number'?'n':'s',s:s||{}};const rg=ws['!ref']?XLSX.utils.decode_range(ws['!ref']):{s:{r,c},e:{r,c}};rg.e.r=Math.max(rg.e.r,r);rg.e.c=Math.max(rg.e.c,c);ws['!ref']=XLSX.utils.encode_range(rg);}
-  function fillBlock(ws,r1,r2,c1,c2,color){for(let r=r1;r<=r2;r++)for(let c=c1;c<=c2;c++)set(ws,r,c,ws[XLSX.utils.encode_cell({r,c})]?.v||'',{fill:{fgColor:{rgb:color}}});}
-  function dashboardSheet(){const md=state.model||{},m=md.metrics||{},p=md.prior||{},ws={};const navy='0B2F59',blue='25A9E0',red='EF4B43',teal='159A9C',light='F7FAFD',line='D9E3EE',grey='8E99A8',money='#,##0.00;[Red](#,##0.00)';const title={font:{bold:true,sz:20,color:{rgb:navy}}},sub={font:{sz:11,color:{rgb:'7B8797'}}},sec={font:{bold:true,sz:11,color:{rgb:navy}},border:{bottom:{style:'medium',color:{rgb:blue}}}},head={font:{bold:true,color:{rgb:'FFFFFF'}},fill:{fgColor:{rgb:navy}},alignment:{horizontal:'center'}},cardLabel={font:{bold:true,sz:9,color:{rgb:'6D7887'}},fill:{fgColor:{rgb:light}},border:{top:{style:'thin',color:{rgb:line}},left:{style:'thin',color:{rgb:line}},right:{style:'thin',color:{rgb:line}}}},cardVal={font:{bold:true,sz:15,color:{rgb:navy}},numFmt:money,fill:{fgColor:{rgb:light}},border:{bottom:{style:'thin',color:{rgb:line}},left:{style:'thin',color:{rgb:line}},right:{style:'thin',color:{rgb:line}}}},negVal={...cardVal,font:{bold:true,sz:15,color:{rgb:'C93438'}}},numS={numFmt:money,alignment:{horizontal:'right'}},pctS={numFmt:'0.0%',alignment:{horizontal:'right'}},plain={font:{sz:10,color:{rgb:'243B57'}}};
-    set(ws,0,0,'1. Analytical Dashboard',title);set(ws,1,0,state.period||'',sub);for(let c=0;c<12;c++)set(ws,2,c,'',{fill:{fgColor:{rgb:c<9?blue:red}}});
-    set(ws,4,0,'KEY FINANCIAL INDICATORS — AMOUNTS IN US DOLLARS ($)',sec);
-    const kpis=[['REVENUE / INCOME',m.income],['GROSS PROFIT',m.gross],['NET INCOME',m.net],['CASH / BANK',m.bank],['A/R TOTAL',m.ar],['A/P TOTAL',m.ap]];kpis.forEach((x,i)=>{const r=i<3?6:10,c=(i%3)*4;set(ws,r,c,x[0],cardLabel);for(let cc=c+1;cc<=c+3;cc++)set(ws,r,cc,'',cardLabel);set(ws,r+1,c,x[1]||0,x[0]==='NET INCOME'&&(x[1]||0)<0?negVal:cardVal);for(let cc=c+1;cc<=c+3;cc++)set(ws,r+1,cc,'',cardVal);ws['!merges']=(ws['!merges']||[]).concat([{s:{r,c},e:{r,c:c+3}},{s:{r:r+1,c},e:{r:r+1,c:c+3}}]);});
-    set(ws,14,0,'CURRENT PERIOD VS PRIOR YEAR — COMPARATIVE FINANCIALS',sec);['Metric','Current Period','Prior Year','Variance','Variance %'].forEach((h,i)=>set(ws,16,i,h,head));[['Revenue / Income',m.income,p.income],['Gross Profit',m.gross,p.gross],['Total Expenses',m.expenses,p.expenses],['Net Income',m.net,p.net]].forEach((x,i)=>{const r=17+i,v=(x[1]||0)-(x[2]||0);set(ws,r,0,x[0],plain);set(ws,r,1,x[1]||0,numS);set(ws,r,2,x[2]||0,numS);set(ws,r,3,v,numS);set(ws,r,4,x[2]?v/Math.abs(x[2]):0,pctS);});
-    set(ws,23,0,'MONTHLY REVENUE VS NET INCOME',sec);const months=(md.months||[]),rv=md.monthlyRevenue||[],nv=md.monthlyNet||[],vals=[...rv,...nv].map(Math.abs),mx=Math.max(...vals,1),chartTop=26,chartBottom=37;for(let r=chartTop;r<=chartBottom;r++)for(let c=0;c<12;c++)set(ws,r,c,'',{fill:{fgColor:{rgb:'FFFFFF'}}});const monthCount=Math.min(months.length,6);for(let i=0;i<monthCount;i++){const base=i*2,revH=Math.round(Math.abs(rv[i]||0)/mx*9),netH=Math.round(Math.abs(nv[i]||0)/mx*9);for(let h=0;h<revH;h++)set(ws,chartBottom-1-h,base,'',{fill:{fgColor:{rgb:blue}}});for(let h=0;h<netH;h++)set(ws,chartBottom-1-h,base+1,'',{fill:{fgColor:{rgb:red}}});set(ws,chartBottom,base,months[i].short||months[i].label||'',{font:{sz:9,color:{rgb:'6D7887'}},alignment:{horizontal:'center'}});set(ws,chartBottom,base+1,'',{font:{sz:9}});}set(ws,38,0,'Revenue / Income',{font:{sz:9,color:{rgb:blue}}});set(ws,38,2,'Net Income',{font:{sz:9,color:{rgb:red}}});
-    let r=41;set(ws,r,0,'EXPENSE BREAKDOWN — TOP 3 CATEGORIES',sec);r+=2;let exp=(md.expenseCategories||md.expensesByCategory||[]).slice(0,3);if(!exp.length)exp=[{label:'Total Expenses',value:m.expenses||0}];const em=Math.max(...exp.map(x=>Math.abs(x.value||x.total||0)),1);exp.forEach((x,i)=>{const v=x.value||x.total||0;set(ws,r,0,x.label||x.name||'Expense',plain);set(ws,r,1,v,numS);const len=Math.max(1,Math.round(Math.abs(v)/em*8));for(let c=2;c<2+len;c++)set(ws,r,c,'',{fill:{fgColor:{rgb:teal}}});r+=2;});
-    set(ws,r,0,'RECEIVABLES & PAYABLES AGING',sec);r+=2;const ag=[['A/R Total',m.ar||0,blue],['A/P Total',m.ap||0,teal]],am=Math.max(...ag.map(x=>Math.abs(x[1])),1);ag.forEach(x=>{set(ws,r,0,x[0],plain);set(ws,r,1,x[1],numS);const len=Math.max(1,Math.round(Math.abs(x[1])/am*8));for(let c=2;c<2+len;c++)set(ws,r,c,'',{fill:{fgColor:{rgb:x[2]}}});r+=2;});
-    ws['!cols']=[{wch:22},...Array(11).fill({wch:11})];ws['!rows']=[{hpt:28},...Array(55).fill({hpt:18})];ws['!merges']=(ws['!merges']||[]).concat([{s:{r:0,c:0},e:{r:0,c:11}},{s:{r:1,c:0},e:{r:1,c:11}},{s:{r:4,c:0},e:{r:4,c:11}},{s:{r:14,c:0},e:{r:14,c:11}},{s:{r:23,c:0},e:{r:23,c:11}},{s:{r:41,c:0},e:{r:41,c:11}}]);return ws;}
-  const prevWrite=XLSX.writeFile.bind(XLSX);XLSX.writeFile=function(wb,filename,opts){if(filename&&/Management-Report\.xlsx$/i.test(filename)&&wb?.SheetNames){const old=wb.SheetNames.indexOf('Analytical Summary');if(old>=0){wb.SheetNames.splice(old,1);delete wb.Sheets['Analytical Summary'];}const existing=wb.SheetNames.indexOf('Analytical Dashboard');if(existing>=0){wb.SheetNames.splice(existing,1);delete wb.Sheets['Analytical Dashboard'];}wb.SheetNames.splice(Math.min(1,wb.SheetNames.length),0,'Analytical Dashboard');wb.Sheets['Analytical Dashboard']=dashboardSheet();wb.SheetNames.forEach(name=>{const ws=wb.Sheets[name];if(!ws?.['!ref'])return;const rg=XLSX.utils.decode_range(ws['!ref']),isBS=/Balance Sheet/i.test(name),isPL=/Profit and Loss|P&L/i.test(name),navy='0B2F59',light='EAF2FB';if(isBS)for(let r=0;r<=rg.e.r;r++){const lbl=String(ws[XLSX.utils.encode_cell({r,c:0})]?.v||'').trim();if(/^Net Income$/i.test(lbl))for(let c=0;c<=rg.e.c;c++){const x=ws[XLSX.utils.encode_cell({r,c})];if(x){const s=JSON.parse(JSON.stringify(x.s||{}));delete s.fill;delete s.border;s.font={...(s.font||{}),bold:false,color:{rgb:'243B57'}};x.s=s;}}if(/^Total (for )?Equity$/i.test(lbl)||/^Total (for )?Liabilities and Equity$/i.test(lbl)||/^Total Liabilities & Equity$/i.test(lbl))for(let c=0;c<=rg.e.c;c++){const a=XLSX.utils.encode_cell({r,c}),x=ws[a]||{v:'',t:'s'};ws[a]=x;x.s={...(x.s||{}),font:{...((x.s||{}).font||{}),bold:true,color:{rgb:navy}},fill:{fgColor:{rgb:light}},border:{top:{style:'medium',color:{rgb:navy}}}};}}if(isPL)for(let c=0;c<=rg.e.c;c++){const a=XLSX.utils.encode_cell({r:rg.e.r,c}),x=ws[a]||{v:'',t:'s'};ws[a]=x;x.s={...(x.s||{}),border:{...((x.s||{}).border||{}),bottom:{style:'medium',color:{rgb:navy}}}};}});}return prevWrite(wb,filename,opts);};
+  /* Balance Sheet totals: highlight with upper separator only. */
+  if(typeof document!=='undefined'&&!document.getElementById('udmr-equity-border-fix')){
+    const st=document.createElement('style');
+    st.id='udmr-equity-border-fix';
+    st.textContent='.row-equity-total td,.row-equity-total th,.row-liab-equity-total td,.row-liab-equity-total th{border-top:2px solid #0B2F59!important;border-bottom:0!important;border-left:0!important;border-right:0!important;background:#EAF2FB!important;font-weight:700!important}.row-liab-equity-total+tr td,.row-liab-equity-total+tr th{border-top:0!important}';
+    document.head.appendChild(st);
+  }
+
+  if(typeof reportTableParts==='function'&&!window.__udmrTablePolish){
+    window.__udmrTablePolish=true;
+    const baseParts=reportTableParts;
+    reportTableParts=function(sm,opts){
+      const out=baseParts(sm,opts);
+      if(sm&&sm.role==='bs'){
+        out.rows=out.rows.map(row=>{
+          let h=row.html;
+          const text=h.replace(/<[^>]+>/g,' ').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim();
+          if(/^Net Income\b/i.test(text)) h=h.replace(/\s*row-grand\b/g,'').replace(/\s*row-total\b/g,'').replace(/class="\s*"/g,'');
+          if(/^Total (for )?Equity\b/i.test(text)) h=h.replace('<tr','<tr class="row-equity-total"');
+          if(/^Total (for )?Liabilities and Equity\b/i.test(text)||/^Total Liabilities & Equity\b/i.test(text)) h=h.replace('<tr','<tr class="row-liab-equity-total"');
+          return {...row,html:h};
+        });
+      }
+      return out;
+    };
+  }
+
+  /* Keep PDF analytical dashboard aging improvements. */
+  if(typeof dashboardBodies==='function'&&!window.__udmrDashboardPolish){
+    window.__udmrDashboardPolish=true;
+    const baseDashboardBodies=dashboardBodies;
+    dashboardBodies=function(no,title){
+      const bodies=baseDashboardBodies(no,title);
+      if(!state.model||bodies.length<2)return bodies;
+      const md=state.model,p2=bodies[1];
+      if(!p2)return bodies;
+      let agingHtml='',agingSeries=[],labels=[];
+      if(md.arAging&&md.arAging.buckets?.length){
+        labels=md.arAging.buckets.map(b=>b.label);
+        agingSeries.push({name:'A/R',color:CHART_COLORS.blue,values:md.arAging.buckets.map(b=>b.value)});
+      }
+      if(md.apAging&&md.apAging.buckets?.length){
+        if(!labels.length)labels=md.apAging.buckets.map(b=>b.label);
+        agingSeries.push({name:'A/P',color:CHART_COLORS.teal,values:md.apAging.buckets.map(b=>b.value)});
+      }
+      if(agingSeries.length){
+        agingHtml='<div class="report-section-title dashboard-aging-title">Receivables & Payables Aging</div>'+chartLegend(agingSeries)+svgGroupedBars({series:agingSeries,labels,height:145});
+      }else if((md.metrics?.ar||0)||(md.metrics?.ap||0)){
+        agingHtml='<div class="report-section-title dashboard-aging-title">Receivables & Payables</div>'+svgHBars({items:[{label:'Accounts Receivable',value:md.metrics.ar||0},{label:'Accounts Payable',value:md.metrics.ap||0}],totalForPct:null,color:CHART_COLORS.teal});
+      }
+      if(agingHtml)bodies[1]=p2+'<div class="dashboard-aging-block">'+agingHtml+'</div>';
+      return bodies;
+    };
+  }
+
+  /* Excel: keep the original Analytical Summary generated in exports.js.
+     Only apply Balance Sheet / P&L formatting fixes. */
+  const prevWrite=XLSX.writeFile.bind(XLSX);
+  XLSX.writeFile=function(wb,filename,opts){
+    if(filename&&/Management-Report\.xlsx$/i.test(filename)&&wb?.SheetNames){
+      /* Remove any old replacement dashboard if present and preserve Analytical Summary. */
+      const dashboardIndex=wb.SheetNames.indexOf('Analytical Dashboard');
+      if(dashboardIndex>=0){
+        wb.SheetNames.splice(dashboardIndex,1);
+        delete wb.Sheets['Analytical Dashboard'];
+      }
+
+      wb.SheetNames.forEach(name=>{
+        const ws=wb.Sheets[name];
+        if(!ws?.['!ref'])return;
+        const rg=XLSX.utils.decode_range(ws['!ref']);
+        const isBS=/Balance Sheet/i.test(name),isPL=/Profit and Loss|P&L/i.test(name);
+        const navy='0B2F59',light='EAF2FB';
+
+        if(isBS){
+          for(let r=0;r<=rg.e.r;r++){
+            const lbl=String(ws[XLSX.utils.encode_cell({r,c:0})]?.v||'').trim();
+            if(/^Net Income$/i.test(lbl)){
+              for(let c=0;c<=rg.e.c;c++){
+                const x=ws[XLSX.utils.encode_cell({r,c})];
+                if(x){
+                  const s=JSON.parse(JSON.stringify(x.s||{}));
+                  delete s.fill; delete s.border;
+                  s.font={...(s.font||{}),bold:false,color:{rgb:'243B57'}};
+                  x.s=s;
+                }
+              }
+            }
+            if(/^Total (for )?Equity$/i.test(lbl)||/^Total (for )?Liabilities and Equity$/i.test(lbl)||/^Total Liabilities & Equity$/i.test(lbl)){
+              for(let c=0;c<=rg.e.c;c++){
+                const a=XLSX.utils.encode_cell({r,c}),x=ws[a]||{v:'',t:'s'};
+                ws[a]=x;
+                x.s={...(x.s||{}),font:{...((x.s||{}).font||{}),bold:true,color:{rgb:navy}},fill:{fgColor:{rgb:light}},border:{top:{style:'medium',color:{rgb:navy}}}};
+              }
+            }
+          }
+        }
+
+        if(isPL){
+          for(let c=0;c<=rg.e.c;c++){
+            const a=XLSX.utils.encode_cell({r:rg.e.r,c}),x=ws[a]||{v:'',t:'s'};
+            ws[a]=x;
+            x.s={...(x.s||{}),border:{...((x.s||{}).border||{}),bottom:{style:'medium',color:{rgb:navy}}}};
+          }
+        }
+      });
+    }
+    return prevWrite(wb,filename,opts);
+  };
 })();
