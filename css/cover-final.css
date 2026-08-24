@@ -14,9 +14,16 @@
 .cover-page .cover-meta span{display:block;margin-bottom:10px;color:#7b8797;font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase}
 .cover-page .cover-meta b{display:block;color:#14233b;font-size:13.5px;font-weight:800;border:0!important;text-decoration:none!important;padding:0!important}
 .cover-meta-static{border:0!important;text-decoration:none!important}
-.basis-edit{height:38px;border:1.5px solid #25A9E0;border-radius:4px;display:flex;align-items:center;padding:0 10px;background:#fff}
-.basis-edit input{width:100%;border:0!important;outline:0;background:transparent;color:#14233b;font:700 13px Arial,"Segoe UI",sans-serif;padding:0;box-shadow:none!important;text-decoration:none!important}
-.basis-edit i{font-style:normal;color:#1789c5;font-size:15px;margin-left:8px}
+/* Basis is plain report text by default. Click the text in preview to edit it. */
+.basis-inline-editor{position:relative;min-height:24px}
+.basis-display{display:block;width:100%;margin:0;padding:0;border:0!important;outline:0!important;background:transparent!important;box-shadow:none!important;text-align:left;color:#14233b;font:800 13.5px Arial,"Segoe UI",sans-serif;line-height:1.45;cursor:text;text-decoration:none!important}
+.basis-input{display:none;width:100%;margin:0;padding:0;border:0!important;border-bottom:1px solid #25A9E0!important;border-radius:0!important;outline:0!important;background:transparent!important;box-shadow:none!important;color:#14233b;font:800 13.5px Arial,"Segoe UI",sans-serif;line-height:1.45}
+.basis-inline-editor.editing .basis-display{display:none}
+.basis-inline-editor.editing .basis-input{display:block}
+/* PDF/export must always contain clean plain text — never an edit box, border or pencil. */
+.pdf-export .basis-display,.pdf-measure .basis-display{display:block!important;cursor:default!important}
+.pdf-export .basis-input,.pdf-measure .basis-input{display:none!important}
+.pdf-export .basis-inline-editor,.pdf-measure .basis-inline-editor{border:0!important;outline:0!important;box-shadow:none!important;background:transparent!important}
 .cover-page .cover-confidential{margin-top:4px}
 /* Every non-cover report page uses only the two UD logo accent colours. */
 .report-page:not(.cover-page) .report-rule{background:linear-gradient(90deg,#25A9E0 0 76%,#EF4B43 76% 100%)!important}
