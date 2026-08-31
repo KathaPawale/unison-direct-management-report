@@ -241,6 +241,14 @@
         model = extractMetrics(sheets, model);
         model = extractMonthlyData(sheets, model);
         
+        // Ensure A/R and A/P get values from aging if not found in BS
+        if(model.arAging && abs(model.metrics.ar || 0) < 0.005) {
+          model.metrics.ar = model.arAging.total;
+        }
+        if(model.apAging && abs(model.metrics.ap || 0) < 0.005) {
+          model.metrics.ap = model.apAging.total;
+        }
+        
         return model;
       };
     }
