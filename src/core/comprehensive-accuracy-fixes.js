@@ -41,19 +41,33 @@
     return n(row[col]);
   };
 
-  /* Find line index by label (case-insensitive, pattern matching) */
+  /* Find line index by label (case-insensitive, pattern matching, handles "Total for X" format) */
   const findLineByLabel = (sm, patterns) => {
     if(!sm || !patterns) return null;
     const labels = Array.isArray(patterns) ? patterns : [patterns];
     const byLabel = sm.byLabel || {};
     const keys = Object.keys(byLabel);
     
+    // First pass: exact matches
     for(const lab of labels) {
       if(typeof lab === 'string') {
         const exact = byLabel[String(lab).toLowerCase()];
         if(exact !== undefined) return exact;
       }
     }
+    
+    // Second pass: "Total for X" format handling
+    for(const lab of labels) {
+      if(typeof lab === 'string') {
+        const word = String(lab).toLowerCase();
+        const altFormat = `total for ${word}`;
+        for(const [key, idx] of Object.entries(byLabel)) {
+          if(key === altFormat) return idx;
+        }
+      }
+    }
+    
+    // Third pass: regex and substring matches
     for(const k of keys) {
       for(const lab of labels) {
         if(typeof lab === 'object' && lab.test && lab.test(k)) return byLabel[k];
@@ -160,10 +174,37 @@
     const priorCol = priorYear?.idx ?? (pl?.cols||[]).find(c => c.type === 'prior')?.idx ?? null;
     
     const labelSets = {
-      income: ['total income', 'total revenue', 'revenue', 'sales', 'sales income', 'service income', /total.*(income|revenue|sales)/i],
+      income: [
+        'total for income',
+        'total income',
+        'total revenue',
+        'revenue',
+        'sales',
+        'sales income',
+        'service income',
+        /^total\s+for\s+income$/i,
+        /^total\s+(income|revenue|sales)$/i,
+        /total.*(income|revenue|sales)/i
+      ],
       gross: ['gross profit', /gross profit/i],
-      expenses: ['total expenses', 'total operating expenses', 'operating expenses', 'expenses', /total.*expenses/i],
-      net: ['net income', 'net profit', 'profit for the period', /net (income|profit)/i]
+      expenses: [
+        'total for expenses',
+        'total for operating expenses',
+        'total expenses',
+        'total operating expenses',
+        'operating expenses',
+        'expenses',
+        /^total\s+for\s+(operating\s+)?expenses$/i,
+        /^total\s+(operating\s+)?expenses$/i,
+        /total.*expenses/i
+      ],
+      net: [
+        'net income',
+        'net profit',
+        'profit for the period',
+        /^net\s+(income|profit)$/i,
+        /^profit\s+for\s+the\s+period$/i
+      ]
     };
     
     /* 5. Extract current period metrics */

@@ -107,24 +107,43 @@
       return n(row[col]);
     };
 
-    /* Find line index by label patterns */
+    /* Find line index by label patterns - enhanced for "Total for X" format */
     const findLineByLabel = (sm, patterns) => {
       if (!sm) return null;
       const labels = Array.isArray(patterns) ? patterns : [patterns];
       const byLabel = sm.byLabel || {};
       
-      // Exact matches
+      // First: exact normalized matches
       for (const lab of labels) {
         if (typeof lab === 'string') {
-          const key = String(lab).toLowerCase();
-          if (key in byLabel) return byLabel[key];
+          const exact = byLabel[String(lab).toLowerCase()];
+          if (exact !== undefined) return exact;
         }
       }
       
-      // Substring/regex matches
+      // Second: "Total for X" format handling (matches both "Total Income" and "Total for Income")
+      for (const lab of labels) {
+        if (typeof lab === 'string') {
+          const word = String(lab).toLowerCase();
+          // Try both "Total for Income" and "Total Income"
+          const altFormat = `total for ${word}`;
+          for (const [key, idx] of Object.entries(byLabel)) {
+            if (key === altFormat || key === word) return idx;
+          }
+        }
+      }
+      
+      // Third: substring matches (both directions)
       for (const k of Object.keys(byLabel)) {
         for (const lab of labels) {
           if (typeof lab === 'string' && k.includes(String(lab).toLowerCase())) return byLabel[k];
+          if (typeof lab === 'string' && String(lab).toLowerCase().includes(k)) return byLabel[k];
+        }
+      }
+      
+      // Fourth: regex patterns
+      for (const k of Object.keys(byLabel)) {
+        for (const lab of labels) {
           if (typeof lab === 'object' && lab.test && lab.test(k)) return byLabel[k];
         }
       }
@@ -174,12 +193,31 @@
         return model;
       }
       
-      // Label patterns for extraction
+      // Label patterns for extraction (handles both "Total Income" and "Total for Income" formats)
       const labelSets = {
-        income: ['total income', 'total revenue', 'revenue', 'sales', /^total.*(income|revenue|sales)/i],
-        net: ['net income', 'net profit', 'profit for the period', /^net (income|profit)/i],
-        expenses: ['total expenses', 'total operating expenses', 'operating expenses', /^total.*expenses/i],
-        gross: ['gross profit', /^gross.*(profit|margin)/i]
+        income: [
+          'total for income',
+          'total income',
+          'total revenue',
+          'revenue',
+          /^total\s+for\s+income$/i,
+          /^total\s+(income|revenue)$/i
+        ],
+        net: [
+          'net income',
+          'net profit',
+          'profit for the period',
+          /^net\s+(income|profit)$/i,
+          /^profit\s+for\s+the\s+period$/i
+        ],
+        expenses: [
+          'total for expenses',
+          'total for operating expenses',
+          'total expenses',
+          'total operating expenses',
+          /^total\s+for\s+(operating\s+)?expenses$/i,
+          /^total\s+(operating\s+)?expenses$/i
+        ]
       };
       
       // Extract series for each month
