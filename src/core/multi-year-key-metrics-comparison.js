@@ -1,7 +1,8 @@
 /* Generic multi-year comparison for key management metrics.
- * Reads years from comparative statement headers, including title rows such as
- * "For the Years Ended December 31, 2025, 2024 and 2023" and maps them to the
- * actual numeric columns. Latest year is current. */
+ * Reads actual year columns from comparative statements. Latest year is current.
+ * Supports title rows such as "For the Years Ended ... 2025, 2024 and 2023",
+ * but NEVER invents a year when that year has no actual amount column.
+ */
 'use strict';
 (function(){
   const clean=v=>String(v??'').replace(/\u00a0/g,' ').trim();
@@ -33,38 +34,47 @@
   function looksPL(name,rows){const s=norm(name+' '+(rows||[]).slice(0,130).flat().join(' '));return /comparative income statement|income statement|profit and loss|statement of operations|statement of earnings/.test(s)||(/net (income|profit)/.test(s)&&/(revenue|income|sales)/.test(s));}
   function looksBS(name,rows){const s=norm(name+' '+(rows||[]).slice(0,160).flat().join(' '));return /comparative balance sheet|balance sheet|statement of financial position|statement of financial condition/.test(s)||(/assets/.test(s)&&/liabilit/.test(s));}
 
-  function headerYearList(rows){
-    const out=[];
-    for(const r of (rows||[]).slice(0,20)) for(const v of r||[]) for(const y of yearsIn(v)) if(!out.includes(y)) out.push(y);
-    return out.sort((a,b)=>b-a);
-  }
   function numericColumns(rows){
     const scores=new Map();
-    for(const r of (rows||[]).slice(0,180)) for(let c=1;c<(r||[]).length;c++) if(toNum(r[c])!=null) scores.set(c,(scores.get(c)||0)+1);
+    for(const r of (rows||[]).slice(0,220)) for(let c=1;c<(r||[]).length;c++) if(toNum(r[c])!=null) scores.set(c,(scores.get(c)||0)+1);
     return [...scores.entries()].filter(x=>x[1]>=2).sort((a,b)=>a[0]-b[0]).map(x=>x[0]);
   }
+
   function discoverYearColumns(rows,sm){
     const blocked=new Set((sm?.cols||[]).filter(c=>c?.type==='percent'||c?.type==='change'||/percent|ratio|variance|change|%/i.test(clean(c?.label||c?.name))).map(c=>c.idx));
+    const amountCols=numericColumns(rows).filter(c=>!blocked.has(c));
     const direct=new Map();
-    for(const r of (rows||[]).slice(0,35)) (r||[]).forEach((v,i)=>{const ys=yearsIn(v);if(!blocked.has(i)&&ys.length===1&&!direct.has(ys[0]))direct.set(ys[0],i);});
-    for(const c of sm?.cols||[]){const ys=yearsIn(c.label);if(!blocked.has(c.idx)&&ys.length===1&&!direct.has(ys[0]))direct.set(ys[0],c.idx);}
-    const titleYears=headerYearList(rows), cols=numericColumns(rows).filter(c=>!blocked.has(c));
-    /* Some exported comparative statements declare 2025/2024/2023 in the title but
-       expose only the populated year columns below. Map latest declared years to the
-       actual amount columns from right-to-left (latest normally rightmost). */
-    if(titleYears.length&&cols.length){
-      const used=new Set(direct.values()), free=cols.filter(c=>!used.has(c));
-      const missing=titleYears.filter(y=>!direct.has(y));
-      const chosen=free.slice(-missing.length).reverse();
-      missing.forEach((y,i)=>{if(chosen[i]!=null)direct.set(y,chosen[i]);});
+    /* First and strongest rule: a year printed in the same column as its amounts. */
+    for(const r of (rows||[]).slice(0,45)){
+      for(let i=1;i<(r||[]).length;i++){
+        if(blocked.has(i)||!amountCols.includes(i)) continue;
+        const ys=yearsIn(r[i]);
+        if(ys.length===1 && !direct.has(ys[0])) direct.set(ys[0],i);
+      }
     }
+    /* Parsed column metadata is also valid only when it points to an amount column. */
+    for(const c of sm?.cols||[]){
+      const ys=yearsIn(c.label);
+      if(amountCols.includes(c.idx)&&!blocked.has(c.idx)&&ys.length===1&&!direct.has(ys[0])) direct.set(ys[0],c.idx);
+    }
+    /* Important: do NOT map title-only years onto columns. Example: title says
+       2025/2024/2023 but the actual header row has only 2024 and 2025. In that case
+       only 2024 and 2025 are real comparable years and 2023 remains unavailable. */
     return [...direct.entries()].map(([year,idx])=>({year,idx})).sort((a,b)=>b.year-a.year);
   }
+
   function exact(rows,col,patterns){
     let best=null;
-    for(const r of rows||[]){const l=rowLabel(r);if(!patterns.some(re=>re.test(l)))continue;const v=toNum(r?.[col]);if(v==null)continue;const rank=(/^total\b/.test(l)?40:0)+Math.log10(Math.abs(v)+1);if(!best||rank>best.rank)best={value:v,rank};}
+    for(const r of rows||[]){
+      const l=rowLabel(r); if(!patterns.some(re=>re.test(l))) continue;
+      const v=toNum(r?.[col]); if(v==null) continue;
+      /* Prefer totals and Net Profit/Net Income over Income from Operations. */
+      const rank=(/^total\b/.test(l)?50:0)+(/^net (income|profit)/.test(l)?80:0)+(l==='income from operations'?10:0)+Math.log10(Math.abs(v)+1);
+      if(!best||rank>best.rank) best={value:v,rank};
+    }
     return best?.value??null;
   }
+
   function statementSheets(){
     let pl=null,bs=null,ps=-1,bss=-1;
     for(const [name,rows] of Object.entries(window.state?.sheets||{})){
@@ -74,6 +84,7 @@
     }
     return {pl,bs};
   }
+
   function build(){
     const md=window.state?.model;if(!md)return null;
     const {pl,bs}=statementSheets(), py=pl?discoverYearColumns(pl.rows,pl.sm):[], by=bs?discoverYearColumns(bs.rows,bs.sm):[];
@@ -85,6 +96,7 @@
     const comparisons=rows.map(r=>({key:r.key,label:r.label,current:r.values[latestYear],currentYear:latestYear,values:r.values,previous:previousYears.map(y=>{const v=r.values[y],cur=r.values[latestYear],variance=cur!=null&&v!=null?cur-v:null;return {year:y,value:v,variance,variancePct:variance!=null&&v!=null&&Math.abs(v)>.000001?variance/Math.abs(v)*100:null};})}));
     return md.multiYearComparison=md.yearWiseComparison={latestYear,previousYears,years,comparisons,source:{pl:pl?.name||null,bs:bs?.name||null}};
   }
+
   function table(d){
     if(!d||d.years.length<2)return '';
     const heads=d.years.map((y,i)=>`<th>${y}${i===0?' (Latest)':''}</th>`).join('');
