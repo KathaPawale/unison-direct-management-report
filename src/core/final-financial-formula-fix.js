@@ -39,11 +39,32 @@
   md.liabilityBifurcation=[{label:'Current Liabilities',value:currentLiab,detected:currentLiab!=null},{label:'Long-Term Liabilities',value:longLiab,detected:longLiab!=null}];md.liabilityBifurcationDenominator=ld;
   md.finalBsAudit={sheet:p.name,column:c,totalAssets,currentAssets,fixedAssets,currentLiabilities:currentLiab,longTermLiabilities:longLiab,totalLiabilities:totalLiab,equity,totalLiabilitiesAndEquity:totalLE};
  }
- function expenses(md){const p=pick('pl');if(!p)return;const c=colOf(p),rows=p.rows;let total=find(rows,[/^total (for )?expenses$/, /^total expenses$/, /^expenses total$/, /^total operating expenses$/],c);if(total==null)total=md.metrics?.expenses;if(total==null)return;total=Math.abs(total);if(md.metrics)md.metrics.expenses=total;
+ function expenses(md){
+  const p=pick('pl');if(!p)return;const c=colOf(p),rows=p.rows;
+  let total=find(rows,[/^total (for )?expenses$/, /^total expenses$/, /^expenses total$/, /^total operating expenses$/, /^total (for )?operating expenses$/],c);
+  if(total==null)total=md.metrics?.expenses;if(total==null)return;
+  total=Math.abs(total);if(md.metrics)md.metrics.expenses=total;
   const out=[];let inExp=false;
-  for(const r of rows){const l=label(r),v=val(r,c);if(/^expenses$|^operating expenses$/.test(l)){inExp=true;continue}if(!inExp)continue;if(/^total (for )?expenses$|^total expenses$|^net income|^net profit|^other income/.test(l))break;if(v==null||Math.abs(v)<0.005||/^total\b|^sub ?total\b/.test(l))continue;out.push({label:(r||[]).find(x=>!numeric(x)&&String(x??'').trim())||l,value:Math.abs(v)});}
-  if(out.length){const seen=new Set();md.expenseGroups=out.filter(x=>{const k=norm(x.label);if(seen.has(k))return false;seen.add(k);return true}).sort((a,b)=>b.value-a.value).map(x=>({...x,pct:total?x.value/total*100:0}));}
-  md.expenseDenominator=total;md.finalExpenseAudit={sheet:p.name,column:c,totalExpenses:total,categories:md.expenseGroups?.length||0};
+  for(const r of rows){
+   const l=label(r),v=val(r,c);
+   if(/^expenses$|^operating expenses$|^expense$/.test(l)){inExp=true;continue}
+   if(!inExp)continue;
+   if(/^total (for )?expenses$|^total expenses$|^expenses total$|^total (for )?operating expenses$|^net income|^net profit|^other income/.test(l))break;
+   if(v==null||Math.abs(v)<0.005||/^total\b|^sub ?total\b/.test(l))continue;
+   const raw=(r||[]).find(x=>!numeric(x)&&String(x??'').trim());
+   if(!raw)continue;
+   const amount=Math.abs(v);
+   out.push({label:String(raw).trim(),value:amount,amount,totalExpense:total,pct:total?amount/total*100:0,expenseRatio:total?amount/total*100:0});
+  }
+  if(out.length){
+   const seen=new Set();
+   md.expenseGroups=out.filter(x=>{const k=norm(x.label);if(seen.has(k))return false;seen.add(k);return true}).sort((a,b)=>b.value-a.value);
+  } else if(Array.isArray(md.expenseGroups)){
+   md.expenseGroups=md.expenseGroups.map(x=>{const amount=Math.abs(Number(x.value??x.amount??0));const ratio=total?amount/total*100:0;return {...x,value:amount,amount,totalExpense:total,pct:ratio,expenseRatio:ratio};}).sort((a,b)=>b.value-a.value);
+  }
+  md.expenseDenominator=total;
+  md.expenseRatioFormula='Expense / Total Expense * 100';
+  md.finalExpenseAudit={sheet:p.name,column:c,totalExpenses:total,categories:md.expenseGroups?.length||0,formula:md.expenseRatioFormula};
  }
  function apply(md){if(!md)return md;bs(md);expenses(md);return md;}
  if(typeof renderDashboard==='function'&&!window.__finalFinancialFormulaDashboard){window.__finalFinancialFormulaDashboard=true;const base=renderDashboard;renderDashboard=function(){apply(state?.model);return base.apply(this,arguments)}}
