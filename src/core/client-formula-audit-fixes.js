@@ -5,43 +5,80 @@
   const norm=s=>String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
   const findLine=(sm,res)=>(sm?.lines||[]).find(l=>res.some(r=>r.test(norm(l.label))));
   const value=(sm,l,c)=>l&&c!=null?n(((state.sheets||{})[sm.name]||[])[l.r]?.[c]):0;
-  const col=sm=>(sm?.cols||[]).find(c=>c.type==='current')?.idx ?? (sm?.cols||[]).find(c=>c.type==='rowTotal')?.idx ?? (sm?.cols||[]).filter(c=>c.idx>0&&c.type!=='change'&&c.type!=='percent').slice(-1)[0]?.idx;
   const year=s=>{const m=String(s||'').match(/\b(19|20)\d{2}\b/);return m?+m[0]:null;};
+  const monthNo=s=>{const m=String(s||'').toLowerCase().match(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/);if(!m)return null;return ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'].findIndex(x=>m[1].slice(0,3)===x)+1;};
   const cleanPct=v=>Number.isFinite(v)?Math.max(0,Math.min(100,v)):0;
+  const col=sm=>(sm?.cols||[]).find(c=>c.type==='current')?.idx ?? (sm?.cols||[]).find(c=>c.type==='rowTotal')?.idx ?? (sm?.cols||[]).filter(c=>c.idx>0&&c.type!=='change'&&c.type!=='percent').slice(-1)[0]?.idx;
+  const metricLines=sm=>({
+    income:findLine(sm,[/^total for income$/, /^total income$/, /^total revenue$/, /^revenue$/, /^sales$/, /total.*(income|revenue|sales)/]),
+    gross:findLine(sm,[/^gross profit$/]),
+    expenses:findLine(sm,[/^total for expenses$/, /^total expenses$/, /^total operating expenses$/, /total.*expenses/]),
+    net:findLine(sm,[/^net income$/, /^net profit$/, /^profit for the period$/])
+  });
+  const readMetricSet=(sm,cols)=>{const L=metricLines(sm),sum=l=>l?cols.reduce((s,c)=>s+value(sm,l,c.idx),0):0;const income=sum(L.income),gross=sum(L.gross);return {income,gross:gross||income,expenses:sum(L.expenses),net:sum(L.net)};};
+  const periodCols=sm=>(sm?.cols||[]).filter(c=>c.idx>0&&c.type!=='label'&&c.type!=='change'&&c.type!=='percent'&&c.type!=='rowTotal');
+
+  function deriveComparative(md){
+    const candidates=[md.roles?.plComparative,md.roles?.plMonthly,md.roles?.pl].filter(Boolean).map(name=>md.sheetModels?.[name]).filter(Boolean);
+    let chosen=null,currentCols=[],priorCols=[];
+    for(const sm of candidates){
+      const pcs=periodCols(sm), months=pcs.map(c=>({c,y:year(c.label),m:monthNo(c.label)})).filter(x=>x.y&&x.m);
+      const monthYears=[...new Set(months.map(x=>x.y))].sort((a,b)=>b-a);
+      if(monthYears.length>=2){
+        const cy=monthYears[0],py=monthYears[1],cm=months.filter(x=>x.y===cy),available=new Set(cm.map(x=>x.m));
+        const pm=months.filter(x=>x.y===py&&available.has(x.m));
+        if(cm.length&&pm.length){chosen=sm;currentCols=cm.map(x=>x.c);priorCols=pm.map(x=>x.c);break;}
+      }
+      const annual=pcs.map(c=>({c,y:year(c.label)})).filter(x=>x.y&&!monthNo(x.c.label));
+      const ys=[...new Set(annual.map(x=>x.y))].sort((a,b)=>b-a);
+      if(ys.length>=2){chosen=sm;currentCols=annual.filter(x=>x.y===ys[0]).map(x=>x.c).slice(0,1);priorCols=annual.filter(x=>x.y===ys[1]).map(x=>x.c).slice(0,1);break;}
+      const cur=(sm.cols||[]).find(c=>c.type==='current'),pri=(sm.cols||[]).find(c=>c.type==='prior');
+      const cy=year(cur?.label),py=year(pri?.label);
+      if(cur&&pri&&cur.idx!==pri.idx&&((cy&&py&&cy!==py)||/prior|previous|last year/i.test(String(pri.label||'')))){chosen=sm;currentCols=[cur];priorCols=[pri];break;}
+    }
+    if(chosen&&currentCols.length&&priorCols.length){
+      const cur=readMetricSet(chosen,currentCols),pri=readMetricSet(chosen,priorCols);
+      md.metrics={...(md.metrics||{}),...cur};
+      md.prior={...(md.prior||{}),...pri};
+      md.comparativeAudit={sheet:chosen.name,currentColumns:currentCols.map(c=>c.label),priorColumns:priorCols.map(c=>c.label)};
+      return {sm:chosen,currentCols,priorCols};
+    }
+    md.prior={income:null,gross:null,expenses:null,net:null};
+    return null;
+  }
+
+  function directExpenseRows(sm){
+    const lines=sm?.lines||[], opener=lines.findIndex(l=>/^(expenses|operating expenses)$/.test(norm(l.label))), totalIdx=lines.findIndex(l=>/^total (for )?(operating )?expenses$/.test(norm(l.label)));
+    if(opener<0)return [];
+    const end=totalIdx>opener?totalIdx:lines.length;
+    const out=[];let skipTo=-1;
+    for(let i=opener+1;i<end;i++){
+      const l=lines[i];if(l.r<=skipTo)continue;
+      if(l.totalIdx!=null&&l.totalIdx>i&&l.totalIdx<end){const tl=lines[l.totalIdx];out.push({label:l.label,line:tl});skipTo=tl.r;}
+      else if(l.kind==='account')out.push({label:l.label,line:l});
+    }
+    return out;
+  }
+
+  function fixExpenses(md,ctx){
+    const sm=ctx?.sm || (md.roles?.plMonthly&&md.sheetModels?.[md.roles.plMonthly]) || (md.roles?.plComparative&&md.sheetModels?.[md.roles.plComparative]) || (md.roles?.pl&&md.sheetModels?.[md.roles.pl]);
+    if(!sm)return;
+    let cols=ctx?.currentCols||[];
+    if(!cols.length){const c=col(sm);if(c!=null)cols=[{idx:c,label:'current'}];}
+    const L=metricLines(sm),total=L.expenses?Math.abs(cols.reduce((s,c)=>s+value(sm,L.expenses,c.idx),0)):Math.abs(n(md.metrics?.expenses));
+    const rows=directExpenseRows(sm);
+    if(rows.length&&total){
+      md.expenseGroups=rows.map(r=>{const v=cols.reduce((s,c)=>s+value(sm,r.line,c.idx),0);return {label:r.label,value:v,pct:cleanPct(Math.abs(v)/total*100)};}).filter(x=>Math.abs(x.value)>0.004).sort((a,b)=>Math.abs(b.value)-Math.abs(a.value));
+    }else if(Array.isArray(md.expenseGroups)){
+      md.expenseGroups=md.expenseGroups.map(x=>({...x,pct:cleanPct(total?Math.abs(n(x.value))/total*100:0)})).sort((a,b)=>Math.abs(n(b.value))-Math.abs(n(a.value)));
+    }
+  }
 
   function apply(md){
     if(!md)return md;
+    const comparative=deriveComparative(md);
+    fixExpenses(md,comparative);
 
-    /* #10 + highlighted comparative screenshot: never manufacture a Prior Year.
-       A valid prior requires either two distinct year columns, or distinct current/prior
-       columns whose labels genuinely identify different periods. */
-    const pn=md.roles?.plComparative||md.roles?.plMonthly||md.roles?.pl, pl=pn&&md.sheetModels?.[pn];
-    if(pl){
-      const periodCols=(pl.cols||[]).filter(c=>c.idx>0&&c.type!=='label'&&c.type!=='change'&&c.type!=='percent'&&c.type!=='rowTotal');
-      const years=periodCols.map(c=>year(c.label)).filter(Boolean);
-      const uniq=[...new Set(years)];
-      const current=(pl.cols||[]).find(c=>c.type==='current');
-      const prior=(pl.cols||[]).find(c=>c.type==='prior');
-      const cy=year(current?.label), py=year(prior?.label);
-      const distinctTypedPeriods=!!(current&&prior&&current.idx!==prior.idx&&((cy&&py&&cy!==py)||(/prior|previous|last year/i.test(String(prior.label||''))&&!/^current$/i.test(String(prior.label||'')))));
-      if(uniq.length<2&&!distinctTypedPeriods){md.prior={income:null,gross:null,expenses:null,net:null};}
-    }
-
-    /* #12/#19 + highlighted percentages: Expense / Total Expense * 100 exactly.
-       Top-10 is a subset, so its sum may be below 100 but must never exceed 100 from formula error. */
-    if(Array.isArray(md.expenseGroups)){
-      const total=Math.abs(n(md.metrics?.expenses));
-      md.expenseGroups=md.expenseGroups.map(x=>({...x,pct:cleanPct(total?Math.abs(n(x.value))/total*100:0)})).sort((a,b)=>Math.abs(n(b.value))-Math.abs(n(a.value)));
-    }
-
-    /* #9/#14 + highlighted BS screenshot.
-       Show only Current Assets and Fixed Assets on asset side — never accumulated depreciation as a separate slice.
-       Requested formulas:
-       Current Assets / Total Assets * 100
-       Fixed Assets / Total Assets * 100
-       Current Liabilities / Total Liabilities & Equity * 100
-       Long-Term Liabilities / Total Liabilities & Equity * 100
-       Equity / Total Liabilities & Equity * 100 */
     const bn=md.roles?.bs, bs=bn&&md.sheetModels?.[bn];
     if(bs){
       const c=col(bs);
@@ -54,41 +91,19 @@
       const totalLE=findLine(bs,[/^total liabilities (and|&) equity$/, /^total liabilities and equity$/]);
       const ta=Math.abs(value(bs,totalAssets,c))||Math.abs(n(md.metrics?.assets));
       const tle=Math.abs(value(bs,totalLE,c))||ta;
-      const ca=value(bs,currentAssets,c);
-      /* If the workbook has no explicit net/fixed-asset total, use the balance-sheet identity as a safe residual.
-         This prevents accumulated depreciation being displayed as its own positive category. */
-      let fa=value(bs,fixedAssets,c);
-      if(Math.abs(fa)<0.005&&ta)fa=ta-ca;
-      const cl=value(bs,currentLiab,c), ll=value(bs,longLiab,c), eq=value(bs,equity,c);
-      md.bsComposition={
-        assets:[
-          {label:'Current Assets',value:ca,pct:cleanPct(ta?Math.abs(ca)/ta*100:0)},
-          {label:'Fixed Assets',value:fa,pct:cleanPct(ta?Math.abs(fa)/ta*100:0)}
-        ],
-        liabEquity:[
-          {label:'Current Liabilities',value:cl,pct:cleanPct(tle?Math.abs(cl)/tle*100:0)},
-          {label:'Long-Term Liabilities',value:ll,pct:cleanPct(tle?Math.abs(ll)/tle*100:0)},
-          {label:'Equity',value:eq,pct:cleanPct(tle?Math.abs(eq)/tle*100:0)}
-        ]
-      };
+      const ca=value(bs,currentAssets,c);let fa=value(bs,fixedAssets,c);if(Math.abs(fa)<0.005&&ta)fa=ta-ca;
+      const cl=value(bs,currentLiab,c),ll=value(bs,longLiab,c),eq=value(bs,equity,c);
+      md.bsComposition={assets:[{label:'Current Assets',value:ca,pct:cleanPct(ta?Math.abs(ca)/ta*100:0)},{label:'Fixed Assets',value:fa,pct:cleanPct(ta?Math.abs(fa)/ta*100:0)}],liabEquity:[{label:'Current Liabilities',value:cl,pct:cleanPct(tle?Math.abs(cl)/tle*100:0)},{label:'Long-Term Liabilities',value:ll,pct:cleanPct(tle?Math.abs(ll)/tle*100:0)},{label:'Equity',value:eq,pct:cleanPct(tle?Math.abs(eq)/tle*100:0)}]};
       md.liabilityBifurcation=[{label:'Current Liabilities',value:cl},{label:'Long-Term Liabilities',value:ll}];
     }
 
-    /* #11/#17/#18: annual/YTD values must never be copied into January.
-       Keep only real month columns and preserve the actual available range (e.g. Jan–Jun). */
     if(Array.isArray(md.months)){
-      const real=md.months.map((m,i)=>({m,i})).filter(x=>/^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i.test(String(x.m?.short||x.m?.label||'')));
-      if(real.length&&real.length!==md.months.length){
-        md.months=real.map(x=>x.m);
-        if(Array.isArray(md.monthlyRevenue))md.monthlyRevenue=real.map(x=>n(md.monthlyRevenue[x.i]));
-        if(Array.isArray(md.monthlyNet))md.monthlyNet=real.map(x=>n(md.monthlyNet[x.i]));
-        if(Array.isArray(md.monthlyExpenses))md.monthlyExpenses=real.map(x=>n(md.monthlyExpenses[x.i]));
-      }
+      const real=md.months.map((m,i)=>({m,i})).filter(x=>monthNo(x.m?.short||x.m?.label));
+      if(real.length&&real.length!==md.months.length){md.months=real.map(x=>x.m);if(Array.isArray(md.monthlyRevenue))md.monthlyRevenue=real.map(x=>n(md.monthlyRevenue[x.i]));if(Array.isArray(md.monthlyNet))md.monthlyNet=real.map(x=>n(md.monthlyNet[x.i]));if(Array.isArray(md.monthlyExpenses))md.monthlyExpenses=real.map(x=>n(md.monthlyExpenses[x.i]));}
     }
     return md;
   }
 
-  /* Final source of truth after all older compatibility patches. */
   if(typeof renderDashboard==='function'&&!window.__clientFormulaAuditDashboard){window.__clientFormulaAuditDashboard=true;const base=renderDashboard;renderDashboard=function(){if(state?.model)apply(state.model);return base.apply(this,arguments);};}
   if(typeof buildPages==='function'&&!window.__clientFormulaAuditReport){window.__clientFormulaAuditReport=true;const base=buildPages;buildPages=function(opts){if(state?.model)apply(state.model);return base.call(this,opts||{});};}
   window.applyClientFormulaAuditFixes=apply;
