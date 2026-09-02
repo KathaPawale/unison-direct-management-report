@@ -7,10 +7,10 @@
   function detectExtraRoles(md){
     if(!md||!md.roles||!md.sheetModels) return md;
     for(const [name,sm] of Object.entries(md.sheetModels)){
-      const t=norm(name), rows=(state.sheets&&state.sheets[name])||[], head=norm(rows.slice(0,12).flat().join(' ')), all=t+' '+head;
+      const t=norm(name), rows=(state.sheets&&state.sheets[name])||[], head=norm(rows.slice(0,25).flat().join(' ')), all=t+' '+head;
       if(!md.roles.ar && (/\b(ar|a r)\b.*(aging|ageing)/.test(all)||/accounts receivable.*(aging|ageing)/.test(all))){md.roles.ar=name;sm.role='ar';}
       if(!md.roles.ap && (/\b(ap|a p)\b.*(aging|ageing)/.test(all)||/accounts payable.*(aging|ageing)/.test(all))){md.roles.ap=name;sm.role='ap';}
-      if(!md.roles.bs && (/balance sheet/.test(all)||(/\bassets\b/.test(head)&&/liabilit/.test(head)&&/equity/.test(head)))){md.roles.bs=name;sm.role='bs';}
+      if(!md.roles.bs && (/balance sheet|statement of financial position/.test(all)||(/\bassets\b/.test(head)&&/liabilit/.test(head)&&/equity|capital|net assets/.test(head)))){md.roles.bs=name;sm.role='bs';}
       if(!md.roles.plMonthly){const mc=(sm.cols||[]).filter(c=>c.type==='month'||monthRe.test(String(c.label||''))).length;if(mc>=2&&(/profit/.test(all)||/income/.test(all)||/revenue/.test(all))){md.roles.plMonthly=name;sm.role='plMonthly';}}
     }
     return md;
@@ -24,25 +24,48 @@
     const tc=(sm.cols||[]).find(c=>c.type==='rowTotal'||/^total$/i.test(c.label||''));const total=totalLine&&tc?n((rows[totalLine.r]||[])[tc.idx]):vals.reduce((s,x)=>s+x.value,0);return {buckets:vals,total};
   }
   function line(sm,re){return (sm.lines||[]).find(l=>re.test(norm(l.label)));}
-  function currentCol(sm){return (sm.cols||[]).find(c=>c.type==='rowTotal')?.idx ?? (sm.cols||[]).find(c=>c.type==='current')?.idx ?? (sm.cols||[]).filter(c=>c.idx>0).slice(-1)[0]?.idx;}
+  function currentCol(sm){return (sm.cols||[]).find(c=>c.type==='rowTotal')?.idx ?? (sm.cols||[]).find(c=>c.type==='current')?.idx ?? (sm.cols||[]).filter(c=>c.idx>0&&c.type!=='change'&&c.type!=='percent').slice(-1)[0]?.idx;}
+  function valueAt(sm,rows,l,c){return l&&c!=null?n((rows[l.r]||[])[c]):0;}
+  function findAny(sm,res){return (sm.lines||[]).find(l=>res.some(re=>re.test(norm(l.label))));}
+  function sectionSum(sm,rows,c,headerRes,stopRes){
+    const lines=sm.lines||[];const start=lines.findIndex(l=>headerRes.some(re=>re.test(norm(l.label))));if(start<0)return 0;
+    let sum=0,found=false;
+    for(let i=start+1;i<lines.length;i++){
+      const l=lines[i],lab=norm(l.label);if(stopRes.some(re=>re.test(lab)))break;
+      if(/^total\b/.test(lab)||/^subtotal\b/.test(lab))continue;
+      if(l.kind==='account'||(!l.kind&&lab)){const v=valueAt(sm,rows,l,c);if(Math.abs(v)>0.004){sum+=v;found=true;}}
+    }
+    return found?sum:0;
+  }
   function fixBs(md){
     const sm=md.roles.bs&&md.sheetModels[md.roles.bs];if(!sm)return;const rows=state.sheets[sm.name]||[],c=currentCol(sm);if(c==null)return;
-    const get=re=>{const l=line(sm,re);return l?n((rows[l.r]||[])[c]):0;};
-    let current=get(/^total (for )?current liabilities$|^current liabilities$/);
-    let longTerm=get(/^total (for )?(long term|longterm|non current) liabilities$|^(long term|longterm|non current) liabilities$/);
-    const totalLiabilities=get(/^total (for )?liabilities$/);
-    const totalLE=get(/^total (for )?liabilities (and|&) equity$|^liabilities (and|&) equity$/);
-    if(Math.abs(current)<0.005 && Math.abs(totalLiabilities)>0.005 && Math.abs(longTerm)<0.005) current=totalLiabilities;
+    const currentLabels=[/^total (for )?current liabilities$/, /^current liabilities$/, /^total (for )?short term liabilities$/, /^short term liabilities$/, /^total (for )?current obligations$/, /^current obligations$/, /^total (for )?current payables$/, /^current payables$/];
+    const longLabels=[/^total (for )?(long term|longterm|non current) liabilities$/, /^(long term|longterm|non current) liabilities$/, /^total (for )?long term debt$/, /^long term debt$/, /^total (for )?non current obligations$/, /^non current obligations$/];
+    const totalLabels=[/^total (for )?liabilities$/, /^liabilities total$/, /^total liabilities and provisions$/];
+    const leLabels=[/^total (for )?liabilities (and|&) equity$/, /^liabilities (and|&) equity$/, /^total liabilities (and|&) (equity|capital)$/, /^total liabilities and shareholders equity$/, /^total liabilities and stockholders equity$/, /^total liabilities and net assets$/];
+    const assetLabels=[/^total (for )?assets$/, /^assets total$/];
+    let current=valueAt(sm,rows,findAny(sm,currentLabels),c);
+    let longTerm=valueAt(sm,rows,findAny(sm,longLabels),c);
+    let totalLiabilities=valueAt(sm,rows,findAny(sm,totalLabels),c);
+    let totalLE=valueAt(sm,rows,findAny(sm,leLabels),c);
+    const totalAssets=valueAt(sm,rows,findAny(sm,assetLabels),c);
+    if(Math.abs(current)<0.005) current=sectionSum(sm,rows,c,[/^current liabilities$/, /^short term liabilities$/, /^current obligations$/, /^current payables$/],[/^(long term|longterm|non current) liabilities$/, /^equity$/, /^capital$/, /^total liabilities/]);
+    if(Math.abs(longTerm)<0.005) longTerm=sectionSum(sm,rows,c,[/^(long term|longterm|non current) liabilities$/, /^long term debt$/, /^non current obligations$/],[/^equity$/, /^capital$/, /^total liabilities/, /^total liabilities and/]);
+    if(Math.abs(totalLiabilities)<0.005 && (Math.abs(current)>0.005||Math.abs(longTerm)>0.005)) totalLiabilities=current+longTerm;
+    if(Math.abs(current)<0.005 && Math.abs(totalLiabilities)>0.005 && Math.abs(longTerm)>0.005) current=totalLiabilities-longTerm;
     if(Math.abs(longTerm)<0.005 && Math.abs(totalLiabilities)>0.005 && Math.abs(current)>0.005) longTerm=totalLiabilities-current;
+    if(Math.abs(current)<0.005 && Math.abs(longTerm)<0.005 && Math.abs(totalLiabilities)>0.005) current=totalLiabilities;
+    if(Math.abs(totalLE)<0.005) totalLE=totalAssets||Math.abs(n(md.metrics&&md.metrics.assets));
+    if(Math.abs(totalLE)<0.005){const eq=valueAt(sm,rows,findAny(sm,[/^total (for )?equity$/, /^equity$/, /^total (for )?(shareholders|stockholders) equity$/, /^total capital$/, /^net assets$/]),c);totalLE=totalLiabilities+eq;}
     md.liabilityBifurcation=[{label:'Current Liabilities',value:current},{label:'Long-Term Liabilities',value:longTerm}];
-    md.liabilityBifurcationDenominator=Math.abs(totalLE)||Math.abs(n(md.metrics&&md.metrics.assets))||Math.abs(current)+Math.abs(longTerm);
+    md.liabilityBifurcationDenominator=Math.abs(totalLE)||Math.abs(totalLiabilities)||Math.abs(current)+Math.abs(longTerm);
+    md.liabilityAudit={sheet:sm.name,column:c,current,longTerm,totalLiabilities,totalLiabilitiesAndEquity:totalLE};
   }
   function liabilityHtml(md,report){
     if(!md||!Array.isArray(md.liabilityBifurcation))return '';
-    const items=md.liabilityBifurcation;
-    const total=Math.abs(n(md.liabilityBifurcationDenominator))||items.reduce((s,x)=>s+Math.abs(n(x.value)),0);
-    const rows=items.map(x=>{const pc=total?Math.abs(n(x.value))/total*100:0;return `<tr><td>${escapeHtml(x.label)}</td><td class="${n(x.value)<0?'neg':''}">${money(n(x.value))}</td><td>${pct(pc)}</td></tr>`;}).join('');
-    return `${report?'<div class="report-section-title">':'<h3>'}Liabilities Bifurcation${report?'</div>':'</h3>'}<table class="${report?'report-mini-table':'comparison'}"><thead><tr><th>Liability Type</th><th>Amount</th><th>% of Liabilities & Equity</th></tr></thead><tbody>${rows}</tbody></table>`;
+    const items=md.liabilityBifurcation,total=Math.abs(n(md.liabilityBifurcationDenominator))||items.reduce((s,x)=>s+Math.abs(n(x.value)),0);
+    const body=items.map(x=>{const pc=total?Math.abs(n(x.value))/total*100:0;return `<tr><td>${escapeHtml(x.label)}</td><td class="${n(x.value)<0?'neg':''}">${money(n(x.value))}</td><td>${pct(pc)}</td></tr>`;}).join('');
+    return `${report?'<div class="report-section-title">':'<h3>'}Liabilities Bifurcation${report?'</div>':'</h3>'}<table class="${report?'report-mini-table':'comparison'}"><thead><tr><th>Liability Type</th><th>Amount</th><th>% of Liabilities & Equity</th></tr></thead><tbody>${body}</tbody></table>`;
   }
   function fixExpenses(md){const total=Math.abs(n(md.metrics&&md.metrics.expenses));if(total&&Array.isArray(md.expenseGroups))md.expenseGroups=md.expenseGroups.map(x=>({...x,pct:Math.abs(n(x.value))/total*100})).sort((a,b)=>Math.abs(n(b.value))-Math.abs(n(a.value)));}
   function fixMonths(md){
