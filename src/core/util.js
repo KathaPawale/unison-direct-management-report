@@ -7,10 +7,11 @@ const $$ = s => [...document.querySelectorAll(s)];
 const MONTHS_FALLBACK = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 function money(n){
-  return Number(n || 0).toLocaleString('en-US', {
-    style: 'currency', currency: 'USD',
+  const v = Number(n || 0);
+  const a = Math.abs(v).toLocaleString('en-US', {
     minimumFractionDigits: 2, maximumFractionDigits: 2
   });
+  return v < 0 ? `($${a})` : `$${a}`;
 }
 
 /* Compact money for chart labels: $1.2M / $45K / $980 */
@@ -21,7 +22,7 @@ function moneyShort(n){
   return sign + '$' + a.toFixed(0);
 }
 
-function pct(n, dp = 1){
+function pct(n, dp = 2){
   return (Number(n) || 0).toFixed(dp) + '%';
 }
 
