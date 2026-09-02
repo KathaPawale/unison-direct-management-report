@@ -28,16 +28,21 @@
   function fixBs(md){
     const sm=md.roles.bs&&md.sheetModels[md.roles.bs];if(!sm)return;const rows=state.sheets[sm.name]||[],c=currentCol(sm);if(c==null)return;
     const get=re=>{const l=line(sm,re);return l?n((rows[l.r]||[])[c]):0;};
-    const current=get(/^(total )?current liabilities$/);
-    const longTerm=get(/^(total )?(long term|longterm|non current) liabilities$/);
-    /* Always retain both categories, including a real zero balance. */
+    let current=get(/^total (for )?current liabilities$|^current liabilities$/);
+    let longTerm=get(/^total (for )?(long term|longterm|non current) liabilities$|^(long term|longterm|non current) liabilities$/);
+    const totalLiabilities=get(/^total (for )?liabilities$/);
+    const totalLE=get(/^total (for )?liabilities (and|&) equity$|^liabilities (and|&) equity$/);
+    if(Math.abs(current)<0.005 && Math.abs(totalLiabilities)>0.005 && Math.abs(longTerm)<0.005) current=totalLiabilities;
+    if(Math.abs(longTerm)<0.005 && Math.abs(totalLiabilities)>0.005 && Math.abs(current)>0.005) longTerm=totalLiabilities-current;
     md.liabilityBifurcation=[{label:'Current Liabilities',value:current},{label:'Long-Term Liabilities',value:longTerm}];
+    md.liabilityBifurcationDenominator=Math.abs(totalLE)||Math.abs(n(md.metrics&&md.metrics.assets))||Math.abs(current)+Math.abs(longTerm);
   }
   function liabilityHtml(md,report){
     if(!md||!Array.isArray(md.liabilityBifurcation))return '';
-    const items=md.liabilityBifurcation,total=items.reduce((s,x)=>s+Math.abs(n(x.value)),0);
+    const items=md.liabilityBifurcation;
+    const total=Math.abs(n(md.liabilityBifurcationDenominator))||items.reduce((s,x)=>s+Math.abs(n(x.value)),0);
     const rows=items.map(x=>{const pc=total?Math.abs(n(x.value))/total*100:0;return `<tr><td>${escapeHtml(x.label)}</td><td class="${n(x.value)<0?'neg':''}">${money(n(x.value))}</td><td>${pct(pc)}</td></tr>`;}).join('');
-    return `${report?'<div class="report-section-title">':'<h3>'}Liabilities Bifurcation${report?'</div>':'</h3>'}<table class="${report?'report-mini-table':'comparison'}"><thead><tr><th>Liability Type</th><th>Amount</th><th>% of Liabilities</th></tr></thead><tbody>${rows}</tbody></table>`;
+    return `${report?'<div class="report-section-title">':'<h3>'}Liabilities Bifurcation${report?'</div>':'</h3>'}<table class="${report?'report-mini-table':'comparison'}"><thead><tr><th>Liability Type</th><th>Amount</th><th>% of Liabilities & Equity</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
   function fixExpenses(md){const total=Math.abs(n(md.metrics&&md.metrics.expenses));if(total&&Array.isArray(md.expenseGroups))md.expenseGroups=md.expenseGroups.map(x=>({...x,pct:Math.abs(n(x.value))/total*100})).sort((a,b)=>Math.abs(n(b.value))-Math.abs(n(a.value)));}
   function fixMonths(md){
