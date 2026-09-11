@@ -62,7 +62,7 @@ function _sumSpan(ctx, sm, openerIdx, c){
     if (l.totalIdx !== null){
       sum += _val(ctx.overlay, sm.name, sm.lines[l.totalIdx].r, c);
       skipUntil = sm.lines[l.totalIdx].r;
-    } else if (l.kind === 'account' || l.kind === 'computed'){
+    } else if (l.kind === 'account'){
       sum += _val(ctx.overlay, sm.name, l.r, c);
     }
   }
@@ -106,31 +106,70 @@ function _sumGrand(ctx, sm, grandIdx, c){
   return sum;
 }
 
-/* P&L formula rows, in statement order, for column c. */
+/* ---------- P&L formula rows ----------
+ * Lines are matched on their normalised label (account numbers removed, "&" → "and"), so QuickBooks
+ * Online ("Total for Expenses"), QuickBooks Desktop ("Total Expense", "Net Ordinary Income") and
+ * spreadsheet layouts ("Total Revenue", "Total Operating Expenses") all resolve.
+ * The formulas are only applied when they reproduce the figures already printed in the uploaded
+ * statement for that column; if the layout is not understood, nothing is recomputed and an advisory
+ * is shown instead — a wrong automatic adjustment is never written. */
+const _RX = {
+  income:   /^total (for )?(income|revenues?|sales|operating revenues?|net sales|sales revenue|ordinary income)$|^(income|revenues?|sales) total$/,
+  incomeSec:/^(income|revenues?|sales|operating revenues?|ordinary income)$/,
+  cogs:     /^total (for )?(cost of goods sold|cogs|cost of sales|cost of revenues?|costs? of services|direct costs?)$/,
+  cogsSec:  /^(cost of goods sold|cogs|cost of sales|cost of revenues?|costs? of services|direct costs?)$/,
+  gross:    /^gross (profit|margin)$/,
+  expenses: /^total (for )?(expenses?|operating expenses?|general and administrative expenses?|overhead expenses?)$|^(expenses?|operating expenses?) total$/,
+  expSec:   /^(expenses?|operating expenses?|general and administrative expenses?|overhead expenses?)$/,
+  noi:      /^net (operating|ordinary) (income|profit|loss)$/,
+  oi:       /^total (for )?(other income|other revenues?|non operating income)$/,
+  oiSec:    /^(other income|other revenues?|non operating income)$/,
+  oe:       /^total (for )?(other expenses?|non operating expenses?)$/,
+  oeSec:    /^(other expenses?|non operating expenses?)$/,
+  nother:   /^net other (income|expenses?|income expense)$/,
+  net:      /^net (income|profit|loss|income loss|earnings)$/
+};
+function _findLine(sm, rx, kinds){
+  for (let i = 0; i < sm.lines.length; i++){
+    const l = sm.lines[i];
+    if (kinds && !kinds.includes(l.kind)) continue;
+    if (rx.test(labelKey(l.label))) return i;
+  }
+  return null;
+}
+function _formulaPlan(sm){
+  if (sm._formulaPlan !== undefined) return sm._formulaPlan;
+  const T = ['total', 'grandTotal', 'computed'];
+  const f = (rx, kinds) => _findLine(sm, rx, kinds);
+  const plan = { income: f(_RX.income, T), cogs: f(_RX.cogs, T), gross: f(_RX.gross, T), expenses: f(_RX.expenses, T),
+                 noi: f(_RX.noi, T), oi: f(_RX.oi, T), oe: f(_RX.oe, T), nother: f(_RX.nother, T), net: f(_RX.net, T) };
+  /* A section that exists without a total line cannot be re-summed reliably. */
+  const sec = rx => f(rx, ['section']) !== null;
+  plan.ok = plan.income !== null && plan.net !== null &&
+    !(plan.cogs === null && sec(_RX.cogsSec)) && !(plan.expenses === null && sec(_RX.expSec)) &&
+    !(plan.oi === null && sec(_RX.oiSec)) && !(plan.oe === null && sec(_RX.oeSec));
+  sm._formulaPlan = plan;
+  return plan;
+}
+function _evalFormulas(plan, read){
+  const g = k => plan[k] === null ? 0 : read(plan[k]);
+  const gross = g('income') - g('cogs');
+  const noi = gross - g('expenses');
+  const nother = g('oi') - g('oe');
+  return { gross, noi, nother, net: noi + nother };
+}
 function _recomputeFormulas(ctx, sm, c){
-  const get = label => {
-    const i = _lineIdxByLabel(sm, label);
-    return i === null ? null : _val(ctx.overlay, sm.name, sm.lines[i].r, c);
-  };
-  const setIf = (label, value) => {
-    const i = _lineIdxByLabel(sm, label);
-    if (i !== null && value !== null) _set(ctx, sm, i, c, value);
-  };
-  const ti = get('total income');
-  if (ti === null) return;
-  const cogs = get('total cost of goods sold') ?? get('total cogs') ?? 0;
-  const gross = ti - cogs;
-  setIf('gross profit', gross);
-  const te = get('total expenses') ?? 0;
-  const noi = (get('gross profit') ?? gross) - te;
-  setIf('net operating income', noi);
-  const oi = get('total other income') ?? 0;
-  const oe = get('total other expenses') ?? 0;
-  if (_lineIdxByLabel(sm, 'net other income') !== null)
-    setIf('net other income', oi - oe);
-  const noiV = get('net operating income') ?? noi;
-  const notherV = get('net other income') ?? (oi - oe);
-  setIf('net income', noiV + notherV);
+  const plan = _formulaPlan(sm);
+  if (!plan.ok){ ctx.formulaWarn = true; return; }
+  /* Self-check against the uploaded figures in this column */
+  const fileRead = i => num(((state.sheets[sm.name] || [])[sm.lines[i].r] || [])[c]);
+  const orig = _evalFormulas(plan, fileRead);
+  for (const k of ['gross', 'noi', 'nother', 'net']){
+    if (plan[k] === null) continue;
+    if (Math.abs(fileRead(plan[k]) - orig[k]) > 0.011){ ctx.formulaWarn = true; return; }
+  }
+  const now = _evalFormulas(plan, i => _val(ctx.overlay, sm.name, sm.lines[i].r, c));
+  for (const k of ['gross', 'noi', 'nother', 'net']) if (plan[k] !== null) _set(ctx, sm, plan[k], c, now[k]);
 }
 
 /* Row-derived columns (row Total / Change / %) for every row touched so far
@@ -176,20 +215,24 @@ function _cascadeCell(ctx, sm, lineIdx, c){
   if (isPl) _recomputeFormulas(ctx, sm, c);
 }
 
+function _bsValueCol(bs){
+  const col = bs.cols.find(x => x.type === 'current') || bs.cols.find(x => x.type === 'rowTotal') ||
+              bs.cols.find(x => x.type === 'value');
+  return col ? col.idx : 1;
+}
+
 function _balanceCheck(ctx){
   const model = state.model;
   const bsName = model && model.roles.bs;
   if (!bsName) return null;
   const bs = model.sheetModels[bsName];
-  const cur = bs.cols.find(x => x.type === 'current');
-  const c = cur ? cur.idx : 1;
-  const read = labelRe => {
-    for (const [k, i] of Object.entries(bs.byLabel))
-      if (labelRe.test(k)) return _val(ctx.overlay, bsName, bs.lines[i].r, c);
-    return null;
+  const c = _bsValueCol(bs);
+  const read = rx => {
+    const i = _findLine(bs, rx);
+    return i === null ? null : _val(ctx.overlay, bsName, bs.lines[i].r, c);
   };
   const assets = read(/^total (for )?assets$/);
-  const le = read(/^total (for )?liabilities and equity$/);
+  const le = read(/^total (for )?liabilities and (stockholders |shareholders |owners |owner |members |partners )?(equity|capital)$/);
   if (assets === null || le === null) return null;
   const diff = round2(assets - le);
   return { assets, liabEquity: le, diff, balanced: Math.abs(diff) < 0.01 };
@@ -201,8 +244,7 @@ function _bsTarget(labelRe){
   const bsName = model && model.roles.bs;
   if (!bsName) return null;
   const bs = model.sheetModels[bsName];
-  const cur = bs.cols.find(x => x.type === 'current');
-  const c = cur ? cur.idx : 1;
+  const c = _bsValueCol(bs);
   for (let i = 0; i < bs.lines.length; i++){
     const l = bs.lines[i];
     if (l.kind !== 'account' && l.kind !== 'computed') continue;
@@ -259,7 +301,7 @@ function computeImpact(sheetName, r, c, oldVal, newVal){
     const totCol = sm.cols.find(x => x.type === 'rowTotal');
     const curCol = sm.cols.find(x => x.type === 'current');
     const ytdCol = totCol ? totCol.idx : (curCol ? curCol.idx : c);
-    const niIdx = _lineIdxByLabel(sm, 'net income');
+    const niIdx = _findLine(sm, _RX.net, ['total', 'grandTotal', 'computed']);
     if (niIdx !== null){
       const niLine = sm.lines[niIdx];
       const before = num(((state.sheets[sheetName] || [])[niLine.r] || [])[ytdCol]);
@@ -283,7 +325,8 @@ function computeImpact(sheetName, r, c, oldVal, newVal){
     if (sm.role === 'plMonthly' && compName && compName !== sheetName){
       const comp = model.sheetModels[compName];
       const compCur = comp.cols.find(x => x.type === 'current');
-      const target = _lineIdxByLabel(comp, line.label);
+      const lk = labelKey(line.label);
+      const target = (() => { const i = comp.lines.findIndex(x => labelKey(x.label) === lk && x.kind === line.kind); return i < 0 ? null : i; })();
       const delta = round2(num(newVal) - num(oldVal));
       if (compCur && target !== null && Math.abs(delta) >= 0.005){
         const cur = _val(ctx.overlay, compName, comp.lines[target].r, compCur.idx);
@@ -325,6 +368,11 @@ function computeImpact(sheetName, r, c, oldVal, newVal){
       }
     }
   }
+
+  if (ctx.formulaWarn)
+    result.advisories.push('Gross Profit / Net Income on this sheet could not be recalculated automatically because its layout does not reproduce the uploaded totals — review those lines after applying the edit.');
+  if (isPl && sm.cols.some(x => x.type === 'percent'))
+    result.advisories.push('The percentage column on this sheet comes from the uploaded file and is not recalculated for this edit.');
 
   /* % of Income advisory */
   if (isPl && model.roles.plPercent && sheetName !== model.roles.plPercent)

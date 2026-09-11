@@ -34,6 +34,7 @@ function num(v){
   if (!s) return 0;
   let neg = false;
   if (/^\(.*\)$/.test(s)){ neg = true; s = s.slice(1, -1); }
+  if (/-$/.test(s)){ neg = !neg; s = s.slice(0, -1); }
   s = s.replace(/[$,\s]/g, '');
   const n = parseFloat(s);
   if (!isFinite(n)) return 0;
@@ -44,7 +45,7 @@ function num(v){
 function isNumericCell(v){
   if (typeof v === 'number') return true;
   if (v === null || v === undefined || String(v).trim() === '') return false;
-  return /^\(?-?\$?[\d,]+(?:\.\d+)?\)?$/.test(String(v).trim());
+  return /^\(?\s*-?\s*\$?\s*-?[\d,]*\.?\d+\s*\)?-?$/.test(String(v).trim());
 }
 
 function round2(n){ return Math.round((Number(n) || 0) * 100) / 100; }

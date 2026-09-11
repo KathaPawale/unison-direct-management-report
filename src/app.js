@@ -17,21 +17,28 @@ window.goPage = function(id){
 /* ---------- analysis + render fan-out ---------- */
 
 function analyze(){
-  state.model = hasData() ? parseWorkbook(state.sheets) : null;
-  if (state.model){
-    if (state.client === 'Client') state.client = state.model.client;
-    if (state.period === 'For the period ended') state.period = state.model.period;
+  let model = null;
+  if (hasData()){
+    try { model = parseWorkbook(state.sheets); }
+    catch (e){
+      console.error('Workbook analysis failed:', e);
+      toast('Some figures could not be read from this workbook: ' + (e.message || e));
+    }
+  }
+  state.model = model;
+  if (model){
+    if (state.client === 'Client') state.client = model.client;
+    if (state.period === 'For the period ended') state.period = model.period;
+    if (!state.notesManual) state.notes = model.importedNotes || '';
   }
   render();
   persist();
 }
 
 function render(){
-  renderTopbar();
-  renderDashboard();
-  renderStatements();
-  renderEditor();
-  renderReport();
+  for (const fn of [renderTopbar, renderDashboard, renderStatements, renderEditor, renderReport]){
+    try { fn(); } catch (e){ console.error(fn.name + ' failed:', e); }
+  }
 }
 
 function renderTopbar(){
@@ -49,65 +56,69 @@ function renderTopbar(){
 function renderDashboard(){
   const md = state.model;
   const kg = $('#kpiGrid');
+  const clear = ids => ids.forEach(id => { const el = $('#' + id); if (el) el.innerHTML = ''; });
   if (!md){
     kg.innerHTML = ['Revenue / Income', 'Gross Profit', 'Net Income', 'Cash / Bank', 'A/R Total', 'A/P Total']
       .map(l => `<div class="kpi"><small>${l}</small><b>$0.00</b><span class="help">—</span></div>`).join('');
     $('#chartMonthly').innerHTML = '<div class="empty">Upload a workbook to see monthly performance.</div>';
-    $('#chartCyPy').innerHTML = '';
-    $('#chartExpenses').innerHTML = '';
-    $('#chartAging').innerHTML = '';
-    $('#chartBs').innerHTML = '';
-    $('#comparisonTable').innerHTML = '';
+    clear(['chartCyPy', 'chartExpenses', 'chartAging', 'chartBs', 'chartLiab', 'comparisonTable']);
+    $('#monthlyTitle').textContent = 'Monthly Revenue vs Net Income';
     $('#attention').innerHTML = '<div class="empty">No major alerts detected</div>';
     return;
   }
   const m = md.metrics, p = md.prior;
-  const grossMargin = m.income ? m.gross / m.income * 100 : 0;
-  const netMargin = m.income ? m.net / m.income * 100 : 0;
-  const chip = (cur, pri) => {
-    if (pri === null || pri === undefined || pri === 0) return '—';
-    const d = (cur - pri) / Math.abs(pri) * 100;
-    return `<span class="${d >= 0 ? 'good' : 'bad'}">${d >= 0 ? '▲' : '▼'} ${Math.abs(d).toFixed(1)}% vs PY (${money(pri)})</span>`;
-  };
-  const kpis = [
-    ['Revenue / Income', m.income, chip(m.income, p.income)],
-    ['Gross Profit', m.gross, pct(grossMargin) + ' gross margin'],
-    ['Net Income', m.net, (m.net < 0 ? 'Net loss · ' : '') + chip(m.net, p.net)],
-    ['Cash / Bank', m.bank, chip(m.bank, p.bank)],
-    ['A/R Total', m.ar, chip(m.ar, p.ar)],
-    ['A/P Total', m.ap, chip(m.ap, p.ap)]
-  ];
-  kg.innerHTML = kpis.map(([l, v, sub]) =>
-    `<div class="kpi"><small>${l}</small><b class="${v < 0 ? 'neg' : ''}">${money(v)}</b><span class="help">${sub}</span></div>`).join('');
 
-  const labels = md.months.length ? md.months.map(x => x.short)
-    : MONTHS_FALLBACK.slice(0, Math.max(md.monthlyRevenue.length, 6));
-  const revNet = [
-    { name: 'Revenue / Income', color: CHART_COLORS.blue, values: md.monthlyRevenue },
-    { name: 'Net Income', color: CHART_COLORS.red, values: md.monthlyNet }
-  ];
-  const margins = md.monthlyRevenue.map((r, i) => r ? (md.monthlyNet[i] || 0) / Math.abs(r) * 100 : null);
-  const marginsOk = margins.filter(v => v !== null).length >= labels.length / 2 &&
-    margins.every(v => v === null || Math.abs(v) <= 300);
-  $('#chartMonthly').innerHTML = chartLegend(revNet) +
-    svgGroupedBars({ series: revNet, labels, height: 230 }) +
-    (marginsOk
-      ? '<div class="chart-sub">Net margin trend</div>' +
-        svgLineTrend({ values: margins.map(v => v ?? 0), labels, height: 130 })
-      : '');
+  kg.innerHTML = kpiTiles().map(t =>
+    `<div class="kpi"><small>${escapeHtml(t.label)}</small><b class="${t.value !== null && t.value < 0 ? 'neg' : ''}">${t.na || t.value === null ? '—' : money(t.value)}</b>` +
+    `<span class="help">${t.sub || '—'}</span></div>`).join('');
 
-  if (p.income !== null){
+  let compHtml = '';
+  if (md.months.length){
+    $('#monthlyTitle').textContent = 'Monthly Revenue vs Net Income';
+    const labels = md.months.map(x => x.short);
+    const revNet = [
+      { name: 'Revenue / Income', color: CHART_COLORS.blue, values: md.monthlyRevenue },
+      { name: 'Net Income', color: CHART_COLORS.red, values: md.monthlyNet }
+    ];
+    const margins = md.monthlyRevenue.map((r, i) => r ? (md.monthlyNet[i] || 0) / Math.abs(r) * 100 : null);
+    const marginsOk = margins.filter(v => v !== null).length >= labels.length / 2 && margins.every(v => v === null || Math.abs(v) <= 300);
+    $('#chartMonthly').innerHTML = chartLegend(revNet) + svgGroupedBars({ series: revNet, labels, height: 230 }) +
+      (marginsOk ? '<div class="chart-sub">Net margin trend</div>' + svgLineTrend({ values: margins.map(v => v ?? 0), labels, height: 130 }) : '');
+    const sum = a => a.reduce((x, y) => x + (y || 0), 0);
+    compHtml += '<table><tr><th>Comparison</th>' + labels.map(l => `<th>${escapeHtml(l)}</th>`).join('') + '<th>Total</th></tr>' +
+      [['Revenue', md.monthlyRevenue], ['Net Income', md.monthlyNet]].map(([name, series]) =>
+        `<tr><td>${name}</td>` + series.map(v => `<td class="${(v || 0) < 0 ? 'neg' : ''}">${money(v || 0)}</td>`).join('') +
+        `<td class="${sum(series) < 0 ? 'neg' : ''}"><b>${money(sum(series))}</b></td></tr>`).join('') + '</table>';
+  } else if (md.periodSeries.length){
+    const ps = md.periodSeries;
+    $('#monthlyTitle').textContent = ps.length > 1 ? 'Revenue vs Net Income by Period' : 'Period Revenue vs Net Income';
+    const series = [
+      { name: 'Revenue / Income', color: CHART_COLORS.blue, values: ps.map(x => x.income) },
+      { name: 'Total Expenses', color: CHART_COLORS.grey, values: ps.map(x => x.expenses) },
+      { name: 'Net Income', color: CHART_COLORS.red, values: ps.map(x => x.net) }
+    ];
+    $('#chartMonthly').innerHTML = chartLegend(series) + svgGroupedBars({ series, labels: ps.map(x => x.label), height: 230 }) +
+      '<div class="help">The uploaded Profit and Loss has no month columns, so figures are shown per period rather than per month.</div>';
+  } else {
+    $('#monthlyTitle').textContent = 'Monthly Revenue vs Net Income';
+    $('#chartMonthly').innerHTML = '<div class="empty">No Profit and Loss period columns were found in the workbook.</div>';
+  }
+  $('#comparisonTable').innerHTML = (md.hasPrior ? '<div class="chart-sub compare-heading">Current Period vs Prior Year — Comparative Financials</div>' + comparisonTableHtml('dashboard-compare-table') : '') +
+    (compHtml ? '<div class="chart-sub">Monthly detail</div>' + compHtml : '');
+
+  if (md.hasPrior){
     const cyPy = [
-      { name: 'Current period', color: CHART_COLORS.navy, values: [m.income, m.gross, m.expenses, m.net] },
-      { name: 'Prior year', color: CHART_COLORS.grey, values: [p.income ?? 0, p.gross ?? 0, p.expenses ?? 0, p.net ?? 0] }
+      { name: md.currentLabel || 'Current period', color: CHART_COLORS.navy, values: [m.income, m.gross, m.expenses, m.net] },
+      { name: md.priorLabel || 'Prior year', color: CHART_COLORS.grey, values: [p.income ?? 0, p.gross ?? 0, p.expenses ?? 0, p.net ?? 0] }
     ];
     $('#chartCyPy').innerHTML = '<h3>Current Period vs Prior Year</h3>' + chartLegend(cyPy) +
       svgGroupedBars({ series: cyPy, labels: ['Income', 'Gross', 'Expenses', 'Net'], height: 210 });
   } else $('#chartCyPy').innerHTML = '';
 
-  $('#chartExpenses').innerHTML = md.expenseGroups.length
-    ? '<h3>Expense Breakdown — Top ' + Math.min(md.expenseGroups.length, 8) + '</h3>' +
-      svgHBars({ items: md.expenseGroups.slice(0, 8), totalForPct: m.expenses || null, color: CHART_COLORS.teal, width: 720 })
+  const top = md.expenseGroups.slice(0, 10);
+  $('#chartExpenses').innerHTML = top.length
+    ? `<h3>Expense Breakdown — Top ${top.length} Categories</h3><div class="help">Expense ÷ Total Expenses (${money(md.expenseTotal)}) × 100</div>` +
+      svgHBars({ items: top, color: CHART_COLORS.teal, width: 760 })
     : '';
 
   if (md.arAging || md.apAging){
@@ -115,31 +126,27 @@ function renderDashboard(){
     const series = [];
     if (md.arAging) series.push({ name: 'A/R', color: CHART_COLORS.blue, values: md.arAging.buckets.map(b => b.value) });
     if (md.apAging) series.push({ name: 'A/P', color: CHART_COLORS.amber, values: md.apAging.buckets.map(b => b.value) });
-    $('#chartAging').innerHTML = '<h3>Receivables & Payables Aging</h3>' + chartLegend(series) +
+    $('#chartAging').innerHTML = '<h3>Receivables &amp; Payables Aging</h3>' + chartLegend(series) +
       svgGroupedBars({ series, labels: buckets, height: 200 });
   } else $('#chartAging').innerHTML = '';
 
-  $('#chartBs').innerHTML = md.bsComposition.assets.length
+  $('#chartBs').innerHTML = (md.bsComposition.assets.length || md.bsComposition.liabEquity.length)
     ? '<h3>Balance Sheet Composition</h3><div class="donut-row">' +
-      donutChart({ items: md.bsComposition.assets, title: 'Assets', size: 140 }) +
-      donutChart({ items: md.bsComposition.liabEquity, title: 'Liabilities & Equity', size: 140 }) + '</div>'
+      (md.bsComposition.assets.length ? donutChart({ items: md.bsComposition.assets, title: 'Assets — ' + money(m.assets), size: 140 }) : '') +
+      (md.bsComposition.liabEquity.length ? donutChart({ items: md.bsComposition.liabEquity, title: 'Liabilities & Equity — ' + money(m.totalLE ?? 0), size: 140 }) : '') + '</div>'
     : '';
-
-  const compRows = [['Revenue', md.monthlyRevenue], ['Net Income', md.monthlyNet]];
-  $('#comparisonTable').innerHTML =
-    '<table><tr><th>Comparison</th>' + labels.map(l => `<th>${l}</th>`).join('') + '<th>YTD</th></tr>' +
-    compRows.map(([name, series]) =>
-      `<tr><td>${name}</td>` + labels.map((_, i) =>
-        `<td class="${(series[i] || 0) < 0 ? 'neg' : ''}">${money(series[i] || 0)}</td>`).join('') +
-      `<td class="${series.reduce((a, b) => a + (b || 0), 0) < 0 ? 'neg' : ''}"><b>${money(series.reduce((a, b) => a + (b || 0), 0))}</b></td></tr>`).join('') +
-    '</table>';
+  const lt = liabilitiesTableHtml('dashboard-compare-table');
+  $('#chartLiab').innerHTML = lt ? '<h3>Liabilities Bifurcation</h3>' + lt : '';
 
   const alerts = [];
   if (m.net < 0) alerts.push(['High', `Net loss of ${money(Math.abs(m.net))} for the period. Review the expense breakdown and monthly trend.`]);
-  const bal = m.assets - (m.liabilities + m.equity);
-  if (md.roles.bs && Math.abs(bal) >= 0.01) alerts.push(['High', `Balance Sheet difference of ${money(bal)} between Assets and Liabilities + Equity.`]);
+  if (md.roles.bs && m.totalLE !== null){
+    const bal = m.assets - m.totalLE;
+    if (Math.abs(bal) >= 0.01) alerts.push(['High', `Balance Sheet difference of ${money(bal)} between Assets and Liabilities + Equity.`]);
+  }
+  if (m.equity < 0) alerts.push(['Review', `Equity is negative: ${money(m.equity)}, which is ${pctText(m.totalLE ? m.equity / Math.abs(m.totalLE) * 100 : null)} of total liabilities & equity.`]);
   if (md.arAging){
-    const over90 = md.arAging.buckets.find(b => /91/.test(b.label));
+    const over90 = md.arAging.buckets.find(b => /91|over|>|\+/.test(b.label));
     if (over90 && over90.value > 0 && md.arAging.total) alerts.push(['Review', `${pct(over90.value / md.arAging.total * 100)} of A/R (${money(over90.value)}) is aged over 90 days.`]);
   }
   if (md.apAging && md.apAging.total > 0) alerts.push(['Review', `Outstanding payables of ${money(md.apAging.total)} — verify payment schedule.`]);
@@ -147,6 +154,8 @@ function renderDashboard(){
     const d = (m.income - p.income) / Math.abs(p.income) * 100;
     if (d < -20) alerts.push(['High', `Revenue is down ${Math.abs(d).toFixed(1)}% vs the prior-year period.`]);
   }
+  if (!md.roles.bs) alerts.push(['Info', 'No Balance Sheet worksheet was detected in this workbook.']);
+  if (!md.roles.plMonthly && !md.roles.plComparative && !md.roles.pl) alerts.push(['Info', 'No Profit and Loss worksheet was detected in this workbook.']);
   if (state.edited.size || state.adjusted.size) alerts.push(['Info', `${state.edited.size} manual edit(s) and ${state.adjusted.size} automatic adjustment(s) are reflected in this report (highlighted in the preview, not in downloads).`]);
   $('#attention').innerHTML = alerts.length
     ? alerts.map(([sev, msg]) => `<div class="alert"><span class="sev ${sev.toLowerCase()}">${sev}</span><p>${msg}</p></div>`).join('')
@@ -164,41 +173,50 @@ function statementViewHtml(sm){
 function renderStatements(){
   const md = state.model;
   const get = role => md && md.roles[role] ? md.sheetModels[md.roles[role]] : null;
-  $('#plView').innerHTML = statementViewHtml(get('plMonthly') || get('pl') || get('plComparative'));
+  const head = (title, sm) => `<div class="stmt-heading"><div class="stmt-company">${escapeHtml(state.client)}</div>` +
+    `<div class="stmt-title">${escapeHtml(title)}</div><div class="stmt-period">${escapeHtml(statementPeriodText(sm))} · Amounts in US Dollars ($)</div></div>`;
+  const pl = get('plMonthly') || get('pl') || get('plComparative');
+  $('#bsView').innerHTML = (get('bs') ? head('Balance Sheet', get('bs')) : '') + statementViewHtml(get('bs'));
+  $('#plView').innerHTML = (pl ? head(pl.role === 'plMonthly' ? 'Profit and Loss — Monthly' : 'Profit and Loss', pl) : '') + statementViewHtml(pl);
   $('#plCompView').innerHTML = md && md.roles.plComparative && md.roles.plMonthly
-    ? '<h3>Profit and Loss — Comparative <span class="heading-amount">($)</span></h3>' + statementViewHtml(get('plComparative')) : '';
-  $('#bsView').innerHTML = statementViewHtml(get('bs'));
-  $('#arView').innerHTML = statementViewHtml(get('ar'));
-  $('#apView').innerHTML = statementViewHtml(get('ap'));
+    ? head('Profit and Loss — Comparative', get('plComparative')) + statementViewHtml(get('plComparative')) : '';
+  const agingView = (role, ag, suppressed) => {
+    if (suppressed) return '<div class="empty">Not applicable — cash-basis client with no balance in the Balance Sheet.</div>';
+    if (ag && ag.fromDetail) return head(role === 'ar' ? 'A/R Aging Summary' : 'A/P Aging Summary', get(role)) + agingTableHtml(ag);
+    return statementViewHtml(get(role));
+  };
+  $('#arView').innerHTML = agingView('ar', md && md.arAging, md && md.suppressAR);
+  $('#apView').innerHTML = agingView('ap', md && md.apAging, md && md.suppressAP);
 }
 
 /* ---------- editor ---------- */
 
+/* US accounting format with exactly two decimals: $1,234.50 / ($1,234.50) */
 function editorAccountingValue(v){
-  const n = num(v);
-  const abs = Math.abs(round2(n)).toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  });
-  return n < 0 ? `(${abs})` : abs;
+  const n = parseAmount(v) ?? num(v);
+  const abs = Math.abs(round2(n)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return n < 0 ? `($${abs})` : `$${abs}`;
 }
 
 function editorTableHtml(sheetName){
   const rows = state.sheets[sheetName] || [];
-  const width = Math.min(Math.max(...rows.map(r => (r || []).length), 1), 16);
-  const shown = rows.slice(0, 400);
+  const width = Math.min(Math.max(...rows.map(r => (r || []).length), 1), 40);
+  const shown = rows.slice(0, 600);
+  const sm = state.model && state.model.sheetModels[sheetName];
+  const headerRow = sm ? sm.headerRow : -1;
   let html = '<div class="table-wrap"><table class="fin-table edit-table"><tbody>';
   shown.forEach((row, ri) => {
-    const isTotal = /\btotal\b/i.test(String((row || [])[0] ?? ''));
-    html += `<tr${isTotal ? ' class="row-total"' : ''}>`;
+    const isTotal = (row || []).slice(0, 6).some(v => /^\s*total\b/i.test(String(v ?? '')));
+    html += `<tr${isTotal ? ' class="row-total"' : ri === headerRow ? ' class="row-header"' : ''}>`;
     for (let ci = 0; ci < width; ci++){
       const v = (row || [])[ci] ?? '';
       const key = `${sheetName}:${ri}:${ci}`;
-      const numeric = ci > 0 && isNumericCell(v);
+      const numeric = ci > 0 && ri !== headerRow && isNumericCell(v);
       const cls = [
         state.edited.has(key) ? 'edited' : '',
         state.adjusted.has(key) ? 'adjusted' : '',
-        numeric && num(v) < 0 ? 'neg' : ''
+        numeric && num(v) < 0 ? 'neg' : '',
+        numeric ? 'num' : ''
       ].filter(Boolean).join(' ');
       const display = numeric ? editorAccountingValue(v) : v;
       html += `<td class="${cls}"><input data-r="${ri}" data-c="${ci}" value="${escapeAttr(display)}"></td>`;
@@ -206,7 +224,7 @@ function editorTableHtml(sheetName){
     html += '</tr>';
   });
   html += '</tbody></table></div>';
-  if (rows.length > 400) html += `<div class="help">Showing first 400 of ${rows.length} rows.</div>`;
+  if (rows.length > 600) html += `<div class="help">Showing first 600 of ${rows.length} rows.</div>`;
   return html;
 }
 
@@ -291,8 +309,6 @@ function openImpactModal(pe){
   const ai = $('#imAI');
   if (!state.settings.aiEnabled){
     ai.innerHTML = '';
-  } else if (!state.settings.groqKey){
-    ai.innerHTML = '<div class="im-ai-off">AI analysis unavailable — deterministic impact shown above. Add a Groq API key in Settings to enable plain-English explanations.</div>';
   } else if (impact.blocked){
     ai.innerHTML = '';
   } else {
@@ -338,27 +354,22 @@ function confirmImpact(withCascade){
 /* ---------- settings ---------- */
 
 function renderSettings(){
-  $('#groqKeyInput').value = state.settings.groqKey;
   $('#groqModelSelect').value = state.settings.groqModel;
   $('#aiEnabledToggle').checked = !!state.settings.aiEnabled;
+  const wm = $('#watermarkSetting'); if (wm) wm.value = state.settings.watermark || '';
 }
 
 function wireSettings(){
   $('#groqKeySave').onclick = () => {
-    state.settings.groqKey = $('#groqKeyInput').value.trim();
     state.settings.groqModel = $('#groqModelSelect').value;
     state.settings.aiEnabled = $('#aiEnabledToggle').checked;
+    const wm = $('#watermarkSetting'); if (wm) state.settings.watermark = wm.value.trim();
     saveSettings();
+    renderReport();
     toast('Settings saved');
-  };
-  $('#groqKeyShow').onclick = () => {
-    const i = $('#groqKeyInput');
-    i.type = i.type === 'password' ? 'text' : 'password';
-    $('#groqKeyShow').textContent = i.type === 'password' ? 'Show' : 'Hide';
   };
   $('#groqTest').onclick = async () => {
     const status = $('#groqTestStatus');
-    state.settings.groqKey = $('#groqKeyInput').value.trim();
     state.settings.groqModel = $('#groqModelSelect').value;
     saveSettings();
     status.textContent = 'Testing…'; status.className = 'test-status';
@@ -366,7 +377,7 @@ function wireSettings(){
       await testGroqConnection();
       status.textContent = '✓ Connected — model responded'; status.className = 'test-status ok';
     } catch (e) {
-      status.textContent = '✗ ' + (e.message === 'NO_KEY' ? 'Enter an API key first' : e.message);
+      status.textContent = '✗ ' + (e.message === 'NO_KEY' ? 'Groq key is not configured on the server' : e.message);
       status.className = 'test-status err';
     }
   };
@@ -461,9 +472,19 @@ function wireGlobal(){
 
   $('#applyNotes').onclick = () => {
     state.notes = $('#notesEditor').value;
+    state.notesManual = true;
     persist();
     renderReport();
     toast('Notes updated');
+  };
+
+  const basisSel = $('#basisSelect');
+  if (basisSel) basisSel.onchange = () => { state.basisOverride = basisSel.value; persist(); renderReport(); toast('Report basis updated'); };
+  const wmInput = $('#watermarkInput');
+  if (wmInput) wmInput.onchange = () => {
+    state.settings.watermark = wmInput.value.trim();
+    saveSettings(); renderSettings(); renderReport();
+    toast(state.settings.watermark ? 'Watermark updated' : 'Watermark removed');
   };
 
   $('#imConfirm').onclick = () => confirmImpact(true);

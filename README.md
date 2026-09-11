@@ -36,22 +36,42 @@ review & edit with impact analysis → management report preview → download PD
 ## Structure
 
 ```
-index.html            app shell (6 pages + Settings, impact modal)
-src/core/util.js      shared helpers
-src/core/state.js     state + localStorage persistence
-src/core/parser.js    workbook parsing: roles, columns, hierarchy, metrics
-src/core/recompute.js deterministic impact / recompute engine
-src/core/groq.js      Groq API client (impact narratives)
-src/report/charts.js  SVG chart builders (dashboard + report)
-src/report/report.js  report builder with DOM-measured pagination
-src/report/exports.js PDF + styled Excel + raw data exports
-src/app.js            navigation, upload, dashboard, editor, settings wiring
-css/style.css         application styling
-css/report.css        report page styling (preview + PDF)
+index.html              app shell (pages, report options, impact modal)
+src/core/util.js        shared helpers (number parsing, formatting)
+src/core/state.js       state + session persistence
+src/core/parser.js      workbook structure only: header rows, column types, hierarchy, sheet roles
+src/core/financials.js  the ONLY calculation layer: P&L / Balance Sheet figures, expense breakdown,
+                        composition %, liabilities bifurcation, basis, period, notes
+src/core/recompute.js   deterministic impact / recompute engine for edits
+src/core/groq.js        Groq API client (impact narratives)
+src/core/supabase.js    report persistence / logging
+src/report/charts.js    SVG chart builders (dashboard + report)
+src/report/report.js    report builder with DOM-measured pagination (portrait / landscape pages)
+src/report/exports.js   PDF + styled Excel + raw data exports
+src/app.js              navigation, upload, dashboard, editor, settings wiring
+css/style.css           application styling
+css/report.css          report page styling (preview + PDF)
+css/cover-final.css     cover page styling
 ```
+
+Dashboard formulas: Current Assets ÷ Total Assets × 100; Fixed Assets ÷ Total Assets × 100;
+Current / Long-term Liabilities and Equity ÷ Total Liabilities & Equity × 100 (equity keeps its sign);
+Expense category ÷ Total Expenses × 100.
 
 Libraries (CDN): [xlsx-js-style](https://github.com/gitbrent/xlsx-js-style) (SheetJS +
 style writer), [html2canvas](https://html2canvas.hertzen.com/), [jsPDF](https://github.com/parallax/jsPDF).
+
+## Verify calculations
+
+```bash
+node tests/verify-calculations.js
+```
+
+No dependencies. Checks the script chain in `index.html`, flags any function/variable declared in more
+than one file, recomputes every dashboard figure for synthetic QuickBooks Online, QuickBooks Desktop and
+spreadsheet-style workbooks and compares it with independently calculated values, and applies edits
+through the impact engine to confirm Total Income, Total Expenses and Net Income (P&L and Balance Sheet)
+move by exactly the edited amount. Run it before every push; it must end with `0 failures`.
 
 ## Run locally
 

@@ -7,7 +7,8 @@ const SESSION_KEY  = 'udmr.session.v1';
 const DEFAULT_SETTINGS = {
   groqKey: '',
   groqModel: 'llama-3.3-70b-versatile',
-  aiEnabled: true
+  aiEnabled: true,
+  watermark: ''          // optional background watermark text for report pages (blank = none)
 };
 
 const state = {
@@ -19,6 +20,8 @@ const state = {
   period: 'For the period ended',
   basis: 'Amounts in US Dollars ($)',
   notes: '',
+  notesManual: false,     // true once notes were edited by hand (workbook notes no longer overwrite them)
+  basisOverride: '',      // '' = use the basis detected in the workbook; 'Cash' | 'Accrual' | 'Modified Cash'
   edited: new Set(),
   adjusted: new Set(),
   signatory: { name: '', title: '', date: '' },
@@ -53,6 +56,8 @@ function sessionSnapshot(includeOtherSheets = true){
     period: state.period,
     basis: state.basis,
     notes: state.notes,
+    notesManual: state.notesManual,
+    basisOverride: state.basisOverride,
     edited: [...state.edited],
     adjusted: [...state.adjusted],
     signatory: state.signatory,
@@ -99,6 +104,8 @@ function resetState(){
   state.period = 'For the period ended';
   state.basis = 'Amounts in US Dollars ($)';
   state.notes = '';
+  state.notesManual = false;
+  state.basisOverride = '';
   state.edited = new Set();
   state.adjusted = new Set();
   state.signatory = { name: '', title: '', date: '' };

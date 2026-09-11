@@ -45,9 +45,12 @@ function svgGroupedBars({ series, labels, width = 760, height = 250, valueFmt = 
   let out = `<svg class="chart-svg" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img">`;
   /* gridlines: zero + halves of each side */
   const gridVals = [maxPos, maxPos / 2, 0, -maxNeg / 2, -maxNeg].filter((v, i, a) => a.indexOf(v) === i);
-  for (const gv of gridVals){
+  const usedY = [];
+  for (const gv of [0, ...gridVals.filter(v => v !== 0)]){
     const y = zeroY - gv * scale;
     if (y < padT - 1 || y > padT + plotH + 1) continue;
+    if (usedY.some(u => Math.abs(u - y) < 11)) continue;     // keep axis labels from overlapping
+    usedY.push(y);
     const main = gv === 0;
     out += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" stroke="${main ? CHART_COLORS.axis : CHART_COLORS.grid}" stroke-width="${main ? 1.4 : 1}"/>`;
     out += `<text x="${padL - 6}" y="${(y + 3).toFixed(1)}" font-size="9" fill="${CHART_COLORS.text}" text-anchor="end">${escapeHtml(valueFmt(gv))}</text>`;
@@ -90,9 +93,11 @@ function svgLineTrend({ values, labels, width = 760, height = 170, color = CHART
   return out;
 }
 
-/* Horizontal bars (e.g. expense breakdown). items: [{label, value}] */
-function svgHBars({ items, width = 760, height = null, color = CHART_COLORS.blue, valueFmt = money, totalForPct = null }){
-  const rowH = 26, padT = 6, padB = 6, labelW = 250, valueW = 118;
+/* Horizontal bars (e.g. expense breakdown). items: [{label, value, pct?}]
+ * The percentage printed next to each bar is item.pct when supplied (computed against the
+ * statement total by financials.js), otherwise value / totalForPct. */
+function svgHBars({ items, width = 760, height = null, color = CHART_COLORS.blue, valueFmt = money, totalForPct = null, showPct = true }){
+  const rowH = 26, padT = 6, padB = 6, labelW = 260, valueW = 150;
   const H = height || padT + padB + items.length * rowH;
   const W = width, barMaxW = W - labelW - valueW - 16;
   const max = Math.max(...items.map(i => Math.abs(Number(i.value) || 0)), 1);
@@ -101,39 +106,54 @@ function svgHBars({ items, width = 760, height = null, color = CHART_COLORS.blue
     const v = Number(it.value) || 0;
     const yMid = padT + i * rowH + rowH / 2;
     const w = Math.max(2, Math.abs(v) / max * barMaxW);
-    const lab = it.label.length > 38 ? it.label.slice(0, 37) + '…' : it.label;
+    const lab = it.label.length > 40 ? it.label.slice(0, 39) + '…' : it.label;
     out += `<text x="${labelW - 8}" y="${(yMid + 3.5).toFixed(1)}" font-size="10.5" fill="#34445a" text-anchor="end">${escapeHtml(lab)}</text>`;
     out += `<rect x="${labelW}" y="${(yMid - 8).toFixed(1)}" width="${w.toFixed(1)}" height="16" rx="2.5" fill="${v < 0 ? CHART_COLORS.red : color}"><title>${escapeHtml(it.label + ': ' + money(v))}</title></rect>`;
-    const pctTxt = totalForPct ? ' (' + pct(Math.abs(v) / Math.abs(totalForPct) * 100) + ')' : '';
+    let p = null;
+    if (showPct){
+      if (it.pct !== undefined && it.pct !== null) p = it.pct;
+      else if (totalForPct) p = v / Math.abs(totalForPct) * 100;
+    }
+    const pctTxt = p !== null ? ' (' + (p < 0 ? '-' : '') + Math.abs(p).toFixed(2) + '%)' : '';
     out += `<text x="${(labelW + w + 6).toFixed(1)}" y="${(yMid + 3.5).toFixed(1)}" font-size="10" fill="${CHART_COLORS.text}">${escapeHtml(valueFmt(v) + pctTxt)}</text>`;
   });
   out += '</svg>';
   return out;
 }
 
-/* Donut with side legend, returned as an HTML flex block containing the SVG. */
+/* Donut with side legend. items: [{label, value, pct?}]. Legend percentages use item.pct
+ * (signed share of the statement total) when supplied. Negative items (e.g. negative equity)
+ * cannot be drawn as a slice; they are listed in the legend in red with their negative %. */
 function donutChart({ items, size = 168, title = '' }){
   const clean = items.filter(i => Math.abs(Number(i.value) || 0) > 0.004);
-  const total = clean.reduce((s, i) => s + Math.abs(Number(i.value) || 0), 0) || 1;
+  const positive = clean.filter(i => Number(i.value) > 0);
+  const total = positive.reduce((s, i) => s + Number(i.value), 0) || 1;
   const cx = size / 2, cy = size / 2, R = size / 2 - 4, r = R * 0.62;
   let a0 = -Math.PI / 2;
   let svg = `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg" role="img">`;
   const legend = [];
   clean.forEach((it, i) => {
-    const frac = Math.abs(Number(it.value)) / total;
-    const a1 = a0 + frac * Math.PI * 2;
     const color = DONUT_PALETTE[i % DONUT_PALETTE.length];
-    const large = frac > 0.5 ? 1 : 0;
-    if (frac >= 0.999){
-      svg += `<circle cx="${cx}" cy="${cy}" r="${(R + r) / 2}" fill="none" stroke="${color}" stroke-width="${R - r}"/>`;
+    const val = Number(it.value);
+    const shown = (it.pct !== undefined && it.pct !== null) ? it.pct : (val > 0 ? val / total * 100 : null);
+    const pctLabel = shown === null ? '' : (shown < 0 ? '-' : '') + Math.abs(shown).toFixed(2) + '%';
+    if (val > 0){
+      const frac = val / total;
+      const a1 = a0 + frac * Math.PI * 2;
+      const large = frac > 0.5 ? 1 : 0;
+      if (frac >= 0.999){
+        svg += `<circle cx="${cx}" cy="${cy}" r="${(R + r) / 2}" fill="none" stroke="${color}" stroke-width="${R - r}"/>`;
+      } else {
+        const p = a => [cx + Math.cos(a) * R, cy + Math.sin(a) * R];
+        const q = a => [cx + Math.cos(a) * r, cy + Math.sin(a) * r];
+        const [x0, y0] = p(a0), [x1, y1] = p(a1), [x2, y2] = q(a1), [x3, y3] = q(a0);
+        svg += `<path d="M${x0.toFixed(2)},${y0.toFixed(2)} A${R},${R} 0 ${large} 1 ${x1.toFixed(2)},${y1.toFixed(2)} L${x2.toFixed(2)},${y2.toFixed(2)} A${r},${r} 0 ${large} 0 ${x3.toFixed(2)},${y3.toFixed(2)} Z" fill="${color}"><title>${escapeHtml(it.label + ': ' + money(val) + (pctLabel ? ' (' + pctLabel + ')' : ''))}</title></path>`;
+      }
+      a0 = a1;
+      legend.push(`<div class="donut-legend-item"><i style="background:${color}"></i><span>${escapeHtml(it.label)}</span><b>${escapeHtml(pctLabel)}</b></div>`);
     } else {
-      const p = a => [cx + Math.cos(a) * R, cy + Math.sin(a) * R];
-      const q = a => [cx + Math.cos(a) * r, cy + Math.sin(a) * r];
-      const [x0, y0] = p(a0), [x1, y1] = p(a1), [x2, y2] = q(a1), [x3, y3] = q(a0);
-      svg += `<path d="M${x0.toFixed(2)},${y0.toFixed(2)} A${R},${R} 0 ${large} 1 ${x1.toFixed(2)},${y1.toFixed(2)} L${x2.toFixed(2)},${y2.toFixed(2)} A${r},${r} 0 ${large} 0 ${x3.toFixed(2)},${y3.toFixed(2)} Z" fill="${color}"><title>${escapeHtml(it.label + ': ' + money(it.value) + ' (' + pct(frac * 100) + ')')}</title></path>`;
+      legend.push(`<div class="donut-legend-item negative"><i style="background:#fff;border:1.5px solid ${CHART_COLORS.red}"></i><span>${escapeHtml(it.label)} (negative)</span><b class="neg">${escapeHtml(pctLabel)}</b></div>`);
     }
-    legend.push(`<div class="donut-legend-item"><i style="background:${color}"></i><span>${escapeHtml(it.label)}</span><b>${escapeHtml(pct(frac * 100))}</b></div>`);
-    a0 = a1;
   });
   svg += '</svg>';
   return `<div class="donut-block">${title ? `<div class="donut-title">${escapeHtml(title)}</div>` : ''}<div class="donut-flex">${svg}<div class="donut-legend">${legend.join('')}</div></div></div>`;

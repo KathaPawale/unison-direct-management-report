@@ -1,18 +1,20 @@
 /* Unison Direct Management Reporting — workbook parser
  *
  * parseWorkbook(sheets) → model
- *   roles:        { plMonthly, plComparative, plPercent, pl, bs, ar, ap } → sheet name (or null)
- *   sheetModels:  { sheetName: {name, role, headerRow, cols, lines, byLabel} }
- *   months:       [{ label:'Jan 2026', short:'Jan', col }]
- *   monthlyRevenue / monthlyNet / monthlyExpenses: number[]
- *   metrics, prior, expenseGroups, arAging, apAging, bsComposition, client, period
+ *   roles:        { plMonthly, plComparative, plPercent, pl, bs, ar, ap, notes } → sheet name | null
+ *   sheetModels:  { sheetName: {name, role, headerRow, cols, lines, byLabel, labelCols, titleRows} }
+ *   …plus the analysis produced by analyzeFinancials() in financials.js.
  *
- * Two statement layouts are supported:
- *  - QuickBooks exports (the Unison workflow): title rows 1-3, header row ~5,
- *    3-space indent hierarchy on P&L, flat "Section … Total for Section" pairs on
- *    the Balance Sheet, "Total X" / "Total for X" subtotal rows, bare TOTAL grand rows.
- *  - The original generic prototype format (single P&L/BS sheets) still parses via
- *    the same machinery; role detection simply finds fewer specific sheets.
+ * Supported layouts (all detected from the workbook itself — nothing is company-specific):
+ *  - QuickBooks Online exports: title rows, one header row, "Total for X" / "Total X" rows.
+ *  - QuickBooks Desktop exports: account hierarchy spread across several leading label
+ *    columns, blank spacer columns between amounts, "Jan 25" style month headers,
+ *    "Dec 31, 25" balance-sheet dates, "$ Change" / "% Change" columns.
+ *  - Spreadsheet-built statements: numeric year headers (2023, 2024), reviewer comment
+ *    columns, Excel date-serial month headers, "X Total" rows.
+ *
+ * Column types: label | month | rowTotal | current | prior | history | change | percent |
+ *               bucket | value | comment
  */
 'use strict';
 
@@ -24,184 +26,500 @@ const ROLE_LABELS = {
   bs: 'Balance Sheet',
   ar: 'A/R Aging',
   ap: 'A/P Aging',
+  notes: 'Notes',
   summary: 'Summary',
   other: 'Supplementary'
 };
 
-/* Formula rows recomputed by rule rather than by summing a span. */
-const FORMULA_ROWS = ['gross profit', 'net operating income', 'net other income', 'net income'];
+/* Formula rows recomputed by rule rather than by summing a span (recompute.js). */
+const FORMULA_ROWS = ['gross profit', 'net operating income', 'net other income', 'net income',
+  'net ordinary income', 'net profit', 'net loss', 'net income loss'];
 
-const MONTH_HEADER_RE = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[ ,]+\d{4}$/i;
-const AGING_BUCKET_RE = /^(current|1\s*-\s*30|31\s*-\s*60|61\s*-\s*90|91\s+and\s+over)$/i;
+const MONTH_ABBR = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const MONTH_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
+  'September', 'October', 'November', 'December'];
+const MON = '(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)';
 
-function detectRoles(sheets){
-  const roles = { plMonthly: null, plComparative: null, plPercent: null,
-                  pl: null, bs: null, ar: null, ap: null, summary: null };
-  const names = Object.keys(sheets);
-  const norm = n => n.trim().toLowerCase();
+/* ---------- cell helpers ---------- */
 
-  /* Pass 1 — sheet names, most specific first */
-  for (const n of names){
-    const t = norm(n);
-    if (!roles.plMonthly     && /(profit.*loss|p&l|income statement).*month|month.*(profit.*loss|p&l)/.test(t)) { roles.plMonthly = n; continue; }
-    if (!roles.plComparative && /(profit.*loss|p&l|income statement).*compar|compar.*(profit.*loss|p&l)/.test(t)) { roles.plComparative = n; continue; }
-    if (!roles.plPercent     && /(profit.*loss|p&l).*%|%.*income/.test(t)) { roles.plPercent = n; continue; }
-    if (!roles.bs && /balance sheet/.test(t)) { roles.bs = n; continue; }
-    if (!roles.ar && /(^|[^a-z])a\/?r([^a-z]|$).*aging|accounts receivable.*aging|aging.*receivable/.test(t)) { roles.ar = n; continue; }
-    if (!roles.ap && /(^|[^a-z])a\/?p([^a-z]|$).*aging|accounts payable.*aging|aging.*payable/.test(t)) { roles.ap = n; continue; }
-    if (!roles.summary && /^summary$/.test(t)) { roles.summary = n; continue; }
-  }
-  /* Generic P&L only if no specific P&L claimed it */
-  for (const n of names){
-    const t = norm(n);
-    if (Object.values(roles).includes(n)) continue;
-    if (!roles.pl && !roles.plMonthly && /profit.*loss|p&l|income statement/.test(t)) roles.pl = n;
-  }
-
-  /* Pass 2 — content-based for anything unresolved */
-  for (const n of names){
-    if (Object.values(roles).includes(n)) continue;
-    const rows = sheets[n] || [];
-    const head = rows.slice(0, 9);
-    const flat = head.map(r => (r || []).map(c => String(c ?? '').trim()));
-    const hasBuckets = flat.some(r => r.filter(c => AGING_BUCKET_RE.test(c)).length >= 3);
-    if (hasBuckets){
-      const t = norm(n) + ' ' + flat.map(r => r.join(' ')).join(' ').toLowerCase();
-      if (!roles.ar && /receivable/.test(t)) { roles.ar = n; continue; }
-      if (!roles.ap && /payable/.test(t))    { roles.ap = n; continue; }
-    }
-    const monthCells = flat.reduce((m, r) => Math.max(m, r.filter(c => MONTH_HEADER_RE.test(c)).length), 0);
-    if (!roles.plMonthly && monthCells >= 3) { roles.plMonthly = n; continue; }
-    if (!roles.plComparative && flat.some(r => r.some(c => /\(PY\)/i.test(c)) && r.some(c => /^change$/i.test(c)))) { roles.plComparative = n; continue; }
-    if (!roles.bs && flat.some(r => r.some(c => /^as of /i.test(c)))
-        && flat.some(r => r.some(c => /^assets$/i.test(c)))) { roles.bs = n; }
-  }
-  return roles;
+function cellText(v){
+  if (v === null || v === undefined) return '';
+  return String(v).replace(/\u00a0/g, ' ').trim();
 }
 
-/* Header row: within the first 10 rows, the row with the most classifiable
- * header cells (months, aging buckets, periods, Total/Change/%). */
+function normLabel(v){
+  return cellText(v).toLowerCase()
+    .replace(/&/g, ' and ').replace(/['’`]/g, '')
+    .replace(/[^a-z0-9%]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/* Label key used for matching statement lines: account numbers removed
+ * ("Total 6010 · Payroll Expenses" → "total payroll expenses"). */
+function labelKey(v){
+  return normLabel(v).replace(/\b\d{3,}(?: \d+)*\b/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/* Amount parser: numbers, "$1,234.56", "(1,234.56)", "-1,234", "1,234.56-". Percent → null. */
+function parseAmount(v){
+  if (typeof v === 'number') return isFinite(v) ? v : null;
+  const s = cellText(v);
+  if (!s || /%\)?$/.test(s)) return null;
+  let t = s, neg = false;
+  if (/^\(.*\)$/.test(t)){ neg = true; t = t.slice(1, -1).trim(); }
+  if (/-$/.test(t)){ neg = !neg; t = t.slice(0, -1).trim(); }
+  t = t.replace(/^(usd|us\$)\s*/i, '');
+  if (/^-/.test(t)){ neg = !neg; t = t.slice(1).trim(); }
+  t = t.replace(/^\$/, '').replace(/[\s,]/g, '');
+  if (/^-/.test(t)){ neg = !neg; t = t.slice(1); }
+  if (!/^(\d+(\.\d*)?|\.\d+)$/.test(t)) return null;
+  const n = parseFloat(t);
+  return neg ? -n : n;
+}
+
+function isPercentText(v){
+  return /^\(?-?\d[\d,]*(\.\d+)?\s*%\)?$/.test(cellText(v));
+}
+
+function monthNo(tok){ return MONTH_ABBR.indexOf(String(tok || '').toLowerCase().slice(0, 3)); }
+function fullYear(y){ y = +y; return y < 100 ? 2000 + y : y; }
+
+/* Parse a single date string → {y,m,d} or null. US ordering for numeric dates. */
+function parseDateText(s){
+  s = cellText(s).toLowerCase().replace(/\s+/g, ' ');
+  let m;
+  if ((m = s.match(new RegExp('^' + MON + '\\.? (\\d{1,2})(?:st|nd|rd|th)?,? (\\d{2}|\\d{4})$'))))
+    return { y: fullYear(m[3]), m: monthNo(m[1]), d: +m[2] };
+  if ((m = s.match(new RegExp('^(\\d{1,2})[ \\-]' + MON + '\\.?[ \\-,]+(\\d{2}|\\d{4})$'))))
+    return { y: fullYear(m[3]), m: monthNo(m[2]), d: +m[1] };
+  if ((m = s.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2}|\d{4})$/)))
+    return { y: fullYear(m[3]), m: +m[1] - 1, d: +m[2] };
+  if ((m = s.match(/^(\d{4})[\/.\-](\d{1,2})[\/.\-](\d{1,2})$/)))
+    return { y: +m[1], m: +m[2] - 1, d: +m[3] };
+  if ((m = s.match(new RegExp('^' + MON + '\\.?[ ,\\-\\/\']*(\\d{2}|\\d{4})$'))))
+    return { y: fullYear(m[2]), m: monthNo(m[1]), d: null };
+  return null;
+}
+
+function excelSerialToDate(v){
+  const d = new Date(Math.round((v - 25569) * 86400000));
+  return { y: d.getUTCFullYear(), m: d.getUTCMonth(), d: d.getUTCDate() };
+}
+
+const AGING_BUCKET_RES = [
+  /^current$/, /^not due$/, /^(0|1) ?(-|to) ?30( days?)?( past due)?$/, /^31 ?(-|to) ?60( days?)?( past due)?$/,
+  /^61 ?(-|to) ?90( days?)?( past due)?$/, /^91 ?(-|to) ?120( days?)?( past due)?$/,
+  /^(91|90) ?(\+|and over|or more|plus)( days?)?( past due)?$/, /^(over|more than|>) ?(90|120)( days?)?$/,
+  /^(121|120) ?(\+|and over|or more|plus)( days?)?$/, /^> ?90$/
+];
+
+/* Classify one header cell. Returns {kind, …} or null.
+ * kinds: month | period | total | change | percent | bucket | comment */
+function classifyHeader(v){
+  if (v === null || v === undefined || v === '') return null;
+  if (typeof v === 'number'){
+    if (Number.isInteger(v) && v >= 1990 && v <= 2100) return { kind: 'period', sub: 'year', y: v, m: 11, key: v * 12 + 11, prior: false };
+    return null;       // Excel date serials are handled per-row in _serialMonthRow
+  }
+  const raw = cellText(v);
+  if (!raw) return null;
+  const s = raw.toLowerCase().replace(/\s+/g, ' ');
+  const prior = /\(py\)|\(pp\)|\bprior\b|\bprevious\b|\blast year\b|\bpy\b/.test(s);
+  const t = s.replace(/\((py|pp)\)/g, '').replace(/\b(prior year|previous year|prior period|py)\b/g, '').trim();
+  const flat = t.replace(/[^a-z0-9%+>]+/g, ' ').trim();
+
+  if (/^(grand )?total$/.test(flat)) return { kind: 'total' };
+  if (/%|\bpercent|\bpct\b/.test(t)) return { kind: 'percent' };
+  if (/^(\$ ?)?(change|variance|difference|diff|inc dec|increase decrease|movement)$/.test(flat)) return { kind: 'change' };
+  const tb = t.replace(/\s+/g, ' ').replace(/\bdays?\b|\bpast due\b/g, '').trim();
+  if (AGING_BUCKET_RES.some(re => re.test(tb) || re.test(flat))) return { kind: 'bucket', label: raw };
+  if (/comment|remark|\bnotes?\b|status|responsib|explanation|reviewer|query|queries|action|reference|\blink\b/.test(flat)) return { kind: 'comment' };
+
+  let m;
+  /* Single month: "Jan 2025", "January 2025", "Jan 25", "Jan-25", "2025-01", "01/2025" */
+  if ((m = t.match(new RegExp('^' + MON + '\\.?[ ,\\-\\/\']*(\\d{4}|\\d{2})$'))))
+    return { kind: 'month', m: monthNo(m[1]), y: fullYear(m[2]), prior };
+  if ((m = t.match(/^(\d{4})[\-\/](\d{1,2})$/)) && +m[2] >= 1 && +m[2] <= 12)
+    return { kind: 'month', m: +m[2] - 1, y: +m[1], prior };
+  if ((m = t.match(/^(\d{1,2})[\-\/](\d{4})$/)) && +m[1] >= 1 && +m[1] <= 12)
+    return { kind: 'month', m: +m[1] - 1, y: +m[2], prior };
+  if ((m = t.match(new RegExp('^' + MON + '\\.?$'))))
+    return { kind: 'month', m: monthNo(m[1]), y: null, prior };
+
+  /* Ranges: "Jan - Dec 2025", "Jan 1 - Jan 31, 2025", "January through December 2025", "1/1/2025 - 12/31/2025" */
+  const parts = t.split(/\s*(?:-|–|—|\bto\b|\bthrough\b|\bthru\b)\s*/).filter(Boolean);
+  if (parts.length === 2){
+    let endD = parseDateText(parts[1]);
+    let a = parts[0], startM = -1, startY = null;
+    const ms = a.match(new RegExp('^' + MON));
+    if (ms) startM = monthNo(ms[1]);
+    const sd = parseDateText(a);
+    if (sd){ startM = sd.m; startY = sd.y; }
+    if (!endD){
+      /* "Jan 1-31, 2025" or "Jan - Dec 2025" where the year only sits on the end part */
+      const e2 = parts[1].match(new RegExp('^(?:' + MON + '\\.? ?)?(\\d{1,2})?,? ?(\\d{4}|\\d{2})$'));
+      if (e2 && (e2[1] || startM >= 0)) endD = { y: fullYear(e2[3]), m: e2[1] ? monthNo(e2[1]) : startM, d: e2[2] ? +e2[2] : null };
+    }
+    if (endD && startM >= 0){
+      const y0 = startY || endD.y;
+      if (startM === endD.m && y0 === endD.y) return { kind: 'month', m: endD.m, y: endD.y, prior };
+      return { kind: 'period', sub: 'range', y: endD.y, m: endD.m, key: endD.y * 12 + endD.m, prior };
+    }
+  }
+  /* "As of Dec 31, 2025", "Dec 31, 25", "12/31/2025" */
+  const asOf = t.replace(/^(as of|as at|as on|balance as of|balance at)\s+/, '');
+  const d = parseDateText(asOf);
+  if (d && d.d !== null) return { kind: 'period', sub: 'asOf', y: d.y, m: d.m, key: d.y * 12 + d.m, prior };
+  /* Years: "2025", "FY2025", "FY 25", "2025 YTD", "Year 2025", "Actual 2025" */
+  if ((m = flat.match(/^(?:fy|year|ytd|cy|actual|audited|unaudited)? ?((?:19|20)\d{2})(?: (?:ytd|actual|total|audited|unaudited))?$/)))
+    return { kind: 'period', sub: 'year', y: +m[1], m: 11, key: +m[1] * 12 + 11, prior };
+  if ((m = flat.match(/^fy ?(\d{2})$/)))
+    return { kind: 'period', sub: 'year', y: fullYear(m[1]), m: 11, key: fullYear(m[1]) * 12 + 11, prior };
+  if (/^(current (period|year)|this year|cy|amount|balance|actual|ytd|usd|\$|amount usd)$/.test(flat))
+    return { kind: 'period', sub: 'generic', y: null, m: null, key: null, prior };
+  if (prior && !flat) return { kind: 'period', sub: 'generic', y: null, m: null, key: null, prior: true };
+  return null;
+}
+
+/* A header row made of Excel date serials (month starts/ends) → [{c, m, y}] or null. */
+function _serialMonthRow(row){
+  const cells = [];
+  (row || []).forEach((v, c) => {
+    if (typeof v === 'number' && Number.isInteger(v) && v > 25000 && v < 75000) cells.push({ c, v });
+  });
+  if (cells.length < 2) return null;
+  for (let i = 1; i < cells.length; i++){
+    const gap = cells[i].v - cells[i - 1].v;
+    if (gap < 27 || gap > 32) return null;
+  }
+  return cells.map(x => { const d = excelSerialToDate(x.v); return { c: x.c, m: d.m, y: d.y }; });
+}
+
+/* ---------- structure detection ---------- */
+
+const LABEL_HEADER_WORDS = /^(account|accounts|distribution account|particulars|description|name|line item|item|customer|vendor|supplier|category|details?|gl account|account name|)$/;
+
+function _numericBelow(rows, r, c, look = 60){
+  let hits = 0;
+  for (let rr = r + 1; rr < Math.min(rows.length, r + 1 + look); rr++){
+    const v = (rows[rr] || [])[c];
+    if (parseAmount(v) !== null || isPercentText(v)) { if (++hits >= 1) return true; }
+  }
+  return false;
+}
+
 function findHeaderRow(rows){
   let best = -1, bestScore = 0;
-  for (let i = 0; i < Math.min(rows.length, 10); i++){
-    const r = rows[i] || [];
-    let score = 0;
-    for (let c = 1; c < r.length; c++){
-      const v = String(r[c] ?? '').trim();
-      if (!v) continue;
-      if (MONTH_HEADER_RE.test(v)) score += 3;
-      else if (AGING_BUCKET_RE.test(v)) score += 3;
-      else if (/^as of /i.test(v) || /\(PY\)/i.test(v) || /^jan\s*-|^[a-z]{3}\s*-\s*[a-z]{3}/i.test(v)) score += 2;
-      else if (/^(total|change|% of income)$/i.test(v)) score += 1;
+  const maxR = Math.min(rows.length, 30);
+  for (let r = 0; r < maxR; r++){
+    const row = rows[r] || [];
+    if (best >= 0 && row.some(v => /^total\b/i.test(cellText(v)))) break;   // statement body has started
+    let score = 0, periodish = 0, penalty = 0;
+    const serial = _serialMonthRow(row);
+    const serialCols = new Set(serial ? serial.map(x => x.c) : []);
+    let firstText = null;
+    for (let c = 0; c < row.length; c++){
+      const v = row[c];
+      if (cellText(v) === '') continue;
+      if (serialCols.has(c)){ if (_numericBelow(rows, r, c)){ score += 3; periodish++; } continue; }
+      const h = classifyHeader(v);
+      if (!h){
+        if (parseAmount(v) !== null) penalty += 2;
+        else if (firstText === null) firstText = normLabel(v);
+        continue;
+      }
+      if (!_numericBelow(rows, r, c)) continue;
+      if (h.kind === 'comment') continue;
+      if (h.kind === 'month' || h.kind === 'bucket'){ score += 3; periodish++; }
+      else if (h.kind === 'period'){ score += (h.sub === 'generic' ? 1 : 2); periodish++; }
+      else score += 1;
     }
-    if (score > bestScore){ bestScore = score; best = i; }
+    if (firstText !== null && !LABEL_HEADER_WORDS.test(firstText) && periodish < 2) penalty += 2;
+    score -= penalty;
+    if (score > bestScore){ bestScore = score; best = r; }
   }
-  return bestScore >= 2 ? best : -1;
+  return bestScore >= 1 ? best : -1;
+}
+
+/* Lines that are report metadata rather than statement content. */
+function isMetaText(s){
+  const t = normLabel(s);
+  return /^(cash|accrual|modified cash) basis\b/.test(t) || /\bbasis (monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/.test(t) ||
+    /^(monday|tuesday|wednesday|thursday|friday|saturday|sunday) \w+ \d/.test(t) || /gmt ?[+-]?\d/.test(t);
 }
 
 function classifyColumns(rows, headerRow){
-  const cols = [];
-  const width = Math.max(...rows.map(r => (r || []).length), 1);
+  const width = Math.max(0, ...rows.map(r => (r || []).length));
+  const start = headerRow >= 0 ? headerRow + 1 : 0;
   const header = headerRow >= 0 ? (rows[headerRow] || []) : [];
-  let sawCurrentPeriod = false;
-  for (let c = 0; c < width; c++){
-    if (c === 0){ cols.push({ idx: 0, type: 'label', label: '' }); continue; }
-    const v = String(header[c] ?? '').trim();
-    let col = { idx: c, type: 'value', label: v };
-    if (MONTH_HEADER_RE.test(v)){
-      const m = v.match(/^([A-Za-z]+)[ ,]+(\d{4})$/);
-      col.type = 'month';
-      col.label = m[1].slice(0, 3) + ' ' + m[2];
-      col.short = m[1].slice(0, 3);
-      col.year = +m[2];
-    } else if (AGING_BUCKET_RE.test(v)){
-      col.type = 'bucket';
-      col.label = v.toUpperCase();
-    } else if (/^total$/i.test(v)){
-      col.type = 'rowTotal'; col.label = 'Total';
-    } else if (/\(PY\)|prior/i.test(v)){
-      col.type = 'prior';
-    } else if (/^change$/i.test(v)){
-      col.type = 'change';
-    } else if (/^% of income$/i.test(v)){
-      col.type = 'percent';
-    } else if (/^as of /i.test(v) || /^[A-Za-z]{3}\s*-\s*[A-Za-z]{3}/.test(v) || /^\d{4}$/.test(v)){
-      col.type = sawCurrentPeriod ? 'prior' : 'current';
-      if (!sawCurrentPeriod) sawCurrentPeriod = true;
+  const nNum = Array(width).fill(0), nText = Array(width).fill(0), nPct = Array(width).fill(0), nCode = Array(width).fill(0);
+  for (let r = start; r < rows.length; r++){
+    const row = rows[r] || [];
+    for (let c = 0; c < width; c++){
+      const v = row[c];
+      if (cellText(v) === '') continue;
+      if (isPercentText(v)) nPct[c]++;
+      else if (parseAmount(v) !== null){ nNum[c]++; if (/^\d{3,6}([.\-]\d{1,3})?$/.test(cellText(v))) nCode[c]++; }
+      else if (!isMetaText(v)) nText[c]++;
     }
+  }
+  const serial = headerRow >= 0 ? _serialMonthRow(header) : null;
+  const serialBy = new Map((serial || []).map(x => [x.c, x]));
+  const hdr = [];
+  for (let c = 0; c < width; c++) hdr[c] = serialBy.has(c) ? { kind: 'month', m: serialBy.get(c).m, y: serialBy.get(c).y } : classifyHeader(header[c]);
+
+  const isValue = c => {
+    const h = hdr[c];
+    if (h && h.kind === 'comment') return false;
+    if (nNum[c] + nPct[c] === 0) return false;
+    if (h && h.kind !== 'comment') return true;
+    return nNum[c] + nPct[c] >= Math.max(1, nText[c]);
+  };
+  const d0Adjacent = c => { for (let d = c + 1; d < Math.min(width, c + 3); d++) if (nText[d] >= 3) return true; return false; };
+  let firstValue = -1;
+  for (let c = 1; c < width; c++){
+    if (!isValue(c)) continue;
+    /* An integer account-code column followed by the label text is part of the label. */
+    let nextValue = width;
+    for (let d = c + 1; d < width; d++) if (isValue(d)){ nextValue = d; break; }
+    let labelTextAfter = false;
+    for (let d = c + 1; d < nextValue; d++) if (nText[d] >= 3 && nText[d] > nNum[d]) labelTextAfter = true;
+    if (labelTextAfter && !hdr[c] && nCode[c] === nNum[c] && d0Adjacent(c)) continue;
+    firstValue = c; break;
+  }
+  const cols = [];
+  for (let c = 0; c < width; c++){
+    const h = hdr[c];
+    const headLabel = cellText(header[c]);
+    let col = { idx: c, type: 'value', label: headLabel };
+    if (firstValue < 0 ? c === 0 : c < firstValue){
+      col.type = 'label';
+      if (nText[c] === 0 && nNum[c] === 0) col.empty = true;
+    } else if (!isValue(c)){
+      col.type = nText[c] > 0 || (h && h.kind === 'comment') ? 'comment' : 'spacer';
+      col.empty = nText[c] === 0;
+    } else if (h){
+      if (h.kind === 'month'){
+        col.type = 'month'; col.m = h.m; col.year = h.y;
+        col.short = MONTH_ABBR[h.m].replace(/^./, x => x.toUpperCase());
+        col.label = col.short + (h.y ? ' ' + h.y : '');
+        col.key = h.y ? h.y * 12 + h.m : null;
+        if (h.prior) col.priorMonth = true;
+      } else if (h.kind === 'total') { col.type = 'rowTotal'; col.label = 'Total'; }
+      else if (h.kind === 'change') col.type = 'change';
+      else if (h.kind === 'percent') col.type = 'percent';
+      else if (h.kind === 'bucket') { col.type = 'bucket'; col.label = /^current$/i.test(headLabel) ? 'Current' : headLabel; }
+      else if (h.kind === 'period'){ col.type = 'period'; col.key = h.key; col.year = h.y; col.prior = h.prior; col.sub = h.sub;
+        if (typeof header[c] === 'number') col.label = String(header[c]); }
+    } else if (nPct[c] > nNum[c]) col.type = 'percent';
     cols.push(col);
   }
-  /* No header at all (generic format): every non-label column is a plain value column */
+
+  /* Current / prior / history among period columns. */
+  const periods = cols.filter(c => c.type === 'period');
+  if (periods.length){
+    const nonPrior = periods.filter(c => !c.prior);
+    let current = null;
+    if (nonPrior.length){
+      const dated = nonPrior.filter(c => c.key !== null);
+      current = dated.length ? dated.reduce((a, b) => (b.key > a.key ? b : a)) : nonPrior[0];
+    } else current = periods[0];
+    current.type = 'current';
+    const rest = periods.filter(c => c !== current);
+    const flagged = rest.filter(c => c.prior);
+    let prior = null;
+    if (flagged.length) prior = flagged.reduce((a, b) => ((b.key ?? -1) > (a.key ?? -1) ? b : a));
+    else {
+      const earlier = rest.filter(c => c.key !== null && current.key !== null && c.key < current.key);
+      if (earlier.length) prior = earlier.reduce((a, b) => (b.key > a.key ? b : a));
+      else if (rest.length && current.key === null) prior = rest[0];
+    }
+    if (prior) prior.type = 'prior';
+    rest.filter(c => c !== prior).forEach(c => { c.type = 'history'; });
+  }
+  /* Percent columns detected by content keep type percent; plain values stay 'value'.
+   * A sheet with only one unlabelled value column uses it as the current period. */
+  const valueTyped = cols.filter(c => !['label', 'comment', 'spacer'].includes(c.type));
+  if (!cols.some(c => ['current', 'month', 'rowTotal', 'bucket'].includes(c.type))){
+    const plain = valueTyped.filter(c => c.type === 'value');
+    if (plain.length) plain[0].type = 'current';
+  }
   return cols;
 }
 
 /* Value columns an edit/recompute cascades across (everything numeric except derived ones) */
 function valueColumns(cols){
-  return cols.filter(c => ['month', 'bucket', 'current', 'prior', 'value', 'rowTotal'].includes(c.type))
+  return cols.filter(c => ['month', 'bucket', 'current', 'prior', 'history', 'value', 'rowTotal'].includes(c.type))
              .map(c => c.idx);
+}
+
+/* Columns shown in statement tables (numbers only, no reviewer comments / spacer columns). */
+function displayColumns(sm){
+  return sm.cols.filter(c => !['label', 'comment', 'spacer'].includes(c.type));
+}
+
+function _titleRowCount(rows, headerRow){
+  if (headerRow >= 0) return headerRow + 1;
+  let n = 0;
+  for (let r = 0; r < Math.min(rows.length, 6); r++){
+    const cells = (rows[r] || []).map(cellText).filter(Boolean);
+    if (!cells.length){ if (n) n = r + 1; continue; }
+    if (cells.length === 1 && parseAmount(cells[0]) === null && !/^total/i.test(cells[0])) n = r + 1;
+    else break;
+  }
+  return n;
 }
 
 function buildLines(rows, headerRow, cols){
   const lines = [];
-  const start = headerRow >= 0 ? headerRow + 1 : 0;
-  const valCols = cols.filter(c => c.type !== 'label').map(c => c.idx);
+  const labelCols = cols.filter(c => c.type === 'label').map(c => c.idx);
+  const valCols = cols.filter(c => !['label', 'comment', 'spacer'].includes(c.type)).map(c => c.idx);
+  const start = _titleRowCount(rows, headerRow);
   let indentUnit = 0;
 
   for (let r = start; r < rows.length; r++){
     const row = rows[r] || [];
-    const raw = String(row[0] ?? '');
-    const label = raw.trim();
-    const hasValues = valCols.some(c => String(row[c] ?? '').trim() !== '');
-    if (!label && !hasValues) continue;          // fully blank
+    let label = '', raw = '', level = 0, code = '';
+    for (let i = 0; i < labelCols.length; i++){
+      const v = row[labelCols[i]];
+      const t = cellText(v);
+      if (!t) continue;
+      if (parseAmount(v) !== null && /^\d{3,}([.\-]\d+)?$/.test(t) && !label){ code = t; continue; }
+      if (!label){ label = t; raw = String(v); level = i; }
+      else label += ' ' + t;
+    }
+    if (code && label) label = code + ' ' + label;
+    else if (code && !label){ label = code; raw = code; }
+    const hasValues = valCols.some(c => parseAmount(row[c]) !== null || isPercentText(row[c]));
     if (!label) continue;                        // stray values with no label — not a line
+    if (isMetaText(label) && !hasValues) continue;
     const leading = raw.match(/^ */)[0].length;
     if (leading > 0) indentUnit = indentUnit ? Math.min(indentUnit, leading) : leading;
 
+    const key = normLabel(label);
     let kind = 'account', closes = null;
-    const mTotal = label.match(/^total(?: for)?\s+(.+)$/i);
-    if (mTotal){ kind = 'total'; closes = mTotal[1].trim(); }
-    else if (/^total$/i.test(label)) { kind = 'grandTotal'; }
-    else if (FORMULA_ROWS.includes(label.toLowerCase())) { kind = 'computed'; }
-    else if (!hasValues) { kind = 'section'; }
+    const mTotal = label.match(/^total(?:\s+for)?\s+(.+)$/i) || null;
+    const mTotal2 = !mTotal && label.match(/^(.+?)\s*[-:]?\s+total$/i);
+    if (/^(grand\s+)?total$/i.test(label) || /^report total$/i.test(label)) kind = 'grandTotal';
+    else if (mTotal){ kind = 'total'; closes = mTotal[1].trim(); }
+    else if (mTotal2 && !/^(net|gross)\b/i.test(label)){ kind = 'total'; closes = mTotal2[1].trim(); }
+    else if (FORMULA_ROWS.includes(labelKey(label)) || /^net (income|profit|loss|earnings)\b/.test(labelKey(label))) kind = 'computed';
+    else if (!hasValues) kind = 'section';
 
-    lines.push({ r, rawLabel: raw, label, leading, kind, closes,
+    lines.push({ r, rawLabel: raw, label, key, level, leading, kind, closes,
                  hasValues, openerIdx: null, totalIdx: null });
   }
 
-  for (const l of lines) l.indent = indentUnit ? Math.round(l.leading / indentUnit) : 0;
+  for (const l of lines) l.indent = l.level + (indentUnit ? Math.round(l.leading / indentUnit) : 0);
 
-  /* Link each total row to its opener (nearest earlier line with matching label
-   * that is not already closed). Grand TOTAL rows close the whole sheet. */
-  const norm = s => s.toLowerCase().replace(/\s+/g, ' ').trim();
+  /* Link each total row to its opener (nearest earlier unmatched line with the same label). */
   for (let i = 0; i < lines.length; i++){
     const l = lines[i];
     if (l.kind !== 'total') continue;
-    for (let j = i - 1; j >= 0; j--){
-      const o = lines[j];
-      if (o.totalIdx === null && o.kind !== 'total' && o.kind !== 'grandTotal' &&
-          norm(o.label) === norm(l.closes)){
-        l.openerIdx = j; o.totalIdx = i;
-        break;
+    const want = normLabel(l.closes), wantKey = labelKey(l.closes);
+    let found = -1;
+    for (let pass = 0; pass < 2 && found < 0; pass++){
+      for (let j = i - 1; j >= 0; j--){
+        const o = lines[j];
+        if (o.totalIdx !== null || o.kind === 'total' || o.kind === 'grandTotal') continue;
+        if (pass === 0 ? o.key === want : (wantKey && labelKey(o.label) === wantKey)){ found = j; break; }
       }
     }
+    if (found >= 0){ l.openerIdx = found; lines[found].totalIdx = i; }
   }
 
   const byLabel = {};
   for (let i = 0; i < lines.length; i++){
-    const k = norm(lines[i].label);
+    const k = lines[i].label.toLowerCase().replace(/\s+/g, ' ').trim();
     if (!(k in byLabel)) byLabel[k] = i;   // first occurrence wins
   }
-  return { lines, byLabel, indentUnit };
+  return { lines, byLabel, indentUnit, start };
 }
 
 function buildSheetModel(name, rows, role){
   const headerRow = findHeaderRow(rows);
   const cols = classifyColumns(rows, headerRow);
-  const { lines, byLabel, indentUnit } = buildLines(rows, headerRow, cols);
-  return { name, role, headerRow, cols, lines, byLabel, indentUnit };
+  const { lines, byLabel, indentUnit, start } = buildLines(rows, headerRow, cols);
+  return { name, role, headerRow, bodyStart: start, cols, lines, byLabel, indentUnit,
+           labelCols: cols.filter(c => c.type === 'label').map(c => c.idx) };
 }
 
-/* Read a labelled line's value in a given column (raw sheet access). */
+/* ---------- role detection ---------- */
+
+function _sheetText(rows, maxRows){
+  let out = '';
+  for (let r = 0; r < Math.min(rows.length, maxRows); r++)
+    for (const v of rows[r] || []) if (typeof v === 'string' && v.trim()) out += ' ' + v;
+  return normLabel(out);
+}
+
+function _titleText(rows){ return _sheetText(rows, 8); }
+
+function _allLabelKeys(rows){
+  const set = new Set();
+  for (const row of rows) for (const v of (row || []).slice(0, 8)) if (typeof v === 'string' && v.trim()) set.add(labelKey(v));
+  return set;
+}
+
+function detectRoles(sheets, sheetModels){
+  const roles = { plMonthly: null, plComparative: null, plPercent: null, pl: null, bs: null, ar: null, ap: null, notes: null, summary: null };
+  const names = Object.keys(sheets);
+  const info = names.map(n => {
+    const rows = sheets[n] || [];
+    const sm = sheetModels[n];
+    const nameT = normLabel(n), title = _titleText(rows);
+    const keys = _allLabelKeys(rows.slice(0, 600));
+    const has = re => [...keys].some(k => re.test(k));
+    const months = sm.cols.filter(c => c.type === 'month').length;
+    const buckets = sm.cols.filter(c => c.type === 'bucket').length;
+    const periods = sm.cols.filter(c => ['current', 'prior', 'history'].includes(c.type)).length;
+    const text = nameT + ' ' + title;
+    const plName = /profit and loss|profit loss|\bp and l\b|\bpl\b|\bp l\b|income statement|statement of (operations|income|comprehensive income)|income and expense|operating statement|revenue and expense/.test(text);
+    const bsName = /balance sheet|statement of financial (position|condition)|\bbs\b/.test(text);
+    const plContent = (has(/^total (for )?(income|revenues?|sales)$/) || has(/^gross profit$/)) && has(/^net (income|profit|loss|ordinary income)/);
+    const bsContent = has(/^total (for )?assets$/) && (has(/^total (for )?liabilities/) || has(/equity$/));
+    const recv = /receivable|\ba r\b|\bar\b|customer/.test(text), pay = /payable|\ba p\b|\bap\b|vendor|supplier/.test(text);
+    const agingName = /ag(e)?ing|aged/.test(text);
+    const notes = /\bnotes?\b|comments?/.test(nameT) || /notes? to (the )?(financial statements?|accounts)/.test(title);
+    return { n, sm, months, buckets, periods, plName, bsName, plContent, bsContent, recv, pay, agingName, notes,
+             pct: sm.cols.some(c => c.type === 'percent') && !periods && !months, detail: /detail|by class|by customer|by vendor|transaction/.test(text) };
+  });
+  const free = x => !Object.values(roles).includes(x.n);
+
+  for (const x of info){
+    if (!free(x)) continue;
+    if ((x.buckets >= 2 || x.agingName) && (x.recv || x.pay) && !x.plContent && !x.bsContent){
+      if (x.recv && !x.pay && !roles.ar){ roles.ar = x.n; continue; }
+      if (x.pay && !x.recv && !roles.ap){ roles.ap = x.n; continue; }
+      if (x.recv && x.pay){ if (/receivable|\ba r\b|\bar\b/.test(normLabel(x.n)) && !roles.ar){ roles.ar = x.n; continue; }
+                           if (!roles.ap){ roles.ap = x.n; continue; } }
+    }
+  }
+  for (const x of info){
+    if (!free(x) || roles.bs) continue;
+    if ((x.bsName && !x.plName) || (x.bsContent && !x.plContent)){ roles.bs = x.n; }
+  }
+  const plCands = info.filter(x => free(x) && !x.detail && (x.plName || x.plContent) && !(x.bsContent && !x.plContent));
+  for (const x of plCands){
+    if (x.months >= 2 && !roles.plMonthly){ roles.plMonthly = x.n; continue; }
+  }
+  for (const x of plCands){
+    if (!free(x)) continue;
+    if (x.periods >= 2 && !roles.plComparative){ roles.plComparative = x.n; continue; }
+  }
+  for (const x of plCands){
+    if (!free(x)) continue;
+    if (x.pct && !roles.plPercent && (roles.pl || roles.plMonthly || roles.plComparative)){ roles.plPercent = x.n; continue; }
+    if (!roles.pl && !roles.plMonthly && !roles.plComparative){ roles.pl = x.n; continue; }
+    if (!roles.pl && x.periods >= 1 && !roles.plComparative){ roles.pl = x.n; continue; }
+  }
+  for (const x of info){
+    if (free(x) && x.notes && !roles.notes){ roles.notes = x.n; }
+  }
+  return roles;
+}
+
+/* ---------- legacy helpers kept for recompute.js ---------- */
+
 function lineValue(sheets, sm, lineIdx, col){
   if (lineIdx === null || lineIdx === undefined || lineIdx < 0) return null;
   const line = sm.lines[lineIdx];
@@ -216,242 +534,29 @@ function labelValue(sheets, sm, label, col){
   return idx === undefined ? null : lineValue(sheets, sm, idx, col);
 }
 
-/* First column of a given type; null if absent. */
 function colOfType(sm, type){
   const c = sm && sm.cols.find(c => c.type === type);
   return c ? c.idx : null;
 }
 
-/* Last numeric value in a labelled row (generic-format fallback, old findValue) */
-function lastNumeric(sheets, sm, labelRe){
-  if (!sm) return 0;
-  const rows = sheets[sm.name] || [];
-  for (const line of sm.lines){
-    if (!labelRe.test(line.label)) continue;
-    const row = rows[line.r] || [];
-    for (let c = row.length - 1; c >= 1; c--){
-      const v = String(row[c] ?? '').trim();
-      if (v !== '' && isNumericCell(v)) return num(v);
-    }
-  }
-  return 0;
-}
-
-function detectClientPeriod(sheets, sheetModels, roles){
-  let client = '', period = '';
-  const candidates = [roles.plMonthly, roles.plComparative, roles.pl, roles.bs]
-    .filter(Boolean);
-  for (const name of candidates){
-    const rows = sheets[name] || [];
-    for (let i = 0; i < Math.min(rows.length, 4); i++){
-      const v = String((rows[i] || [])[0] ?? '').trim();
-      if (!v) continue;
-      if (!client && i === 0){ client = v.replace(/[,\s]+$/, ''); continue; }
-      if (!period && /^(as of|for the|january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec|\d{4})/i.test(v)
-          && !/balance sheet|profit|loss/i.test(v)){
-        period = v;
-      }
-    }
-    if (client && period) break;
-  }
-  /* Generic fallback: old regex behavior over first 12 rows of every sheet */
-  if (!client){
-    for (const rows of Object.values(sheets)){
-      for (const row of rows.slice(0, 12)){
-        const s = (row || []).join(' ');
-        const m = s.match(/([A-Z][A-Za-z0-9 .,&'-]{3,}(?:Inc\.?|LLC|Ltd\.?|Services|Corp\.?))/);
-        if (m){ client = m[1].trim().replace(/[,\s]+$/, ''); break; }
-      }
-      if (client) break;
-    }
-  }
-  return { client: client || 'Client', period: period || 'For the period ended' };
-}
-
-/* Ordered alternatives for key P&L lines (QuickBooks first, generic fallbacks). */
-const LABELS = {
-  income:   ['total income', 'total revenue', 'revenue', 'sales', 'income'],
-  gross:    ['gross profit'],
-  expenses: ['total expenses', 'total operating expenses', 'operating expenses', 'expenses'],
-  net:      ['net income', 'net profit', 'profit for the period']
-};
-
-/* First alternative that resolves to a line with numeric content. */
-function findByLabels(sheets, sm, labels){
-  if (!sm) return null;
-  for (const lab of labels){
-    const idx = sm.byLabel[lab];
-    if (idx === undefined) continue;
-    const line = sm.lines[idx];
-    if (line.hasValues || line.kind === 'total' || line.kind === 'computed') return idx;
-  }
-  return null;
-}
+/* ---------- entry point ---------- */
 
 function parseWorkbook(sheets){
-  const roles = detectRoles(sheets);
   const sheetModels = {};
   for (const [name, rows] of Object.entries(sheets)){
-    let role = 'other';
-    for (const [r, n] of Object.entries(roles)) if (n === name) role = r;
-    sheetModels[name] = buildSheetModel(name, rows, role);
-  }
-
-  const M = key => roles[key] ? sheetModels[roles[key]] : null;
-  const plM = M('plMonthly'), plC = M('plComparative'), plP = M('plPercent'),
-        plG = M('pl'), bs = M('bs'), ar = M('ar'), ap = M('ap');
-  const plMain = plM || plG || plC;      // preferred P&L for monthly series
-  const plTotals = plC || plM || plG;    // preferred P&L for period totals
-
-  /* Months from the monthly P&L header */
-  let months = [];
-  if (plM) months = plM.cols.filter(c => c.type === 'month')
-                            .map(c => ({ label: c.label, short: c.short, col: c.idx }));
-
-  const seriesFor = (sm, labels) => {
-    if (!sm) return [];
-    const idx = findByLabels(sheets, sm, labels);
-    if (idx === null) return [];
-    if (months.length && sm === plM)
-      return months.map(m => lineValue(sheets, sm, idx, m.col) ?? 0);
-    /* generic fallback: cols 1..12 of the labelled row */
-    const row = (sheets[sm.name] || [])[sm.lines[idx].r] || [];
-    return row.slice(1, 13).map(num);
-  };
-
-  const monthlyRevenue  = seriesFor(plMain, LABELS.income);
-  const monthlyNet      = seriesFor(plMain, LABELS.net);
-  const monthlyExpenses = seriesFor(plMain, LABELS.expenses);
-
-  /* Period totals: comparative sheet current/prior columns when present */
-  const curCol   = plTotals ? (colOfType(plTotals, 'current') ?? colOfType(plTotals, 'rowTotal')) : null;
-  const priorCol = plTotals ? colOfType(plTotals, 'prior') : null;
-  const plVal = (labels, col) => {
-    const idx = findByLabels(sheets, plTotals, labels);
-    if (idx === null) return 0;
-    if (col !== null) return lineValue(sheets, plTotals, idx, col) ?? 0;
-    /* generic format: last numeric cell of the row */
-    const row = (sheets[plTotals.name] || [])[plTotals.lines[idx].r] || [];
-    for (let c = row.length - 1; c >= 1; c--)
-      if (String(row[c] ?? '').trim() !== '' && isNumericCell(row[c])) return num(row[c]);
-    return 0;
-  };
-
-  const bsCur   = bs ? (colOfType(bs, 'current') ?? 1) : null;
-  const bsPrior = bs ? colOfType(bs, 'prior') : null;
-  const bsVal = (labelRe, col) => {
-    if (!bs || col === null) return 0;
-    for (const [k, i] of Object.entries(bs.byLabel))
-      if (labelRe.test(k)) return lineValue(sheets, bs, i, col) ?? 0;
-    return 0;
-  };
-
-  /* Aging grand totals: the bare TOTAL line, else last "total" line */
-  const agingTotals = sm => {
-    if (!sm) return null;
-    const buckets = sm.cols.filter(c => c.type === 'bucket');
-    const totCol = colOfType(sm, 'rowTotal');
-    let gl = [...sm.lines].reverse().find(l => l.kind === 'grandTotal') ||
-             [...sm.lines].reverse().find(l => l.kind === 'total');
-    if (!gl) return null;
-    const row = (sheets[sm.name] || [])[gl.r] || [];
-    return {
-      buckets: buckets.map(b => ({ label: b.label, value: num(row[b.idx]) })),
-      total: totCol !== null ? num(row[totCol])
-                             : buckets.reduce((s, b) => s + num(row[b.idx]), 0)
-    };
-  };
-  const arAging = agingTotals(ar), apAging = agingTotals(ap);
-
-  const metrics = {
-    income:   plVal(LABELS.income, curCol),
-    gross:    plVal(LABELS.gross, curCol) || plVal(LABELS.income, curCol),
-    expenses: plVal(LABELS.expenses, curCol),
-    net:      plVal(LABELS.net, curCol),
-    bank:     bsVal(/^total for bank accounts$|^total bank/i, bsCur) || bsVal(/bank/i, bsCur),
-    ar:       bsVal(/^total for accounts receivable$|^total accounts receivable/i, bsCur) || (arAging ? arAging.total : 0),
-    ap:       bsVal(/^total for accounts payable$|^total accounts payable/i, bsCur)    || (apAging ? apAging.total : 0),
-    assets:      bsVal(/^total for assets$|^total assets$/i, bsCur),
-    liabilities: bsVal(/^total for liabilities$|^total liabilities$/i, bsCur),
-    equity:      bsVal(/^total for equity$|^total equity$/i, bsCur)
-  };
-
-  const prior = {
-    income:   priorCol !== null ? plVal(LABELS.income, priorCol) : null,
-    gross:    priorCol !== null ? (plVal(LABELS.gross, priorCol) || plVal(LABELS.income, priorCol)) : null,
-    expenses: priorCol !== null ? plVal(LABELS.expenses, priorCol) : null,
-    net:      priorCol !== null ? plVal(LABELS.net, priorCol) : null,
-    bank:     bsPrior !== null ? (bsVal(/^total for bank accounts$|^total bank/i, bsPrior) || bsVal(/bank/i, bsPrior)) : null,
-    ar:       bsPrior !== null ? bsVal(/^total for accounts receivable$|^total accounts receivable/i, bsPrior) : null,
-    ap:       bsPrior !== null ? bsVal(/^total for accounts payable$|^total accounts payable/i, bsPrior) : null,
-    assets:   bsPrior !== null ? bsVal(/^total for assets$|^total assets$/i, bsPrior) : null
-  };
-
-  /* Expense breakdown: direct members of the Expenses group (totals or leaf
-   * accounts), valued on the row-total / current column. */
-  const expenseGroups = [];
-  const expSm = plM || plC || plG;
-  if (expSm){
-    const vcol = colOfType(expSm, 'rowTotal') ?? colOfType(expSm, 'current') ?? 1;
-    const expIdx = expSm.byLabel['expenses'];
-    const expLine = expIdx !== undefined ? expSm.lines[expIdx] : null;
-    if (expLine && expLine.totalIdx !== null){
-      const endR = expSm.lines[expLine.totalIdx].r;
-      let skipUntil = -1;
-      for (let i = expIdx + 1; i < expSm.lines.length; i++){
-        const l = expSm.lines[i];
-        if (l.r >= endR) break;
-        if (l.r <= skipUntil) continue;
-        if (l.kind === 'section' || (l.kind === 'account' && l.totalIdx !== null)){
-          /* group with its own total → use that total, skip its span */
-          if (l.totalIdx !== null){
-            const tl = expSm.lines[l.totalIdx];
-            expenseGroups.push({ label: l.label, value: lineValue(sheets, expSm, l.totalIdx, vcol) ?? 0 });
-            skipUntil = tl.r;
-            continue;
-          }
-        }
-        if (l.kind === 'account')
-          expenseGroups.push({ label: l.label, value: lineValue(sheets, expSm, i, vcol) ?? 0 });
-      }
+    try { sheetModels[name] = buildSheetModel(name, rows || [], 'other'); }
+    catch (e){
+      console.error('Sheet could not be modelled:', name, e);
+      sheetModels[name] = { name, role: 'other', headerRow: -1, bodyStart: 0, cols: [{ idx: 0, type: 'label', label: '' }], lines: [], byLabel: {}, indentUnit: 0, labelCols: [0] };
     }
   }
-  expenseGroups.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
-
-  /* Balance sheet composition: direct "Total for X" members of Assets and of
-   * Liabilities and Equity. */
-  const bsComposition = { assets: [], liabEquity: [] };
-  if (bs && bsCur !== null){
-    const groupsUnder = openerLabel => {
-      const out = [];
-      const oi = bs.byLabel[openerLabel];
-      if (oi === undefined) return out;
-      const opener = bs.lines[oi];
-      if (opener.totalIdx === null) return out;
-      const endR = bs.lines[opener.totalIdx].r;
-      let skipUntil = -1;
-      for (let i = oi + 1; i < bs.lines.length; i++){
-        const l = bs.lines[i];
-        if (l.r >= endR) break;
-        if (l.r <= skipUntil) continue;
-        if (l.totalIdx !== null){
-          out.push({ label: l.label, value: lineValue(sheets, bs, l.totalIdx, bsCur) ?? 0 });
-          skipUntil = bs.lines[l.totalIdx].r;
-        } else if (l.kind === 'account'){
-          out.push({ label: l.label, value: lineValue(sheets, bs, i, bsCur) ?? 0 });
-        }
-      }
-      return out;
-    };
-    bsComposition.assets = groupsUnder('assets');
-    const le = groupsUnder('liabilities and equity');
-    bsComposition.liabEquity = le.length ? le :
-      [...groupsUnder('liabilities'), ...groupsUnder('equity')];
+  const roles = detectRoles(sheets, sheetModels);
+  for (const [r, n] of Object.entries(roles)) if (n && sheetModels[n]) sheetModels[n].role = r;
+  /* "Net Income" inside a Balance Sheet's equity section is an ordinary posting line, not a P&L formula row. */
+  for (const sm of Object.values(sheetModels)){
+    if (['plMonthly', 'plComparative', 'pl', 'plPercent'].includes(sm.role)) continue;
+    for (const l of sm.lines) if (l.kind === 'computed') l.kind = l.hasValues ? 'account' : 'section';
   }
-
-  const { client, period } = detectClientPeriod(sheets, sheetModels, roles);
-
-  return { roles, sheetModels, months, monthlyRevenue, monthlyNet, monthlyExpenses,
-           metrics, prior, expenseGroups, arAging, apAging, bsComposition,
-           client, period };
+  const model = { roles, sheetModels };
+  return analyzeFinancials(model, sheets);
 }
