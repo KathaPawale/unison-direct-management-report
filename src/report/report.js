@@ -83,7 +83,7 @@ function formatReportCell(v, colType, opts = {}){
     if (isPercentText(s)) return escapeHtml(s);
     const n = parseAmount(v);
     if (n === null) return escapeHtml(s);
-    const p = Math.abs(n) <= 10 ? n * 100 : n;
+    const p = Math.abs(n) < 1 ? n * 100 : n;
     return (p < 0 ? '(' + Math.abs(p).toFixed(1) + '%)' : p.toFixed(1) + '%');
   }
   const n = parseAmount(v);
