@@ -18,51 +18,73 @@ function _reportFileBase(){
 
 async function savePdf(open = false){
   if (!hasData()){ toast('Upload a workbook first.'); return; }
+  if (!window.jspdf || !window.jspdf.jsPDF){
+    toast('PDF library did not load. Refresh the page and try again.');
+    return;
+  }
+  if (typeof window.html2canvas !== 'function'){
+    toast('PDF renderer did not load. Refresh the page and try again.');
+    return;
+  }
   await _ensureCoverImage();
-  const pages = buildPages({ forExport: true });   // clean: no red edit highlights
-
-  /* Progress overlay (also hides the capture host) */
+  const pages = buildPages({ forExport: true });
+  if (!pages.length){ toast('Nothing to export yet.'); return; }
   const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(9,25,45,.72);z-index:9999;' +
-    'display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;font-weight:600';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(9,25,45,.72);z-index:9999;display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;font-weight:600';
   overlay.textContent = 'Generating PDF\u2026';
   document.body.appendChild(overlay);
-
-  /* Capture host: in the document flow at the top of the page so html2canvas
-     measures real coordinates (off-screen fixed containers render blank). */
   const host = document.createElement('div');
   host.style.cssText = 'position:absolute;top:' + window.scrollY + 'px;left:0;width:1056px;z-index:9998;background:#fff';
   document.body.appendChild(host);
-
+  const failedPages = [];
   try {
     const { jsPDF } = window.jspdf;
     let pdf = null;
     for (let i = 0; i < pages.length; i++){
       const land = pages[i].orientation === 'landscape';
       overlay.textContent = 'Generating PDF \u2014 page ' + (i + 1) + ' of ' + pages.length;
-      host.style.width = (land ? PAGE_H : PAGE_W) + 'px';
-      host.innerHTML = pages[i].html;
-      const el = host.firstElementChild;
-      el.style.margin = '0';
-      el.style.boxShadow = 'none';
-      const canvas = await html2canvas(el, { scale: 1.6, useCORS: true, logging: false, backgroundColor: '#ffffff',
-        width: land ? PAGE_H : PAGE_W, height: land ? PAGE_W : PAGE_H, windowWidth: land ? PAGE_H : PAGE_W });
-      const orientation = land ? 'landscape' : 'portrait';
-      if (!pdf) pdf = new jsPDF({ unit: 'pt', format: 'letter', orientation });
-      else pdf.addPage('letter', orientation);
-      pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, land ? 792 : 612, land ? 612 : 792);
+      try {
+        host.style.width = (land ? PAGE_H : PAGE_W) + 'px';
+        host.innerHTML = pages[i].html;
+        const el = host.firstElementChild;
+        if (!el){ failedPages.push(i + 1); continue; }
+        el.style.margin = '0';
+        el.style.boxShadow = 'none';
+        let canvas;
+        try {
+          canvas = await html2canvas(el, { scale: 1.6, useCORS: true, logging: false, backgroundColor: '#ffffff', width: land ? PAGE_H : PAGE_W, height: land ? PAGE_W : PAGE_H, windowWidth: land ? PAGE_H : PAGE_W });
+        } catch (e1){
+          canvas = await html2canvas(el, { scale: 1.0, useCORS: true, logging: false, backgroundColor: '#ffffff', width: land ? PAGE_H : PAGE_W, height: land ? PAGE_W : PAGE_H, windowWidth: land ? PAGE_H : PAGE_W });
+        }
+        const orientation = land ? 'landscape' : 'portrait';
+        if (!pdf) pdf = new jsPDF({ unit: 'pt', format: 'letter', orientation });
+        else pdf.addPage('letter', orientation);
+        pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, land ? 792 : 612, land ? 612 : 792);
+      } catch (pageErr){
+        console.error('PDF page ' + (i + 1) + ' skipped:', pageErr);
+        failedPages.push(i + 1);
+      }
     }
-    const filename = _reportFileBase() + '-Management-Report.pdf';
+    if (!pdf){ toast('PDF could not be generated: no pages rendered.'); return; }
+    const base = _reportFileBase().slice(0, 80);
+    const filename = base + '-Management-Report.pdf';
     if (open){
       window.open(URL.createObjectURL(pdf.output('blob')), '_blank');
     } else {
-      pdf.save(filename);
+      try { pdf.save(filename); }
+      catch (saveErr){
+        const url = URL.createObjectURL(pdf.output('blob'));
+        const a = document.createElement('a'); a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+      }
     }
-    toast('PDF ready \u2014 ' + pages.length + ' pages');
+    const donePages = pages.length - failedPages.length;
+    toast(failedPages.length ? ('PDF ready \u2014 ' + donePages + ' of ' + pages.length + ' pages (skipped: ' + failedPages.join(', ') + ')') : ('PDF ready \u2014 ' + pages.length + ' pages'));
     return pdf;
   } catch (e) {
-    console.error(e);
-    toast('PDF generation failed: ' + (e.message || e));
+    console.error('PDF generation failed:', e);
+    toast('PDF generation failed: ' + (e && (e.message || e.toString()) || 'unknown error'));
   } finally {
     host.remove();
     overlay.remove();
