@@ -161,7 +161,7 @@ function _modelSheetToWs(sm, title){
       const base = isGrand ? XL_STYLES.grandVal : isTotal ? XL_STYLES.totalVal : c.type === 'percent' ? XL_STYLES.pctCell : XL_STYLES.money;
       const style = { ...base, alignment: { horizontal: 'right', vertical: 'center' } };
       if (c.type === 'percent' && (n !== null || isPercentText(v))){
-        const pv = isPercentText(v) ? parseFloat(String(v).replace(/[^\d.\-]/g, '')) / 100 * (/^\(/.test(String(v).trim()) ? -1 : 1) : (Math.abs(n) <= 10 ? n : n / 100);
+        const pv = isPercentText(v) ? parseFloat(String(v).replace(/[^\d.\-]/g, '')) / 100 * (/^\(/.test(String(v).trim()) ? -1 : 1) : (Math.abs(n) < 1 ? n : n / 100);
         _wsSetCell(ws, out, i + 1, pv, { ...style, numFmt: XL.pctFmt });
       } else if (n !== null) _wsSetCell(ws, out, i + 1, n, { ...style, font: { ...(style.font || {}), ...(n < 0 ? { color: { rgb: 'C93438' } } : {}) } });
       else if (cellText(v) !== '') _wsSetCell(ws, out, i + 1, cellText(v), { ...XL_STYLES.plain, alignment: { horizontal: 'right' } });
