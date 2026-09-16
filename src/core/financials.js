@@ -245,6 +245,18 @@ function bsFigures(sheets, sm, spec, basis){
     currentAssets = assets - fixedAssets - (otherAssets || 0);
 
   const pctOf = (x, d) => (x === null || d === null || Math.abs(d) < 0.005) ? null : x / Math.abs(d) * 100;
+  /* Row 36: when the denominator is negative or zero, raw signed percentages can
+   * exceed 100 percent, producing a donut that visually breaks. Rescale each slice
+   * using the sum of absolute values so no item exceeds 100 percent. Negative values
+   * keep their sign as a display flag. Positive-total cases keep the raw computation
+   * so cases like Long-Term Liab exceeding Total L&E stay visible as a real signal. */
+  const rescaleForNegativeTotal = (items, total) => {
+    if (!items || !items.length) return;
+    if (total === null || total > 0) return;
+    const absTotal = items.reduce((s, x) => s + Math.abs(x.value), 0);
+    if (absTotal < 0.005) return;
+    items.forEach(x => { x.pct = (x.value / absTotal) * 100; });
+  };
   const assetItems = [];
   if (assets !== null){
     if (currentAssets !== null) assetItems.push({ label: 'Current Assets', value: currentAssets });
@@ -262,6 +274,7 @@ function bsFigures(sheets, sm, spec, basis){
     }
     for (let i = assetItems.length - 1; i >= 0; i--) if (Math.abs(assetItems[i].value) < 0.005) assetItems.splice(i, 1);
     assetItems.forEach(x => { x.pct = pctOf(x.value, assets); });
+    rescaleForNegativeTotal(assetItems, assets);
   }
   const leItems = [];
   if (totalLE !== null){
@@ -271,17 +284,40 @@ function bsFigures(sheets, sm, spec, basis){
     if (Math.abs(liabResid) >= 0.5) leItems.push({ label: 'Other Liabilities', value: liabResid });
     if (equity !== null) leItems.push({ label: 'Equity', value: equity });
     leItems.forEach(x => { x.pct = pctOf(x.value, totalLE); });
+    rescaleForNegativeTotal(leItems, totalLE);
   }
 
   /* Cash / bank */
   let bank = v('bank');
+  if (bank === null){
+    const bankTot = _find(sm, [/^total\s+(for\s+)?bank\s+accounts?$/i], ['total']);
+    if (bankTot >= 0){
+      const a = _amount(sheets, sm, sm.lines[bankTot].r, spec);
+      if (a !== null) bank = a;
+    }
+  }
+  if (bank === null){
+    const bankSec = _find(sm, [/^bank\s+accounts?$/i], ['section']);
+    if (bankSec >= 0){
+      const rng = _span(sm, bankSec);
+      let s = 0, any = false;
+      for (let i = rng.from; i < rng.to; i++){
+        const l = sm.lines[i];
+        if (l.kind !== 'account') continue;
+        if (/receivable|undeposited|clearing|payable|loan|credit card|prepaid/.test(l.mkey)) continue;
+        const a = _amount(sheets, sm, l.r, spec);
+        if (a !== null){ s += a; any = true; }
+      }
+      if (any) bank = s;
+    }
+  }
   if (bank === null){
     const ca = _find(sm, _S(FIN.currentAssets.names), ['section', 'account']);
     const rng = ca >= 0 ? _span(sm, ca) : { from: 0, to: sm.lines.length };
     let s = 0, any = false;
     for (let i = rng.from; i < rng.to; i++){
       const l = sm.lines[i];
-      if (l.kind !== 'account' || !/\b(checking|savings|bank|cash|money market|operating account|petty cash)\b/.test(l.mkey) ||
+      if (l.kind !== 'account' || !/\b(checking|savings|bank|cash|money market|operating account|petty cash|wells fargo|chase|citibank|jpmorgan|bofa|bank of america)\b/.test(l.mkey) ||
           /receivable|undeposited|clearing|payable|loan|credit card/.test(l.mkey)) continue;
       const a = _amount(sheets, sm, l.r, spec); if (a !== null){ s += a; any = true; }
     }
