@@ -59,3 +59,7 @@
 .toc-item:hover{background:#f0f4f9}
 .toc-item:hover>span:first-child{color:#0b2f59}
 .report-page .report-table td{padding-top:3px;padding-bottom:3px}
+.toc-item{text-decoration:none;color:inherit;cursor:pointer;transition:background 120ms}
+.toc-item:hover{background:#f0f4f9}
+.toc-item:hover>span:first-child{color:#0b2f59}
+.report-page .report-table td{padding-top:3px;padding-bottom:3px}
