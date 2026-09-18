@@ -100,7 +100,7 @@ function _headLabel(c){
 
 /* Build thead + row HTML strings for a parsed sheet.
  * Returns {theadHtml, rows:[{html, orphanGuard}], colCount, valueCols} */
-function reportTableParts(sm, { forExport = false, cols = null, compact = false } = {}){
+function reportTableParts(sm, { forExport = false, cols = null, compact = false, skipZeros = null } = {}){
   const rows = state.sheets[sm.name] || [];
   const showCols = cols || displayColumns(sm);
   const labelPct = showCols.length > 10 ? 20 : showCols.length > 6 ? 24 : showCols.length > 3 ? 34 : 46;
@@ -109,8 +109,24 @@ function reportTableParts(sm, { forExport = false, cols = null, compact = false 
   const thead = '<tr><th class="lbl">Particulars</th>' + showCols.map(c =>
     `<th>${escapeHtml(_headLabel(c))}</th>`).join('') + '</tr>';
 
+  const doSkip = skipZeros === null ? forExport : !!skipZeros;
+  const isRowZero = (line) => {
+    if (line.kind !== 'account') return false;
+    const r = rows[line.r] || [];
+    for (const c of showCols){
+      const n = parseAmount(r[c.idx]);
+      if (n !== null && Math.abs(n) >= 0.005) return false;
+      if (n === null && isPercentText(r[c.idx])){
+        const pv = parseFloat(String(r[c.idx]).replace(/[^\d.\-]/g, ''));
+        if (!isNaN(pv) && Math.abs(pv) >= 0.005) return false;
+      }
+    }
+    return true;
+  };
+
   const out = [];
   for (const line of sm.lines){
+    if (doSkip && isRowZero(line)) continue;
     const row = rows[line.r] || [];
     const kind = line.kind;
     const isTotal = kind === 'total' || kind === 'grandTotal' || kind === 'computed';
@@ -512,24 +528,28 @@ function buildPages({ forExport = false } = {}){
   const tocIdx = pages.findIndex(p => p.body === '__TOC__');
   const ranges = new Map();
   pages.forEach((p, i) => {
-    if (!ranges.has(p.sectionId)) ranges.set(p.sectionId, { first: i + 1, last: i + 1, no: p.sectionNo, title: p.title });
+    if (!ranges.has(p.sectionId)) ranges.set(p.sectionId, { first: i + 1, last: i + 1, no: p.sectionNo, title: p.title, id: p.sectionId });
     else ranges.get(p.sectionId).last = i + 1;
   });
   const tocRows = [...ranges.values()]
     .filter(x => x.no)
-    .map(x => `<div class="toc-item"><span>${x.no}. ${escapeHtml(x.title)}</span>` +
-              `<span class="toc-page">${x.first === x.last ? x.first : x.first + ' – ' + x.last}</span></div>`)
+    .map(x => `<a class="toc-item" href="#report-section-${x.id}">` +
+              `<span>${x.no}. ${escapeHtml(x.title)}</span>` +
+              `<span class="toc-page">${x.first === x.last ? x.first : x.first + ' – ' + x.last}</span></a>`)
     .join('');
   pages[tocIdx].body = sectionHead(null, 'Table of Contents', state.period) + `<div class="toc-list">${tocRows}</div>`;
 
   const count = pages.length;
   const wm = watermarkHtml();
+  const firstPageBySection = new Map();
+  pages.forEach((p, i) => { if (!firstPageBySection.has(p.sectionId)) firstPageBySection.set(p.sectionId, i); });
   return pages.map((p, i) => {
     const cover = p.sectionId === 'cover';
     const cls = 'report-page' + (cover ? ' cover-page' : '') + (p.orientation === 'landscape' ? ' landscape' : '');
+    const anchorId = firstPageBySection.get(p.sectionId) === i ? ` id="report-section-${p.sectionId}"` : '';
     return {
       sectionNo: p.sectionNo, sectionId: p.sectionId, title: p.title, pageNo: i + 1, orientation: p.orientation,
-      html: `<div class="${cls}" data-section="${p.sectionId}">` + (cover ? '' : wm) + p.body + (cover ? '' : pageFooter(i + 1, count)) + '</div>'
+      html: `<div class="${cls}"${anchorId} data-section="${p.sectionId}">` + (cover ? '' : wm) + p.body + (cover ? '' : pageFooter(i + 1, count)) + '</div>'
     };
   });
 }
