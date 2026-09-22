@@ -30,6 +30,7 @@
 .report-table.compact td.val{font-size:7.6px}
 .report-table tr.row-grand td.neg,.report-table tr.row-total td.neg,.report-table td.neg{color:#c93438!important}
 .report-page.landscape .report-table.roomy td,.report-page.landscape .report-table.roomy th{padding:2px 4px;font-size:10px}
+.report-page.landscape .report-table.wide.roomy td,.report-page.landscape .report-table.wide.roomy th{padding:2px 4px;font-size:9.5px}
 .wide-col-marker{font-size:10px;color:#6d7887;margin:-6px 0 6px;text-align:right}
 .report-compare-table{width:100%;border-collapse:collapse;margin:6px 0 10px;font-variant-numeric:tabular-nums;table-layout:fixed}
 .report-compare-table th,.report-compare-table td{padding:6px 7px;border:1px solid #ccd7e3;text-align:right;font-size:10px}

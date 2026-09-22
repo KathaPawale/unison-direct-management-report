@@ -24,7 +24,7 @@ check('Notes use a title row', exportsSource.includes('Notes to Financial Statem
 check('Notes have line item and note columns', exportsSource.includes("'Line Item / Category'") && exportsSource.includes("'Note'"));
 check('Notes classify headings', exportsSource.includes('const isHeading = line =>'));
 check('Notes split labels from details', exportsSource.includes("const [label, ...rest] = line.split(' — ');"));
-check('Monthly pagination supports 14 columns', report.includes('const MAX_COLS_PER_PAGE = 14'));
+check('Monthly pagination supports 20 columns', report.includes('const MAX_COLS_PER_PAGE = 20'));
 check('Monthly P&L forces landscape', report.includes("sm.role === 'plMonthly' || all.length >= 12"));
 check('Monthly table is marked roomy', report.includes("cols.length <= 4 || forceLandscape ? ' roomy'"));
 check('Landscape roomy CSS shrinks cells', css.includes('.report-page.landscape .report-table.roomy td,.report-page.landscape .report-table.roomy th'));

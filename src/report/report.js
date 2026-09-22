@@ -181,9 +181,15 @@ function paginateTableSection(no, title, sm, opts = {}){
   }
   const groups = [];
   const forceLandscape = sm.role === 'plMonthly' || all.length >= 12;
-  /* Monthly P&L must stay on one landscape page while its columns fit the
-   * extended landscape budget. Only extreme wide sheets use column groups. */
-  if (all.length <= MAX_COLS_PER_PAGE) groups.push(all);
+  /* Row 43: monthly P&L must stay on one landscape page.
+   * Landscape budget extended to 20 cols so 12 months + Total + prior period + variance %
+   * never split into two sheets. Only extreme (>20 col) sheets fall back to column grouping. */
+  const LANDSCAPE_MAX_COLS = 20;
+  if (forceLandscape && all.length <= LANDSCAPE_MAX_COLS){
+    groups.push(all);
+  } else if (all.length <= MAX_COLS_PER_PAGE){
+    groups.push(all);
+  }
   else {
     /* keep Total / comparison columns with the last group */
     for (let i = 0; i < all.length; i += 12) groups.push(all.slice(i, i + 12));
