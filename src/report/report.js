@@ -87,6 +87,7 @@ function formatReportCell(v, colType, opts = {}){
     return (p < 0 ? '(' + Math.abs(p).toFixed(1) + '%)' : p.toFixed(1) + '%');
   }
   const n = parseAmount(v);
+  if (n !== null && n === 0 && opts.zeroDash) return '&ndash;';
   if (n !== null) return acctNumber(n, !opts.compact);
   return escapeHtml(s);
 }
@@ -141,7 +142,7 @@ function reportTableParts(sm, { forExport = false, cols = null, compact = false,
       const edited = !forExport &&
         (state.edited.has(sm.name + ':' + line.r + ':' + c.idx) || state.adjusted.has(sm.name + ':' + line.r + ':' + c.idx));
       const cls = [(n !== null && n < 0) ? 'neg' : '', edited ? 'cell-edited' : ''].filter(Boolean).join(' ');
-      tds += `<td class="val${cls ? ' ' + cls : ''}">${formatReportCell(v, c.type, { compact })}</td>`;
+      tds += `<td class="val${cls ? ' ' + cls : ''}">${formatReportCell(v, c.type, { compact, zeroDash: kind === 'account' })}</td>`;
     }
     out.push({ html: `<tr${trCls ? ` class="${trCls}"` : ''}>${tds}</tr>`, orphanGuard: kind === 'section' });
   }
@@ -179,6 +180,7 @@ function paginateTableSection(no, title, sm, opts = {}){
       '<div class="report-empty">No statement lines were found in this worksheet.</div>' }];
   }
   const groups = [];
+  const forceLandscape = sm.role === 'plMonthly' || all.length >= 12;
   if (all.length <= MAX_COLS_PER_PAGE) groups.push(all);
   else {
     /* keep Total / comparison columns with the last group */
@@ -186,11 +188,11 @@ function paginateTableSection(no, title, sm, opts = {}){
   }
   const bodies = [];
   groups.forEach((cols, gi) => {
-    const orientation = cols.length > WIDE_TABLE_COLS ? 'landscape' : 'portrait';
+    const orientation = forceLandscape || cols.length > WIDE_TABLE_COLS ? 'landscape' : 'portrait';
     const compact = cols.length > 8;
     const parts = reportTableParts(sm, { ...opts, cols, compact });
     const marker = groups.length > 1 ? `<div class="wide-col-marker">Columns ${escapeHtml(_headLabel(cols[0]))} – ${escapeHtml(_headLabel(cols[cols.length - 1]))}</div>` : '';
-    const tableCls = 'report-table' + (compact ? ' compact' : '') + (orientation === 'landscape' ? ' wide' : '') + (cols.length <= 4 ? ' roomy' : '');
+    const tableCls = 'report-table' + (compact ? ' compact' : '') + (orientation === 'landscape' ? ' wide' : '') + (cols.length <= 4 || forceLandscape ? ' roomy' : '');
     const shell = _measureShell(orientation);
     shell.innerHTML =
       `<div class="mh1">${sectionHead(no, title, tableSectionSub(sm), gi > 0)}${marker}</div>` +
