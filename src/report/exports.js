@@ -130,8 +130,9 @@ async function savePdf(open = false){
 
 const XL = {
   navy: '0B2F59', blue: '2597D4', light: 'EAF2FB', line: 'D5DDE7',
-  moneyFmt: '#,##0.00;[Red](#,##0.00)',
-  pctFmt: '0.0%'
+  moneyFmt: '_-* #,##0.00_-;[Red]_-* (#,##0.00)_-;_-* "-"_-;_-@_-',
+  totalFmt: '_-* #,##0.00_-;[Red]_-* (#,##0.00)_-;_-* 0.00_-;_-@_-',
+  pctFmt: '0.00%;[Red](0.00%)'
 };
 const XL_STYLES = {
   title:   { font: { bold: true, sz: 20, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: XL.navy } }, alignment: { vertical: 'center', horizontal: 'left' } },
@@ -139,14 +140,14 @@ const XL_STYLES = {
   head:    { font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 10 }, fill: { fgColor: { rgb: XL.navy } }, alignment: { horizontal: 'right' }, border: { bottom: { style: 'thin', color: { rgb: XL.line } } } },
   headL:   { font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 10 }, fill: { fgColor: { rgb: XL.navy } }, alignment: { horizontal: 'left' } },
   section: { font: { bold: true, sz: 10, color: { rgb: XL.navy } } },
-  money:   { numFmt: '#,##0.00;[Red](#,##0.00)', alignment: { horizontal: 'right' }, font: { sz: 10 } },
-  pctCell: { numFmt: '0.00%', alignment: { horizontal: 'right' }, font: { sz: 10 } },
+  money:   { numFmt: XL.moneyFmt, alignment: { horizontal: 'right' }, font: { sz: 10 } },
+  pctCell: { numFmt: XL.pctFmt, alignment: { horizontal: 'right' }, font: { sz: 10 } },
   totalLbl:{ font: { bold: true, sz: 10 }, border: { top: { style: 'thin', color: { rgb: XL.navy } } } },
-  totalVal:{ numFmt: '#,##0.00;[Red](#,##0.00)', alignment: { horizontal: 'right' }, font: { bold: true, sz: 10 },
+  totalVal:{ numFmt: XL.totalFmt, alignment: { horizontal: 'right' }, font: { bold: true, sz: 10 },
              border: { top: { style: 'thin', color: { rgb: XL.navy } } }, fill: { fgColor: { rgb: XL.light } } },
   grandLbl:{ font: { bold: true, sz: 10.5, color: { rgb: XL.navy } }, border: { top: { style: 'double', color: { rgb: XL.navy } } } },
-  grandVal:{ numFmt: '#,##0.00;[Red](#,##0.00)', alignment: { horizontal: 'right' }, font: { bold: true, sz: 10.5, color: { rgb: XL.navy } },
-             border: { top: { style: 'double', color: { rgb: XL.navy } } }, fill: { fgColor: { rgb: XL.light } } },
+  grandVal:{ numFmt: XL.totalFmt, alignment: { horizontal: 'right' }, font: { bold: true, sz: 10.5, color: { rgb: XL.navy } },
+             border: { top: { style: 'double', color: { rgb: XL.navy } }, bottom: { style: 'thin', color: { rgb: XL.navy } } }, fill: { fgColor: { rgb: XL.light } } },
   plain:   { font: { sz: 10 } },
   wrap:    { font: { sz: 10 }, alignment: { wrapText: true, vertical: 'top' } }
 };
@@ -242,7 +243,7 @@ function _modelSheetToWs(sm, title){
     out++;
   }
   const widest = Math.max(30, ...sm.lines.map(l => l.label.length + Math.min(l.indent, 10) * 2));
-  ws['!cols'] = [{ wch: Math.min(widest + 2, 60) }, ...cols.map(c => ({ wch: Math.max(14, String(_headLabel(c)).length + 2) }))];
+  ws['!cols'] = [{ wch: 34 }, ...cols.map(c => ({ wch: c.type === 'percent' ? 12 : 14 }))];
   ws['!rows'] = [{ hpt: 26 }, { hpt: 20 }, { hpt: 18 }, { hpt: 6 }, { hpt: 30 }];
   ws['!merges'] = [0, 1, 2].map(r => ({ s: { r, c: 0 }, e: { r, c: last } }));
   _decorateSheet(ws, sm.role, HEAD_R + 1, 1);
@@ -382,7 +383,7 @@ function downloadReportExcel(){
       _wsSetCell(ws, tr, 0, 'Total', XL_STYLES.totalLbl);
       _wsSetCell(ws, tr, 1, ag.total, XL_STYLES.totalVal);
       _wsSetCell(ws, tr, 2, 1, { ...XL_STYLES.totalVal, numFmt: '0.00%' });
-      ws['!cols'] = [{ wch: 28 }, { wch: 18 }, { wch: 14 }];
+      ws['!cols'] = [{ wch: 34 }, { wch: 14 }, { wch: 12 }];
       _decorateSheet(ws, role, 5, 1);
       XLSX.utils.book_append_sheet(wb, ws, _sheetNameSafe(wb, ROLE_LABELS[role] || name));
       continue;
