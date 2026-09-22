@@ -37,15 +37,53 @@ async function savePdf(open = false){
   try {
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit: 'pt', format: 'letter', orientation: 'portrait' });
+    const sectionFirstPdfPage = new Map();
+    let tocEntries = null;
+    let tocPdfPage = -1;
+    const PAGE_PT_W = 612, PAGE_PT_H = 792;
     for (let i = 0; i < pages.length; i++){
       overlay.textContent = 'Generating PDF \u2014 page ' + (i + 1) + ' of ' + pages.length;
       host.innerHTML = pages[i].html;
       const el = host.firstElementChild;
       el.style.margin = '0';
       el.style.boxShadow = 'none';
+      const pdfPageIndex = pdf ? pdf.internal.getNumberOfPages() : 0;
+      const sid = pages[i].sectionId;
+      if (sid && !sectionFirstPdfPage.has(sid)) sectionFirstPdfPage.set(sid, pdfPageIndex);
+      if (sid === 'toc' && !tocEntries){
+        tocPdfPage = pdfPageIndex;
+        const pageRect = el.getBoundingClientRect();
+        const landscape = pageRect.width > pageRect.height;
+        const pdfPageW = landscape ? PAGE_PT_H : PAGE_PT_W;
+        const pdfPageH = landscape ? PAGE_PT_W : PAGE_PT_H;
+        const scaleX = pdfPageW / pageRect.width;
+        const scaleY = pdfPageH / pageRect.height;
+        tocEntries = Array.from(el.querySelectorAll('a.toc-item[href^="#report-section-"]')).map(a => {
+          const rect = a.getBoundingClientRect();
+          return {
+            sectionId: a.getAttribute('href').slice('#report-section-'.length),
+            x: (rect.left - pageRect.left) * scaleX,
+            y: (rect.top - pageRect.top) * scaleY,
+            w: rect.width * scaleX,
+            h: rect.height * scaleY
+          };
+        });
+      }
       const canvas = await html2canvas(el, { scale: 1.6, useCORS: true, logging: false, backgroundColor: '#ffffff' });
       if (i > 0) pdf.addPage();
       pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, 612, 792);
+    }
+    if (tocEntries && tocEntries.length && tocPdfPage >= 0){
+      try {
+        pdf.setPage(tocPdfPage + 1);
+        tocEntries.forEach(t => {
+          const target = sectionFirstPdfPage.get(t.sectionId);
+          if (target === undefined) return;
+          pdf.link(t.x, t.y, t.w, t.h, { pageNumber: target + 1 });
+        });
+      } catch (linkErr) {
+        console.warn('TOC hyperlinks could not be added:', linkErr);
+      }
     }
     const filename = _reportFileBase() + '-Management-Report.pdf';
     if (open){
@@ -106,6 +144,25 @@ function _sheetNameSafe(wb, name){
   let n = base, i = 2;
   while (wb.SheetNames.includes(n)) n = (base.slice(0, 28) + ' ' + i++).slice(0, 31);
   return n;
+}
+
+function _decorateSheet(ws, sheetKind, freezeRow = 4, freezeCol = 1){
+  const tabColors = {
+    cover: '0B2F59', summary: '1D6FB8', bs: '0FA5A5',
+    plMonthly: 'B54B8E', plComparative: 'B54B8E', pl: 'B54B8E', plPercent: 'B54B8E',
+    ar: 'E28C1B', ap: 'C93438', notes: '6D7887', disc: '2F4A6B'
+  };
+  ws['!tabColor'] = { rgb: tabColors[sheetKind] || '0B2F59' };
+  if (freezeRow || freezeCol){
+    ws['!views'] = [{
+      xSplit: freezeCol,
+      ySplit: freezeRow,
+      topLeftCell: String.fromCharCode(65 + freezeCol) + (freezeRow + 1),
+      activePane: 'bottomRight',
+      state: 'frozen'
+    }];
+    ws['!freeze'] = { xSplit: freezeCol, ySplit: freezeRow };
+  }
 }
 
 function _modelSheetToWs(sm){
@@ -177,6 +234,7 @@ function downloadReportExcel(){
   _wsSetCell(cover, 7, 0, 'Amounts in US Dollars ($)', XL_STYLES.plain);
   cover['!cols'] = [{ wch: 52 }, ...Array(7).fill({ wch: 12 })];
   cover['!merges'] = [1, 2, 3].map(r => ({ s: { r, c: 0 }, e: { r, c: 7 } }));
+  _decorateSheet(cover, 'cover', 0, 0);
   XLSX.utils.book_append_sheet(wb, cover, 'Cover');
 
   /* Analytical Summary */
@@ -212,6 +270,7 @@ function downloadReportExcel(){
     md.monthlyNet.forEach((v, i) => _wsSetCell(s, base + 2, i + 1, v, XL_STYLES.money));
   }
   s['!cols'] = [{ wch: 26 }, ...Array(Math.max(md.months.length, 3)).fill({ wch: 14 })];
+  _decorateSheet(s, 'summary', 3, 1);
   XLSX.utils.book_append_sheet(wb, s, 'Analytical Summary');
 
   /* Financial statement sheets */
@@ -219,15 +278,47 @@ function downloadReportExcel(){
   for (const role of order){
     const name = md.roles[role];
     if (!name) continue;
-    XLSX.utils.book_append_sheet(wb, _modelSheetToWs(md.sheetModels[name]),
-      _sheetNameSafe(wb, ROLE_LABELS[role] || name));
+    const stmtWs = _modelSheetToWs(md.sheetModels[name]);
+    _decorateSheet(stmtWs, role, 4, 1);
+    XLSX.utils.book_append_sheet(wb, stmtWs, _sheetNameSafe(wb, ROLE_LABELS[role] || name));
   }
 
   /* Notes + disclaimer */
   const notes = {};
-  _wsSetCell(notes, 0, 0, 'Notes to Financial Statements', XL_STYLES.title);
-  _wsSetCell(notes, 2, 0, state.notes || 'No management notes entered.', XL_STYLES.wrap);
-  notes['!cols'] = [{ wch: 110 }];
+  _wsSetCell(notes, 0, 0, (state.client || 'Client') + ' — Notes to Financial Statements',
+    { font: { bold: true, sz: 14 }, alignment: { vertical: 'center' } });
+  _wsSetCell(notes, 0, 1, '', { font: { bold: true, sz: 14 } });
+  _wsSetCell(notes, 1, 0, (state.period || '') + '  ·  ' + (state.basis || ''),
+    { font: { italic: true, sz: 10 }, alignment: { vertical: 'center' } });
+  _wsSetCell(notes, 3, 0, 'Line Item / Category', XL_STYLES.headL);
+  _wsSetCell(notes, 3, 1, 'Note', XL_STYLES.head);
+  notes['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }];
+  const noteLines = String(state.notes || '').split('\n').map(line => line.trim()).filter(Boolean);
+  const categoryPattern = /comments|^notes? to|^(assets|liabilities|equity|income|expenses|receivables|payables|bank accounts|current assets|fixed assets|current liabilities|long.?term liabilities)/i;
+  let noteRow = 4;
+  if (!noteLines.length) noteLines.push('No notes were found in the workbook.');
+  noteLines.forEach(line => {
+    const isCategory = categoryPattern.test(line) && !line.includes(' — ') && line.length < 70;
+    if (isCategory){
+      const categoryStyle = { font: { bold: true, sz: 10 }, alignment: { vertical: 'top' } };
+      _wsSetCell(notes, noteRow, 0, line, categoryStyle);
+      _wsSetCell(notes, noteRow, 1, '', categoryStyle);
+      notes['!merges'] = notes['!merges'] || [];
+      notes['!merges'].push({ s: { r: noteRow, c: 0 }, e: { r: noteRow, c: 1 } });
+    } else {
+      const separator = line.indexOf(' — ');
+      if (separator >= 0){
+        _wsSetCell(notes, noteRow, 0, line.slice(0, separator).trim(), { ...XL_STYLES.wrap, alignment: { horizontal: 'left', wrapText: true, vertical: 'top' } });
+        _wsSetCell(notes, noteRow, 1, line.slice(separator + 3).trim(), XL_STYLES.wrap);
+      } else {
+        _wsSetCell(notes, noteRow, 0, '', XL_STYLES.wrap);
+        _wsSetCell(notes, noteRow, 1, line, XL_STYLES.wrap);
+      }
+    }
+    noteRow++;
+  });
+  notes['!cols'] = [{ wch: 34 }, { wch: 78 }];
+  _decorateSheet(notes, 'notes', 3, 1);
   XLSX.utils.book_append_sheet(wb, notes, 'Notes');
 
   const disc = {};
@@ -238,6 +329,7 @@ function downloadReportExcel(){
   _wsSetCell(disc, 6, 0, 'Title: ' + (state.signatory.title || '________________________'), XL_STYLES.plain);
   _wsSetCell(disc, 7, 0, 'Date: '  + (state.signatory.date  || '________________________'), XL_STYLES.plain);
   disc['!cols'] = [{ wch: 110 }];
+  _decorateSheet(disc, 'disc', 0, 0);
   XLSX.utils.book_append_sheet(wb, disc, 'Disclaimer');
 
   XLSX.writeFile(wb, _reportFileBase() + '-Management-Report.xlsx');
