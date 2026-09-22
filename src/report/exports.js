@@ -54,11 +54,8 @@ async function savePdf(open = false){
         if (!el){ failedPages.push(i + 1); continue; }
         el.style.margin = '0';
         el.style.boxShadow = 'none';
-        const pdfPageIndex = pdf ? pdf.internal.getNumberOfPages() : 0;
         const sid = pages[i].sectionId;
-        if (sid && !sectionFirstPdfPage.has(sid)) sectionFirstPdfPage.set(sid, pdfPageIndex);
         if (sid === 'toc' && !tocEntries){
-          tocPdfPage = pdfPageIndex;
           const pageRect = el.getBoundingClientRect();
           const domW = pageRect.width || PAGE_W;
           const domH = pageRect.height || (land ? PAGE_W : PAGE_H);
@@ -85,6 +82,9 @@ async function savePdf(open = false){
         if (!pdf) pdf = new jsPDF({ unit: 'pt', format: 'letter', orientation });
         else pdf.addPage('letter', orientation);
         pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, land ? 792 : 612, land ? 612 : 792);
+        const pdfPageIndex = pdf.internal.getNumberOfPages() - 1;
+        if (sid && !sectionFirstPdfPage.has(sid)) sectionFirstPdfPage.set(sid, pdfPageIndex);
+        if (sid === 'toc') tocPdfPage = pdfPageIndex;
       } catch (pageErr){
         console.error('PDF page ' + (i + 1) + ' skipped:', pageErr);
         failedPages.push(i + 1);
