@@ -37,6 +37,10 @@ async function savePdf(open = false){
   host.style.cssText = 'position:absolute;top:' + window.scrollY + 'px;left:0;width:1056px;z-index:9998;background:#fff';
   document.body.appendChild(host);
   const failedPages = [];
+  const sectionFirstPdfPage = new Map();
+  let tocEntries = null;
+  let tocPdfPage = -1;
+  const PAGE_PT_W = 612, PAGE_PT_H = 792;
   try {
     const { jsPDF } = window.jspdf;
     let pdf = null;
@@ -50,6 +54,27 @@ async function savePdf(open = false){
         if (!el){ failedPages.push(i + 1); continue; }
         el.style.margin = '0';
         el.style.boxShadow = 'none';
+        const pdfPageIndex = pdf ? pdf.internal.getNumberOfPages() : 0;
+        const sid = pages[i].sectionId;
+        if (sid && !sectionFirstPdfPage.has(sid)) sectionFirstPdfPage.set(sid, pdfPageIndex);
+        if (sid === 'toc' && !tocEntries){
+          tocPdfPage = pdfPageIndex;
+          const pageRect = el.getBoundingClientRect();
+          const domW = pageRect.width || PAGE_W;
+          const domH = pageRect.height || (land ? PAGE_W : PAGE_H);
+          const scaleX = (land ? PAGE_PT_H : PAGE_PT_W) / domW;
+          const scaleY = (land ? PAGE_PT_W : PAGE_PT_H) / domH;
+          tocEntries = [...el.querySelectorAll('a.toc-item[href^="#report-section-"]')].map(a => {
+            const r = a.getBoundingClientRect();
+            return {
+              sectionId: a.getAttribute('href').replace('#report-section-', ''),
+              x: (r.left - pageRect.left) * scaleX,
+              y: (r.top - pageRect.top) * scaleY,
+              w: r.width * scaleX,
+              h: r.height * scaleY
+            };
+          });
+        }
         let canvas;
         try {
           canvas = await html2canvas(el, { scale: 1.6, useCORS: true, logging: false, backgroundColor: '#ffffff', width: land ? PAGE_H : PAGE_W, height: land ? PAGE_W : PAGE_H, windowWidth: land ? PAGE_H : PAGE_W });
@@ -66,6 +91,16 @@ async function savePdf(open = false){
       }
     }
     if (!pdf){ toast('PDF could not be generated: no pages rendered.'); return; }
+    if (tocEntries && tocEntries.length && tocPdfPage >= 0){
+      try {
+        pdf.setPage(tocPdfPage + 1);
+        for (const t of tocEntries){
+          const target = sectionFirstPdfPage.get(t.sectionId);
+          if (target === undefined) continue;
+          pdf.link(t.x, t.y, t.w, t.h, { pageNumber: target + 1 });
+        }
+      } catch (linkErr){ console.warn('TOC hyperlinks could not be added:', linkErr); }
+    }
     const base = _reportFileBase().slice(0, 80);
     const filename = base + '-Management-Report.pdf';
     if (open){
@@ -144,6 +179,21 @@ function _sheetNameSafe(wb, name){
   return n;
 }
 
+function _decorateSheet(ws, sheetKind, freezeRow = 4, freezeCol = 1){
+  const tabColors = {
+    cover: '0B2F59', summary: '1D6FB8', bs: '0FA5A5',
+    plMonthly: 'B54B8E', plComparative: 'B54B8E', pl: 'B54B8E', plPercent: 'B54B8E',
+    ar: 'E28C1B', ap: 'C93438', notes: '6D7887', disc: '2F4A6B'
+  };
+  ws['!tabColor'] = { rgb: tabColors[sheetKind] || '0B2F59' };
+  if (freezeRow || freezeCol){
+    ws['!views'] = [{ xSplit: freezeCol, ySplit: freezeRow,
+      topLeftCell: XLSX.utils.encode_cell({ r: freezeRow, c: freezeCol }),
+      activePane: 'bottomRight', state: 'frozen' }];
+    ws['!freeze'] = { xSplit: freezeCol, ySplit: freezeRow };
+  }
+}
+
 function _modelSheetToWs(sm, title){
   const ws = {};
   const rows = state.sheets[sm.name] || [];
@@ -195,7 +245,32 @@ function _modelSheetToWs(sm, title){
   ws['!cols'] = [{ wch: Math.min(widest + 2, 60) }, ...cols.map(c => ({ wch: Math.max(14, String(_headLabel(c)).length + 2) }))];
   ws['!rows'] = [{ hpt: 26 }, { hpt: 20 }, { hpt: 18 }, { hpt: 6 }, { hpt: 30 }];
   ws['!merges'] = [0, 1, 2].map(r => ({ s: { r, c: 0 }, e: { r, c: last } }));
-  ws['!freeze'] = { xSplit: 1, ySplit: HEAD_R + 1 };
+  _decorateSheet(ws, sm.role, HEAD_R + 1, 1);
+  return ws;
+}
+
+function _rawSheetToWs(rows){
+  const ws = {};
+  const data = rows || [];
+  const width = Math.max(1, ...data.map(row => (row || []).length));
+  const headerRow = data.findIndex(row => (row || []).filter(v => cellText(v) !== '').length >= 2);
+  const freezeRow = headerRow >= 0 ? headerRow + 1 : 1;
+  data.forEach((row, r) => {
+    for (let c = 0; c < width; c++){
+      const value = (row || [])[c] ?? '';
+      const text = cellText(value);
+      const isHeader = r === headerRow;
+      const n = parseAmount(value);
+      const style = isHeader ? (c === 0 ? XL_STYLES.headL : XL_STYLES.head) :
+        n !== null ? XL_STYLES.money : XL_STYLES.wrap;
+      if (n !== null && !isHeader) _wsSetCell(ws, r, c, n, style);
+      else _wsSetCell(ws, r, c, text, style);
+    }
+  });
+  ws['!cols'] = Array.from({ length: width }, (_, c) => ({
+    wch: Math.min(48, Math.max(14, ...data.map(row => String((row || [])[c] ?? '').length + 2)))
+  }));
+  _decorateSheet(ws, 'uploaded', freezeRow, width > 1 ? 1 : 0);
   return ws;
 }
 
@@ -216,6 +291,7 @@ function downloadReportExcel(){
   _wsSetCell(cover, 8, 0, 'Currency: US Dollars ($)', XL_STYLES.plain);
   cover['!cols'] = [{ wch: 52 }, ...Array(7).fill({ wch: 12 })];
   cover['!merges'] = [1, 2, 3].map(r => ({ s: { r, c: 0 }, e: { r, c: 7 } }));
+  _decorateSheet(cover, 'cover', 0, 0);
   XLSX.utils.book_append_sheet(wb, cover, 'Cover');
 
   /* Analytical Summary */
@@ -279,6 +355,7 @@ function downloadReportExcel(){
     table('Liabilities Bifurcation', ['Liabilities & Equity', 'Amount', '% of Total Liabilities & Equity'],
       md.liabilityBifurcation.map(x => [x.label, x.value, x.pct]).concat(m.totalLE !== null ? [['Total Liabilities & Equity', m.totalLE, 100]] : []));
   s['!cols'] = [{ wch: 34 }, ...Array(Math.max(md.months.length, 3)).fill({ wch: 16 })];
+  _decorateSheet(s, 'summary', 3, 1);
   XLSX.utils.book_append_sheet(wb, s, 'Analytical Summary');
 
   /* Financial statement sheets */
@@ -306,6 +383,7 @@ function downloadReportExcel(){
       _wsSetCell(ws, tr, 1, ag.total, XL_STYLES.totalVal);
       _wsSetCell(ws, tr, 2, 1, { ...XL_STYLES.totalVal, numFmt: '0.00%' });
       ws['!cols'] = [{ wch: 28 }, { wch: 18 }, { wch: 14 }];
+      _decorateSheet(ws, role, 5, 1);
       XLSX.utils.book_append_sheet(wb, ws, _sheetNameSafe(wb, ROLE_LABELS[role] || name));
       continue;
     }
@@ -315,10 +393,40 @@ function downloadReportExcel(){
 
   /* Notes + disclaimer */
   const notes = {};
-  _wsSetCell(notes, 0, 0, 'Notes to Financial Statements', XL_STYLES.title);
-  (state.notes || 'No notes were found in the workbook.').split('\n').forEach((line, i) =>
-    _wsSetCell(notes, 2 + i, 0, line, XL_STYLES.wrap));
-  notes['!cols'] = [{ wch: 110 }];
+  _wsSetCell(notes, 0, 0, (state.client || 'Client') + ' — Notes to Financial Statements',
+    { ...XL_STYLES.title, font: { ...XL_STYLES.title.font, sz: 14 } });
+  _wsSetCell(notes, 0, 1, '', XL_STYLES.title);
+  _wsSetCell(notes, 1, 0, (state.period || '') + '  ·  ' + reportBasis(),
+    { font: { italic: true, sz: 10, color: { rgb: '5B6B7F' } }, alignment: { horizontal: 'left' } });
+  _wsSetCell(notes, 1, 1, '', {});
+  _wsSetCell(notes, 3, 0, 'Line Item / Category', XL_STYLES.headL);
+  _wsSetCell(notes, 3, 1, 'Note', XL_STYLES.head);
+  const noteLines = (state.notes || '').split('\n').map(line => line.trim()).filter(Boolean);
+  const isHeading = line => !/ — /.test(line) && line.length < 70 &&
+    /(comments|^notes? to|^(assets|liabilities|equity|income|expenses|receivables|payables|bank accounts|current assets|fixed assets|current liabilities|long.?term liabilities))/i.test(line);
+  let rr = 4;
+  if (noteLines.length === 0){
+    _wsSetCell(notes, rr, 0, 'No notes were found in the workbook.', XL_STYLES.wrap);
+    _wsSetCell(notes, rr, 1, '', XL_STYLES.wrap);
+  } else {
+    for (const line of noteLines){
+      if (isHeading(line)){
+        _wsSetCell(notes, rr, 0, line, XL_STYLES.headL);
+        _wsSetCell(notes, rr, 1, '', XL_STYLES.head);
+      } else if (line.includes(' — ')){
+        const [label, ...rest] = line.split(' — ');
+        _wsSetCell(notes, rr, 0, label.trim(), XL_STYLES.wrap);
+        _wsSetCell(notes, rr, 1, rest.join(' — ').trim(), XL_STYLES.wrap);
+      } else {
+        _wsSetCell(notes, rr, 0, '', XL_STYLES.wrap);
+        _wsSetCell(notes, rr, 1, line, XL_STYLES.wrap);
+      }
+      rr++;
+    }
+  }
+  notes['!cols'] = [{ wch: 34 }, { wch: 78 }];
+  notes['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }];
+  _decorateSheet(notes, 'notes', 3, 1);
   XLSX.utils.book_append_sheet(wb, notes, 'Notes');
 
   const disc = {};
@@ -329,6 +437,7 @@ function downloadReportExcel(){
   _wsSetCell(disc, 6, 0, 'Title: ' + (state.signatory.title || '________________________'), XL_STYLES.plain);
   _wsSetCell(disc, 7, 0, 'Date: '  + (state.signatory.date  || '________________________'), XL_STYLES.plain);
   disc['!cols'] = [{ wch: 110 }];
+  _decorateSheet(disc, 'disc', 0, 0);
   XLSX.utils.book_append_sheet(wb, disc, 'Disclaimer');
 
   XLSX.writeFile(wb, _reportFileBase() + '-Management-Report.xlsx');
@@ -341,7 +450,7 @@ function downloadDataExcel(){
   if (!hasData()){ toast('Upload a workbook first.'); return; }
   const wb = XLSX.utils.book_new();
   Object.entries(state.sheets).forEach(([n, r]) =>
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(r), _sheetNameSafe(wb, n)));
+    XLSX.utils.book_append_sheet(wb, _rawSheetToWs(r), _sheetNameSafe(wb, n)));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(
     [['Notes to Financial Statements'], [state.notes || '']]), _sheetNameSafe(wb, 'Management Notes'));
   XLSX.writeFile(wb, _reportFileBase() + '-Management-Data.xlsx');
