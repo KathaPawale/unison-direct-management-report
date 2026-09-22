@@ -58,6 +58,24 @@ async function savePdf(open = false){
         const pdfPageH = landscape ? PAGE_PT_W : PAGE_PT_H;
         const scaleX = pdfPageW / pageRect.width;
         const scaleY = pdfPageH / pageRect.height;
+        const sectionIds = [];
+        const seenSections = new Set();
+        pages.forEach(page => {
+          if (page.sectionId !== 'cover' && page.sectionId !== 'toc' && !seenSections.has(page.sectionId)){
+            seenSections.add(page.sectionId);
+            sectionIds.push(page.sectionId);
+          }
+        });
+        Array.from(el.querySelectorAll('.toc-item')).forEach((item, index) => {
+          if (item.tagName && item.tagName.toLowerCase() === 'a') return;
+          const sectionId = sectionIds[index];
+          if (!sectionId) return;
+          const anchor = document.createElement('a');
+          anchor.className = 'toc-item';
+          anchor.href = '#report-section-' + sectionId;
+          anchor.innerHTML = item.innerHTML;
+          item.replaceWith(anchor);
+        });
         tocEntries = Array.from(el.querySelectorAll('a.toc-item[href^="#report-section-"]')).map(a => {
           const rect = a.getBoundingClientRect();
           return {
