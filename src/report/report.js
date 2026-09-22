@@ -8,7 +8,7 @@
 const PAGE_W = 816, PAGE_H = 1056;              // US Letter portrait @ 96 dpi
 const PAGE_PAD_TOP = 50, PAGE_PAD_BOTTOM = 46, FOOTER_RESERVE = 40;
 const WIDE_TABLE_COLS = 6;                      // more value columns than this → landscape page
-const MAX_COLS_PER_PAGE = 14;                   // 12 months + Total (+1) always fit on one landscape page
+const MAX_COLS_PER_PAGE = 20;                   // extended landscape budget keeps monthly P&L columns together
 const REPORT_DISCLAIMER =
   'The report we are submitting is for management purpose only. ' +
   'The numbers are based on data submitted and instructed by client.';
@@ -181,6 +181,8 @@ function paginateTableSection(no, title, sm, opts = {}){
   }
   const groups = [];
   const forceLandscape = sm.role === 'plMonthly' || all.length >= 12;
+  /* Monthly P&L must stay on one landscape page while its columns fit the
+   * extended landscape budget. Only extreme wide sheets use column groups. */
   if (all.length <= MAX_COLS_PER_PAGE) groups.push(all);
   else {
     /* keep Total / comparison columns with the last group */
@@ -223,6 +225,15 @@ function paginateTableSection(no, title, sm, opts = {}){
       used += h;
     }
     if (cur.length) chunks.push(cur);
+    if (forceLandscape){
+      bodies.push({
+        orientation,
+        body: sectionHead(no, title, tableSectionSub(sm), gi > 0) + marker +
+          `<div class="report-table-wrap"><table class="${tableCls}">${parts.colgroup}<thead>${parts.theadHtml}</thead><tbody>` +
+          parts.rows.map(r => r.html).join('') + '</tbody></table></div>'
+      });
+      return;
+    }
     chunks.forEach((chunk, ci) => bodies.push({
       orientation,
       body: sectionHead(no, title, tableSectionSub(sm), gi > 0 || ci > 0) + marker +
