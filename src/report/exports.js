@@ -16,6 +16,10 @@ function _reportFileBase(){
   return (state.client || 'Client').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '') || 'Client';
 }
 
+function reportBasis(){
+  return state.basis || '';
+}
+
 async function savePdf(open = false){
   if (!hasData()){ toast('Upload a workbook first.'); return; }
   await _ensureCoverImage();
@@ -37,6 +41,7 @@ async function savePdf(open = false){
   try {
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit: 'pt', format: 'letter', orientation: 'portrait' });
+    const failedPages = [];
     const sectionFirstPdfPage = new Map();
     let tocEntries = null;
     let tocPdfPage = -1;
@@ -45,6 +50,7 @@ async function savePdf(open = false){
       overlay.textContent = 'Generating PDF \u2014 page ' + (i + 1) + ' of ' + pages.length;
       host.innerHTML = pages[i].html;
       const el = host.firstElementChild;
+      if (!el){ failedPages.push(i + 1); continue; }
       el.style.margin = '0';
       el.style.boxShadow = 'none';
       const pdfPageIndex = pdf ? pdf.internal.getNumberOfPages() : 0;
@@ -304,10 +310,11 @@ function downloadReportExcel(){
   /* Notes + disclaimer */
   const notes = {};
   _wsSetCell(notes, 0, 0, (state.client || 'Client') + ' — Notes to Financial Statements',
-    { font: { bold: true, sz: 14 }, alignment: { vertical: 'center' } });
-  _wsSetCell(notes, 0, 1, '', { font: { bold: true, sz: 14 } });
-  _wsSetCell(notes, 1, 0, (state.period || '') + '  ·  ' + (state.basis || ''),
-    { font: { italic: true, sz: 10 }, alignment: { vertical: 'center' } });
+    { ...XL_STYLES.title, font: { ...XL_STYLES.title.font, sz: 14 } });
+  _wsSetCell(notes, 0, 1, '', XL_STYLES.title);
+  _wsSetCell(notes, 1, 0, (state.period || '') + '  ·  ' + reportBasis(),
+    { font: { italic: true, sz: 10, color: { rgb: '5B6B7F' } }, alignment: { horizontal: 'left' } });
+  _wsSetCell(notes, 1, 1, '', {});
   _wsSetCell(notes, 3, 0, 'Line Item / Category', XL_STYLES.headL);
   _wsSetCell(notes, 3, 1, 'Note', XL_STYLES.head);
   notes['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }];

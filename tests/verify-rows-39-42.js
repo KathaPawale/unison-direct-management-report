@@ -24,7 +24,8 @@ for (const file of [
 const sourceChecks = [
   ['savePdf tracks first section pages', exportSource.includes('sectionFirstPdfPage')],
   ['savePdf adds native PDF links', exportSource.includes('pdf.link(')],
-  ['savePdf selects the TOC page', exportSource.includes('pdf.setPage(tocPdfPage')]
+  ['savePdf selects the TOC page', exportSource.includes('pdf.setPage(tocPdfPage')],
+  ['savePdf links measured rectangles', exportSource.includes('pdf.link(t.x, t.y, t.w, t.h')]
 ];
 
 let writtenWorkbook = null;
@@ -98,5 +99,5 @@ check('disclaimer has no freeze view', !writtenWorkbook.Sheets.Disclaimer['!view
 check('notes header has line item label', notes['A4'].v === 'Line Item / Category');
 check('notes header has note label', notes['B4'].v === 'Note');
 
-console.log(`${passed}/${passed + failed} row-39-42 assertions pass, ${failed} fail`);
+console.log(`${passed + failed} row 39-42 assertions, ${passed} pass, ${failed} fail`);
 if (failed) process.exitCode = 1;
