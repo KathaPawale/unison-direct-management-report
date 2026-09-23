@@ -460,7 +460,23 @@ function downloadDataExcel(){
 
 function downloadCurrentSheetCsv(){
   if (!state.active || !state.sheets[state.active]){ toast('No sheet selected.'); return; }
-  const csv = XLSX.utils.sheet_to_csv(XLSX.utils.aoa_to_sheet(state.sheets[state.active]));
+  const rows = state.sheets[state.active].map(row => [...(row || [])]);
+  const sm = state.model && state.model.sheetModels[state.active];
+  if (sm){
+    const cols = displayColumns(sm);
+    rows.forEach((row, ri) => {
+      if (ri === sm.headerRow) return;
+      cols.forEach(c => {
+        const n = parseAmount(row[c.idx]);
+        if (n === null) return;
+        if (c.type === 'percent'){
+          const p = Math.abs(n) < 1 ? n * 100 : n;
+          row[c.idx] = p < 0 ? `(${Math.abs(p).toFixed(2)}%)` : `${p.toFixed(2)}%`;
+        } else row[c.idx] = accounting(n);
+      });
+    });
+  }
+  const csv = XLSX.utils.sheet_to_csv(XLSX.utils.aoa_to_sheet(rows));
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
   const a = document.createElement('a');
   a.href = url;

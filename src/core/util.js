@@ -7,11 +7,18 @@ const $$ = s => [...document.querySelectorAll(s)];
 const MONTHS_FALLBACK = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 function money(n){
-  const v = Number(n || 0);
-  const a = Math.abs(v).toLocaleString('en-US', {
+  return accounting(Number(n || 0));
+}
+
+/* Consistent accounting display for financial values across report surfaces. */
+function accounting(n, withSymbol = true){
+  const v = Number(n);
+  if (!isFinite(v)) return '';
+  const a = Math.abs(round2(v)).toLocaleString('en-US', {
     minimumFractionDigits: 2, maximumFractionDigits: 2
   });
-  return v < 0 ? `($${a})` : `$${a}`;
+  const s = (withSymbol ? '$' : '') + a;
+  return v < 0 ? `(${s})` : s;
 }
 
 /* Compact money for chart labels: $1.2M / $45K / $980 */

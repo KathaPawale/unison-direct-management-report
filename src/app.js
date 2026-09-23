@@ -194,8 +194,7 @@ function renderStatements(){
 /* US accounting format with exactly two decimals: $1,234.50 / ($1,234.50) */
 function editorAccountingValue(v){
   const n = parseAmount(v) ?? num(v);
-  const abs = Math.abs(round2(n)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return n < 0 ? `($${abs})` : `$${abs}`;
+  return accounting(n);
 }
 
 function editorTableHtml(sheetName){

@@ -71,9 +71,7 @@ function pageFooter(pageNo, pageCount){
 /* ---------- report tables ---------- */
 
 function acctNumber(n, withSymbol = true){
-  const a = Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const s = (withSymbol ? '$' : '') + a;
-  return n < 0 ? `(${s})` : s;
+  return accounting(n, withSymbol);
 }
 
 function formatReportCell(v, colType, opts = {}){
