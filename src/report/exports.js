@@ -180,9 +180,9 @@ function _sheetNameSafe(wb, name){
   return n;
 }
 
-function _decorateSheet(ws, sheetKind, freezeRow = 4, freezeCol = 1){
+function _decorateSheet(ws, sheetKind, freezeRow = 5, freezeCol = 1){
   const tabColors = {
-    cover: '0B2F59', summary: '1D6FB8', bs: '0FA5A5',
+    cover: '0B2F59', summary: '1D6FB8', bs: '0FA5A5', bsComparative: '0FA5A5', tb: '7A5FAA',
     plMonthly: 'B54B8E', plComparative: 'B54B8E', pl: 'B54B8E', plPercent: 'B54B8E',
     ar: 'E28C1B', ap: 'C93438', notes: '6D7887', disc: '2F4A6B'
   };
@@ -206,7 +206,7 @@ function _modelSheetToWs(sm, title){
   /* Centered heading block: company, statement, period */
   _wsSetCell(ws, 0, 0, state.client, { ...XL_STYLES.title, font: { bold: true, sz: 16, color: { rgb: 'FFFFFF' } }, alignment: center }, null, { border: false });
   _wsSetCell(ws, 1, 0, title || ROLE_LABELS[sm.role] || sm.name, { ...XL_STYLES.subtitle, font: { bold: true, sz: 12, color: { rgb: 'FFFFFF' } }, alignment: center }, null, { border: false });
-  _wsSetCell(ws, 2, 0, sub + '  ·  Amounts in US Dollars ($)', { ...XL_STYLES.subtitle, alignment: center }, null, { border: false });
+  _wsSetCell(ws, 2, 0, sm.role === 'plComparative' ? sub : sub + '  ·  Amounts in US Dollars ($)', { ...XL_STYLES.subtitle, alignment: center }, null, { border: false });
   for (let c = 1; c <= last; c++){
     _wsSetCell(ws, 0, c, '', XL_STYLES.title, null, { border: false });
     _wsSetCell(ws, 1, c, '', XL_STYLES.subtitle, null, { border: false });
@@ -356,11 +356,11 @@ function downloadReportExcel(){
     table('Liabilities Bifurcation', ['Liabilities & Equity', 'Amount', '% of Total Liabilities & Equity'],
       md.liabilityBifurcation.map(x => [x.label, x.value, x.pct]).concat(m.totalLE !== null ? [['Total Liabilities & Equity', m.totalLE, 100]] : []));
   s['!cols'] = [{ wch: 34 }, ...Array(Math.max(md.months.length, 3)).fill({ wch: 16 })];
-  _decorateSheet(s, 'summary', 3, 1);
+  _decorateSheet(s, 'summary', 5, 1);
   XLSX.utils.book_append_sheet(wb, s, 'Analytical Summary');
 
   /* Financial statement sheets */
-  const order = [['bs', 'Balance Sheet'], ['plMonthly', 'Profit and Loss — Monthly'], ['plComparative', 'Profit and Loss — Comparative'],
+  const order = [['bs', 'Balance Sheet'], ['bsComparative', 'Balance Sheet — Comparative'], ['tb', 'Trial Balance'], ['plMonthly', 'Profit and Loss — Monthly'], ['plComparative', 'Profit and Loss — Comparative'],
                  ['pl', 'Profit and Loss'], ['plPercent', 'Profit and Loss (% of Income)'], ['ar', 'A/R Aging Summary'], ['ap', 'A/P Aging Summary']];
   for (const [role, title] of order){
     const name = md.roles[role];
@@ -388,8 +388,14 @@ function downloadReportExcel(){
       XLSX.utils.book_append_sheet(wb, ws, _sheetNameSafe(wb, ROLE_LABELS[role] || name));
       continue;
     }
-    XLSX.utils.book_append_sheet(wb, _modelSheetToWs(md.sheetModels[name], title),
-      _sheetNameSafe(wb, ROLE_LABELS[role] || name));
+    const modelWs = _modelSheetToWs(md.sheetModels[name], title);
+    if (role === 'tb'){
+      const tbWs = modelWs;
+      _decorateSheet(tbWs, 'tb', 5, 1);
+      XLSX.utils.book_append_sheet(wb, tbWs, _sheetNameSafe(wb, ROLE_LABELS[role] || name));
+    } else {
+      XLSX.utils.book_append_sheet(wb, modelWs, _sheetNameSafe(wb, ROLE_LABELS[role] || name));
+    }
   }
 
   /* Notes + disclaimer */

@@ -59,7 +59,8 @@ function sectionHead(no, title, sub, continued = false){
 
 function tableSectionSub(sm){
   const p = statementPeriodText(sm);
-  return p + '  ·  Amounts in US Dollars ($)';
+  const section = sm && sm.role === 'plComparative' ? 3 : 0;
+  return section !== 3 ? p + '  ·  Amounts in US Dollars ($)' : p;
 }
 
 function pageFooter(pageNo, pageCount){
@@ -179,6 +180,7 @@ function paginateTableSection(no, title, sm, opts = {}){
   }
   const groups = [];
   const forceLandscape = sm.role === 'plMonthly' || all.length >= 12;
+  const tbLandscape = sm.role === 'tb';
   /* Row 43: monthly P&L must stay on one landscape page.
    * Landscape budget extended to 20 cols so 12 months + Total + prior period + variance %
    * never split into two sheets. Only extreme (>20 col) sheets fall back to column grouping. */
@@ -194,7 +196,7 @@ function paginateTableSection(no, title, sm, opts = {}){
   }
   const bodies = [];
   groups.forEach((cols, gi) => {
-    const orientation = forceLandscape || cols.length > WIDE_TABLE_COLS ? 'landscape' : 'portrait';
+    const orientation = forceLandscape || tbLandscape || cols.length > WIDE_TABLE_COLS ? 'landscape' : 'portrait';
     const compact = cols.length > 8;
     const parts = reportTableParts(sm, { ...opts, cols, compact });
     const marker = groups.length > 1 ? `<div class="wide-col-marker">Columns ${escapeHtml(_headLabel(cols[0]))} – ${escapeHtml(_headLabel(cols[cols.length - 1]))}</div>` : '';
@@ -229,7 +231,7 @@ function paginateTableSection(no, title, sm, opts = {}){
       used += h;
     }
     if (cur.length) chunks.push(cur);
-    if (forceLandscape){
+    if (forceLandscape || tbLandscape){
       bodies.push({
         orientation,
         body: sectionHead(no, title, tableSectionSub(sm), gi > 0) + marker +
@@ -441,9 +443,10 @@ function dashboardBodies(no, title){
 function agingTableHtml(ag){
   const pctOf = v => ag.total ? (v / Math.abs(ag.total) * 100) : null;
   const pc = v => v === null ? '—' : (v < 0 ? '-' : '') + Math.abs(v).toFixed(2) + '%';
+  const totalPct = formatReportCell(1, 'percent');
   const body = ag.buckets.map(b => `<tr><td>${escapeHtml(b.label)}</td><td class="num">${escapeHtml(acctNumber(b.value))}</td><td class="num">${pc(pctOf(b.value))}</td></tr>`).join('');
   return `<table class="report-mini-table aging-summary-table"><thead><tr><th>Aging Bucket</th><th class="num">Open Balance</th><th class="num">% of Total</th></tr></thead>` +
-    `<tbody>${body}<tr class="row-total"><td>Total</td><td class="num">${escapeHtml(acctNumber(ag.total))}</td><td class="num">100.00%</td></tr></tbody></table>` +
+    `<tbody>${body}<tr class="row-total"><td>Total</td><td class="num">${escapeHtml(acctNumber(ag.total))}</td><td class="num">${totalPct}</td></tr></tbody></table>` +
     '<div class="chart-note">Summarised from the aging detail report in the uploaded workbook.</div>';
 }
 
@@ -496,6 +499,8 @@ function reportSections(){
   if (md){
     sections.push({ id: 'dash', title: 'Analytical Dashboard' });
     if (md.roles.bs) sections.push({ id: 'bs', title: 'Balance Sheet', sheet: md.roles.bs });
+    if (md.roles.bsComparative) sections.push({ id: 'bsComparative', title: 'Balance Sheet — Comparative', sheet: md.roles.bsComparative });
+    if (md.roles.tb) sections.push({ id: 'tb', title: 'Trial Balance', sheet: md.roles.tb });
     if (md.roles.plMonthly)     sections.push({ id: 'plMonthly', title: 'Profit and Loss — Monthly', sheet: md.roles.plMonthly });
     if (md.roles.plComparative) sections.push({ id: 'plComparative', title: 'Profit and Loss — Comparative', sheet: md.roles.plComparative });
     if (!md.roles.plMonthly && !md.roles.plComparative && md.roles.pl)
