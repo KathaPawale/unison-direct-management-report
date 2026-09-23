@@ -57,11 +57,10 @@
 .report-page .donut-legend-item span{max-width:none;white-space:normal;overflow:visible;text-overflow:clip;color:#4b5a6e;line-height:1.2}
 .report-mini-table .row-total td{font-weight:800;color:#0b2f59;background:#e8f0fa;border-top:2px solid #0b2f59}
 .report-table.roomy{font-size:10px}.report-table.roomy td{padding:5px 6px}.report-table.roomy td.val{font-size:10px}.report-table.roomy thead th{font-size:9.5px;padding:6px}
-.toc-item{text-decoration:none;color:inherit;cursor:pointer;transition:background 120ms}
-.toc-item:hover{background:#f0f4f9}
-.toc-item:hover>span:first-child{color:#0b2f59}
+.toc-item{color:#0b5f9a;cursor:pointer;text-decoration:underline;text-decoration-color:#8db8d4;text-decoration-thickness:1px;text-underline-offset:3px;transition:background 120ms,color 120ms}
+.toc-item>span:first-child{color:#0b5f9a}
+.toc-page{color:#356d91}
+.toc-item:hover{background:#eaf4fb;color:#0b2f59}
+.toc-item:hover>span:first-child,.toc-item:hover>.toc-page{color:#0b2f59}
 .report-page .report-table td{padding-top:3px;padding-bottom:3px}
-.toc-item{text-decoration:none;color:inherit;cursor:pointer;transition:background 120ms}
-.toc-item:hover{background:#f0f4f9}
-.toc-item:hover>span:first-child{color:#0b2f59}
 .report-page .report-table td{padding-top:3px;padding-bottom:3px}
