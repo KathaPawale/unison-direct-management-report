@@ -602,6 +602,15 @@ function renderReport(){
        ${current.sectionId === 'notes' ? '<button class="btn primary" id="notesEditBtn">✎ Edit notes</button>' : ''}
      </div>` + current.html;
 
+  stage.querySelectorAll('a.toc-item[href^="#report-section-"]').forEach(link => {
+    link.onclick = event => {
+      event.preventDefault();
+      const sectionId = link.getAttribute('href').replace('#report-section-', '');
+      const target = pages.findIndex(page => page.sectionId === sectionId);
+      if (target >= 0){ state.reportPage = target; renderReport(); }
+    };
+  });
+
   $('#pgPrev').onclick = () => { if (state.reportPage > 0){ state.reportPage--; renderReport(); } };
   $('#pgNext').onclick = () => { if (state.reportPage < pages.length - 1){ state.reportPage++; renderReport(); } };
   const editBtn = $('#notesEditBtn');
