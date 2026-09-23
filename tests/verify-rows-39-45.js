@@ -20,6 +20,7 @@ check('TOC page tracking map exists', exportsSource.includes('const sectionFirst
 check('TOC entries are collected from anchors', exportsSource.includes("querySelectorAll('a.toc-item[href^=\"#report-section-\"]')"));
 check('TOC entries use PDF links', exportsSource.includes('pdf.link(t.x, t.y, t.w, t.h'));
 check('TOC links target one-based PDF pages', exportsSource.includes('pageNumber: target + 1'));
+check('TOC page indexes are recorded after PDF pages render', exportsSource.indexOf('pdf.addImage(') < exportsSource.indexOf('const pdfPageIndex = pdf.internal.getNumberOfPages() - 1'));
 check('Notes use a title row', exportsSource.includes('Notes to Financial Statements'));
 check('Notes have line item and note columns', exportsSource.includes("'Line Item / Category'") && exportsSource.includes("'Note'"));
 check('Notes classify headings', exportsSource.includes('const isHeading = line =>'));
