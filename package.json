@@ -5,10 +5,12 @@
   "description": "Unison Direct GCC INC management reporting web application",
   "scripts": {
     "dev": "npx serve .",
-    "start": "npx serve ."
+    "start": "npx serve .",
+    "test": "for t in tests/verify-*.js; do node $t || exit 1; done"
   },
-  "dependencies": {},
   "devDependencies": {
-    "serve": "^14.2.4"
+    "playwright-core": "1.56.0",
+    "serve": "^14.2.4",
+    "xlsx-js-style": "1.2.0"
   }
 }

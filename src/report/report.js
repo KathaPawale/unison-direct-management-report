@@ -540,6 +540,8 @@ function reportSections(){
     if (md.roles.plComparative) sections.push({ id: 'plComparative', title: 'Profit and Loss — Comparative', sheet: md.roles.plComparative });
     if (!md.roles.plMonthly && !md.roles.plComparative && md.roles.pl)
       sections.push({ id: 'pl', title: 'Profit and Loss', sheet: md.roles.pl });
+    if (md.roles.plPercent) sections.push({ id: 'plPercent', title: 'Profit and Loss (% of Income)', sheet: md.roles.plPercent });
+    if (md.roles.plClass) sections.push({ id: 'plClass', title: 'Profit and Loss — by Class', sheet: md.roles.plClass });
     if (md.roles.ar && !md.suppressAR) sections.push({ id: 'ar', title: 'A/R Aging Summary', sheet: md.roles.ar, aging: md.arAging && md.arAging.fromDetail ? md.arAging : null });
     if (md.roles.ap && !md.suppressAP) sections.push({ id: 'ap', title: 'A/P Aging Summary', sheet: md.roles.ap, aging: md.apAging && md.apAging.fromDetail ? md.apAging : null });
   }
