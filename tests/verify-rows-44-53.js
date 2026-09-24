@@ -38,7 +38,7 @@ vm.createContext(ctx);
 const files = ['src/core/util.js', 'src/core/state.js', 'src/core/parser.js', 'src/core/financials.js', 'src/core/recompute.js',
   'src/report/charts.js', 'src/report/report.js'];
 vm.runInContext(files.map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n;\n') +
-  '\n;globalThis.__api = { parseWorkbook, state, tableSectionSub, reportSections, reportTableParts, agingTableHtml };', ctx);
+  '\n;globalThis.__api = { parseWorkbook, state, keepPercentCells, tableSectionSub, reportSections, reportTableParts, agingTableHtml };', ctx);
 const api = ctx.__api;
 const head = t => [['Pluto Asset Recovery'], [t], ['January-December 2025'], []];
 const sheets = {
@@ -64,6 +64,18 @@ const apRows = api.reportTableParts(md.sheetModels[md.roles.ap], {}).rows;
 check('Row 52 A/P aging bottom-line % shows 100.0%', /100\.0%<\/td><\/tr>$/.test(apRows[apRows.length - 1].html));
 check('Row 52 A/P aging detail total % shows 100.00%',
   /<td class="num">100\.00%<\/td><\/tr>/.test(api.agingTableHtml({ total: 100, buckets: [{ label: 'Current', value: 85 }, { label: '1 - 30', value: 15 }] })));
+
+/* Row 52: a %-formatted column with a plain header ("Share") must still come through as percentages. */
+const apWs = { '!ref': 'A1:E8', E6: { t: 'n', v: 0.75, z: '0.00%' }, E7: { t: 'n', v: 0.25, z: '0.00%' }, E8: { t: 'n', v: 1, z: '0.00%' }, D8: { t: 'n', v: 100, z: '#,##0.00' } };
+const apAoa = [...head('A/P Aging Summary'), ['', 'Current', '1 - 30', 'Total', 'Share'], ['Vendor A', 60, 15, 75, 0.75], ['Vendor B', 25, 0, 25, 0.25], ['TOTAL', 85, 15, 100, 1]];
+api.keepPercentCells(apWs, apAoa);
+check('Row 52 %-formatted cells kept as percent text, amounts untouched', apAoa[7][4] === '100%' && apAoa[5][4] === '75%' && apAoa[7][3] === 100);
+const fmtSheets = { 'A/P Aging Summary': apAoa };
+api.state.sheets = fmtSheets;
+const fmtMd = api.parseWorkbook(fmtSheets);
+api.state.model = fmtMd;
+const fmtRows = api.reportTableParts(fmtMd.sheetModels[fmtMd.roles.ap], {}).rows;
+check('Row 52 %-formatted A/P column prints %, not $', /100%<\/td><\/tr>$/.test(fmtRows[fmtRows.length - 1].html) && !fmtRows.some(r => /\$0\.75|\$1\.00/.test(r.html)));
 
 console.log(`${pass + fail} assertions, ${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);

@@ -78,6 +78,23 @@ function parseAmount(v){
   return neg ? -n : n;
 }
 
+/* Row 52: sheet_to_json({raw:true}) drops Excel number formats, so a %-formatted column (0.75 shown
+ * as 75%) would read as plain numbers and render as dollars. Rewrite those cells as percent text,
+ * which the parser types as a percent column and parseAmount never counts as an amount. */
+function keepPercentCells(ws, rows){
+  const ref = String((ws && ws['!ref']) || 'A1').split(':')[0].match(/^([A-Z]+)(\d+)$/);
+  const colNo = letters => [...letters].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1;
+  const r0 = ref ? +ref[2] - 1 : 0, c0 = ref ? colNo(ref[1]) : 0;
+  for (const addr of Object.keys(ws || {})){
+    const cell = ws[addr];
+    const m = addr.match(/^([A-Z]+)(\d+)$/);
+    if (!m || !cell || cell.t !== 'n' || !isFinite(cell.v) || !/%/.test(String(cell.z || cell.w || ''))) continue;
+    const row = rows[+m[2] - 1 - r0], c = colNo(m[1]) - c0;
+    if (row && row[c] === cell.v) row[c] = +(cell.v * 100).toFixed(6) + '%';
+  }
+  return rows;
+}
+
 function isPercentText(v){
   return /^\(?-?\d[\d,]*(\.\d+)?\s*%\)?$/.test(cellText(v));
 }

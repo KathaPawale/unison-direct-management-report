@@ -404,7 +404,7 @@ function wireUpload(){
       resetState();
       state.fileName = f.name;
       wb.SheetNames.forEach(n => {
-        state.sheets[n] = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' });
+        state.sheets[n] = keepPercentCells(wb.Sheets[n], XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' }));
       });
       ['s1', 's2', 's3'].forEach(id => $('#' + id).classList.add('done'));
       analyze();
