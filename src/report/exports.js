@@ -180,9 +180,9 @@ function _sheetNameSafe(wb, name){
   return n;
 }
 
-function _decorateSheet(ws, sheetKind, freezeRow = 4, freezeCol = 1){
+function _decorateSheet(ws, sheetKind, freezeRow = 5, freezeCol = 1){
   const tabColors = {
-    cover: '0B2F59', summary: '1D6FB8', bs: '0FA5A5',
+    cover: '0B2F59', summary: '1D6FB8', bs: '0FA5A5', bsComparative: '0FA5A5', tb: '7A5FAA',
     plMonthly: 'B54B8E', plComparative: 'B54B8E', pl: 'B54B8E', plPercent: 'B54B8E',
     ar: 'E28C1B', ap: 'C93438', notes: '6D7887', disc: '2F4A6B'
   };
@@ -201,12 +201,12 @@ function _modelSheetToWs(sm, title){
   const cols = displayColumns(sm);
   const last = Math.max(cols.length, 1);
   const center = { horizontal: 'center', vertical: 'center', wrapText: true };
-  const sub = sm.role === 'bs' && state.model.bsAsOf ? state.model.bsAsOf : state.period;
+  const sub = (sm.role === 'bs' || sm.role === 'bsComparative') && state.model.bsAsOf ? state.model.bsAsOf : state.period;
 
   /* Centered heading block: company, statement, period */
   _wsSetCell(ws, 0, 0, state.client, { ...XL_STYLES.title, font: { bold: true, sz: 16, color: { rgb: 'FFFFFF' } }, alignment: center }, null, { border: false });
   _wsSetCell(ws, 1, 0, title || ROLE_LABELS[sm.role] || sm.name, { ...XL_STYLES.subtitle, font: { bold: true, sz: 12, color: { rgb: 'FFFFFF' } }, alignment: center }, null, { border: false });
-  _wsSetCell(ws, 2, 0, sub + '  ·  Amounts in US Dollars ($)', { ...XL_STYLES.subtitle, alignment: center }, null, { border: false });
+  _wsSetCell(ws, 2, 0, tableSectionSub(sm), { ...XL_STYLES.subtitle, alignment: center }, null, { border: false });
   for (let c = 1; c <= last; c++){
     _wsSetCell(ws, 0, c, '', XL_STYLES.title, null, { border: false });
     _wsSetCell(ws, 1, c, '', XL_STYLES.subtitle, null, { border: false });
@@ -215,6 +215,13 @@ function _modelSheetToWs(sm, title){
   const HEAD_R = 4;
   _wsSetCell(ws, HEAD_R, 0, 'Particulars', { ...XL_STYLES.headL, alignment: { horizontal: 'left', vertical: 'center' } });
   cols.forEach((c, i) => _wsSetCell(ws, HEAD_R, i + 1, _headLabel(c), { ...XL_STYLES.head, alignment: { horizontal: 'center', vertical: 'center', wrapText: true } }));
+
+  /* Percent columns stored as fractions (every value within ±1) keep that scale for the total row too. */
+  const fractionCols = new Set(cols.filter(c => c.type === 'percent' && sm.lines.every(line => {
+    const v = (rows[line.r] || [])[c.idx];
+    const n = isPercentText(v) ? null : parseAmount(v);
+    return n === null || Math.abs(n) <= 1;
+  })).map(c => c.idx));
 
   let out = HEAD_R + 1;
   for (const line of sm.lines){
@@ -234,7 +241,7 @@ function _modelSheetToWs(sm, title){
       const base = isGrand ? XL_STYLES.grandVal : isTotal ? XL_STYLES.totalVal : c.type === 'percent' ? XL_STYLES.pctCell : XL_STYLES.money;
       const style = { ...base, alignment: { horizontal: 'right', vertical: 'center' } };
       if (c.type === 'percent' && (n !== null || isPercentText(v))){
-        const pv = isPercentText(v) ? parseFloat(String(v).replace(/[^\d.\-]/g, '')) / 100 * (/^\(/.test(String(v).trim()) ? -1 : 1) : (Math.abs(n) < 1 ? n : n / 100);
+        const pv = isPercentText(v) ? parseFloat(String(v).replace(/[^\d.\-]/g, '')) / 100 * (/^\(/.test(String(v).trim()) ? -1 : 1) : (fractionCols.has(c.idx) || Math.abs(n) < 1 ? n : n / 100);
         _wsSetCell(ws, out, i + 1, pv, { ...style, numFmt: XL.pctFmt });
       } else if (n !== null) _wsSetCell(ws, out, i + 1, n, { ...style, font: { ...(style.font || {}), ...(n < 0 ? { color: { rgb: 'C93438' } } : {}) } });
       else if (cellText(v) !== '') _wsSetCell(ws, out, i + 1, cellText(v), { ...XL_STYLES.plain, alignment: { horizontal: 'right' } });
@@ -356,11 +363,11 @@ function downloadReportExcel(){
     table('Liabilities Bifurcation', ['Liabilities & Equity', 'Amount', '% of Total Liabilities & Equity'],
       md.liabilityBifurcation.map(x => [x.label, x.value, x.pct]).concat(m.totalLE !== null ? [['Total Liabilities & Equity', m.totalLE, 100]] : []));
   s['!cols'] = [{ wch: 34 }, ...Array(Math.max(md.months.length, 3)).fill({ wch: 16 })];
-  _decorateSheet(s, 'summary', 3, 1);
+  _decorateSheet(s, 'summary', 5, 1);
   XLSX.utils.book_append_sheet(wb, s, 'Analytical Summary');
 
   /* Financial statement sheets */
-  const order = [['bs', 'Balance Sheet'], ['plMonthly', 'Profit and Loss — Monthly'], ['plComparative', 'Profit and Loss — Comparative'],
+  const order = [['bs', 'Balance Sheet'], ['bsComparative', 'Balance Sheet — Comparative'], ['tb', 'Trial Balance'], ['plMonthly', 'Profit and Loss — Monthly'], ['plComparative', 'Profit and Loss — Comparative'],
                  ['pl', 'Profit and Loss'], ['plPercent', 'Profit and Loss (% of Income)'], ['ar', 'A/R Aging Summary'], ['ap', 'A/P Aging Summary']];
   for (const [role, title] of order){
     const name = md.roles[role];
@@ -388,8 +395,14 @@ function downloadReportExcel(){
       XLSX.utils.book_append_sheet(wb, ws, _sheetNameSafe(wb, ROLE_LABELS[role] || name));
       continue;
     }
-    XLSX.utils.book_append_sheet(wb, _modelSheetToWs(md.sheetModels[name], title),
-      _sheetNameSafe(wb, ROLE_LABELS[role] || name));
+    const modelWs = _modelSheetToWs(md.sheetModels[name], title);
+    if (role === 'tb'){
+      const tbWs = modelWs;
+      _decorateSheet(tbWs, 'tb', 5, 1);
+      XLSX.utils.book_append_sheet(wb, tbWs, _sheetNameSafe(wb, ROLE_LABELS[role] || name));
+    } else {
+      XLSX.utils.book_append_sheet(wb, modelWs, _sheetNameSafe(wb, ROLE_LABELS[role] || name));
+    }
   }
 
   /* Notes + disclaimer */
@@ -427,7 +440,7 @@ function downloadReportExcel(){
   }
   notes['!cols'] = [{ wch: 34 }, { wch: 78 }];
   notes['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }];
-  _decorateSheet(notes, 'notes', 3, 1);
+  _decorateSheet(notes, 'notes', 5, 1);
   XLSX.utils.book_append_sheet(wb, notes, 'Notes');
 
   const disc = {};

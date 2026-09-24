@@ -24,6 +24,8 @@ const ROLE_LABELS = {
   plPercent: 'Profit and Loss (% of Income)',
   pl: 'Profit and Loss',
   bs: 'Balance Sheet',
+  bsComparative: 'Balance Sheet — Comparative',
+  tb: 'Trial Balance',
   ar: 'A/R Aging',
   ap: 'A/P Aging',
   notes: 'Notes',
@@ -74,6 +76,23 @@ function parseAmount(v){
   if (!/^(\d+(\.\d*)?|\.\d+)$/.test(t)) return null;
   const n = parseFloat(t);
   return neg ? -n : n;
+}
+
+/* Row 52: sheet_to_json({raw:true}) drops Excel number formats, so a %-formatted column (0.75 shown
+ * as 75%) would read as plain numbers and render as dollars. Rewrite those cells as percent text,
+ * which the parser types as a percent column and parseAmount never counts as an amount. */
+function keepPercentCells(ws, rows){
+  const ref = String((ws && ws['!ref']) || 'A1').split(':')[0].match(/^([A-Z]+)(\d+)$/);
+  const colNo = letters => [...letters].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1;
+  const r0 = ref ? +ref[2] - 1 : 0, c0 = ref ? colNo(ref[1]) : 0;
+  for (const addr of Object.keys(ws || {})){
+    const cell = ws[addr];
+    const m = addr.match(/^([A-Z]+)(\d+)$/);
+    if (!m || !cell || cell.t !== 'n' || !isFinite(cell.v) || !/%/.test(String(cell.z || cell.w || ''))) continue;
+    const row = rows[+m[2] - 1 - r0], c = colNo(m[1]) - c0;
+    if (row && row[c] === cell.v) row[c] = +(cell.v * 100).toFixed(6) + '%';
+  }
+  return rows;
 }
 
 function isPercentText(v){
@@ -461,7 +480,7 @@ function _allLabelKeys(rows){
 }
 
 function detectRoles(sheets, sheetModels){
-  const roles = { plMonthly: null, plComparative: null, plPercent: null, pl: null, bs: null, ar: null, ap: null, notes: null, summary: null };
+  const roles = { plMonthly: null, plComparative: null, plPercent: null, pl: null, bs: null, bsComparative: null, tb: null, ar: null, ap: null, notes: null, summary: null };
   const names = Object.keys(sheets);
   const info = names.map(n => {
     const rows = sheets[n] || [];
@@ -473,14 +492,17 @@ function detectRoles(sheets, sheetModels){
     const buckets = sm.cols.filter(c => c.type === 'bucket').length;
     const periods = sm.cols.filter(c => ['current', 'prior', 'history'].includes(c.type)).length;
     const text = nameT + ' ' + title;
-    const plName = /profit and loss|profit loss|\bp and l\b|\bpl\b|\bp l\b|income statement|statement of (operations|income|comprehensive income)|income and expense|operating statement|revenue and expense/.test(text);
-    const bsName = /balance sheet|statement of financial (position|condition)|\bbs\b/.test(text);
+    const rawName = cellText(n);
+    const plName = /^(pl|p&l|profit ?(and|&) ?loss|income statement)$/i.test(rawName) || /profit and loss|profit loss|\bp and l\b|\bpl\b|\bp l\b|income statement|statement of (operations|income|comprehensive income)|income and expense|operating statement|revenue and expense/.test(text);
+    const bsComparative = /^(bs|b\.?s\.?|balance ?sheet)(_|-|\s)*(comparative|comp)?$/i.test(rawName);
+    const bsName = bsComparative || /balance sheet|statement of financial (position|condition)|\bbs\b/.test(text);
+    const tbName = /^(tb|t\.?b\.?|trial ?balance)$/i.test(rawName);
     const plContent = (has(/^total (for )?(income|revenues?|sales)$/) || has(/^gross profit$/)) && has(/^net (income|profit|loss|ordinary income)/);
     const bsContent = has(/^total (for )?assets$/) && (has(/^total (for )?liabilities/) || has(/equity$/));
     const recv = /receivable|\ba r\b|\bar\b|customer/.test(text), pay = /payable|\ba p\b|\bap\b|vendor|supplier/.test(text);
     const agingName = /ag(e)?ing|aged/.test(text);
     const notes = /\bnotes?\b|comments?/.test(nameT) || /notes? to (the )?(financial statements?|accounts)/.test(title);
-    return { n, sm, months, buckets, periods, plName, bsName, plContent, bsContent, recv, pay, agingName, notes,
+    return { n, sm, months, buckets, periods, plName, bsName, bsComparative, tbName, plContent, bsContent, recv, pay, agingName, notes,
              pct: sm.cols.some(c => c.type === 'percent') && !periods && !months, detail: /detail|by class|by customer|by vendor|transaction/.test(text) };
   });
   const free = x => !Object.values(roles).includes(x.n);
@@ -495,8 +517,14 @@ function detectRoles(sheets, sheetModels){
     }
   }
   for (const x of info){
-    if (!free(x) || roles.bs) continue;
-    if ((x.bsName && !x.plName) || (x.bsContent && !x.plContent)){ roles.bs = x.n; }
+    if (!free(x) || !x.tbName) continue;
+    roles.tb = x.n;
+  }
+  const bsCands = info.filter(x => free(x) && ((x.bsName && !x.plName) || (x.bsContent && !x.plContent)));
+  const primaryBs = bsCands.find(x => !x.bsComparative) || bsCands[0];
+  if (primaryBs) roles.bs = primaryBs.n;
+  for (const x of bsCands){
+    if (x.n !== roles.bs && !roles.bsComparative && (x.bsComparative || x.periods >= 2)) roles.bsComparative = x.n;
   }
   const plCands = info.filter(x => free(x) && !x.detail && (x.plName || x.plContent) && !(x.bsContent && !x.plContent));
   for (const x of plCands){
@@ -511,6 +539,25 @@ function detectRoles(sheets, sheetModels){
     if (x.pct && !roles.plPercent && (roles.pl || roles.plMonthly || roles.plComparative)){ roles.plPercent = x.n; continue; }
     if (!roles.pl && !roles.plMonthly && !roles.plComparative){ roles.pl = x.n; continue; }
     if (!roles.pl && x.periods >= 1 && !roles.plComparative){ roles.pl = x.n; continue; }
+  }
+  if (!roles.pl && !roles.plMonthly && !roles.plComparative){
+    for (const [n, sm] of Object.entries(sheetModels)){
+      if (roles.pl || roles.plMonthly || roles.plComparative) break;
+      if (/^(pl|p&l|profit\s*(and|&)\s*loss|income\s*statement)$/i.test(n)){
+        const hasMonths = sm.cols && sm.cols.some(c => /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i.test(String(c.label || '')));
+        roles[hasMonths ? 'plMonthly' : 'pl'] = n;
+      }
+    }
+  }
+  if (!roles.bs && !roles.bsComparative){
+    for (const [n] of Object.entries(sheetModels)){
+      if (roles.bs || roles.bsComparative) break;
+      if (/^bs[\s_\-]*comparative$/i.test(n) || /^balance[\s_]*sheet[\s_\-]*(comparative|comp)$/i.test(n)){
+        roles.bsComparative = n;
+      } else if (/^(bs|b\.s\.|balance[\s_]*sheet)$/i.test(n)){
+        roles.bs = n;
+      }
+    }
   }
   for (const x of info){
     if (free(x) && x.notes && !roles.notes){ roles.notes = x.n; }

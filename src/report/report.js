@@ -43,7 +43,7 @@ function statementPeriodText(sm){
     }
     if (md && md.bsAsOf) return md.bsAsOf;
   }
-  if (sm && sm.role === 'bs' && md && md.bsAsOf) return md.bsAsOf;
+  if (sm && (sm.role === 'bs' || sm.role === 'bsComparative') && md && md.bsAsOf) return md.bsAsOf;
   return state.period;
 }
 
@@ -57,9 +57,10 @@ function sectionHead(no, title, sub, continued = false){
     '</div><div class="report-rule"></div>';
 }
 
+/* Rows 48/51: Heading (3) — the period line under each statement title — shows only the period.
+ * The currency is stated once on the cover, so "Amounts in US Dollars ($)" is not repeated here. */
 function tableSectionSub(sm){
-  const p = statementPeriodText(sm);
-  return p + '  ·  Amounts in US Dollars ($)';
+  return statementPeriodText(sm);
 }
 
 function pageFooter(pageNo, pageCount){
@@ -81,7 +82,8 @@ function formatReportCell(v, colType, opts = {}){
     if (isPercentText(s)) return escapeHtml(s);
     const n = parseAmount(v);
     if (n === null) return escapeHtml(s);
-    const p = Math.abs(n) < 1 ? n * 100 : n;
+    /* opts.fraction: the whole column is stored as fractions (0.25 = 25%), so a 1.0 total is 100% */
+    const p = opts.fraction || Math.abs(n) < 1 ? n * 100 : n;
     return (p < 0 ? '(' + Math.abs(p).toFixed(1) + '%)' : p.toFixed(1) + '%');
   }
   const n = parseAmount(v);
@@ -123,6 +125,14 @@ function reportTableParts(sm, { forExport = false, cols = null, compact = false,
     return true;
   };
 
+  /* Row 52: a percent column holding fractions (every value within ±1) is scaled as a whole, so the
+   * bottom-line total of 1 prints as 100.0% rather than 1.0%. */
+  const fractionCols = new Set(showCols.filter(c => c.type === 'percent' && sm.lines.every(line => {
+    const v = (rows[line.r] || [])[c.idx];
+    const n = isPercentText(v) ? null : parseAmount(v);
+    return n === null || Math.abs(n) <= 1;
+  })).map(c => c.idx));
+
   const out = [];
   for (const line of sm.lines){
     if (doSkip && isRowZero(line)) continue;
@@ -140,7 +150,7 @@ function reportTableParts(sm, { forExport = false, cols = null, compact = false,
       const edited = !forExport &&
         (state.edited.has(sm.name + ':' + line.r + ':' + c.idx) || state.adjusted.has(sm.name + ':' + line.r + ':' + c.idx));
       const cls = [(n !== null && n < 0) ? 'neg' : '', edited ? 'cell-edited' : ''].filter(Boolean).join(' ');
-      tds += `<td class="val${cls ? ' ' + cls : ''}">${formatReportCell(v, c.type, { compact, zeroDash: kind === 'account' })}</td>`;
+      tds += `<td class="val${cls ? ' ' + cls : ''}">${formatReportCell(v, c.type, { compact, zeroDash: kind === 'account', fraction: fractionCols.has(c.idx) })}</td>`;
     }
     out.push({ html: `<tr${trCls ? ` class="${trCls}"` : ''}>${tds}</tr>`, orphanGuard: kind === 'section' });
   }
@@ -179,6 +189,7 @@ function paginateTableSection(no, title, sm, opts = {}){
   }
   const groups = [];
   const forceLandscape = sm.role === 'plMonthly' || all.length >= 12;
+  const tbLandscape = sm.role === 'tb';
   /* Row 43: monthly P&L must stay on one landscape page.
    * Landscape budget extended to 20 cols so 12 months + Total + prior period + variance %
    * never split into two sheets. Only extreme (>20 col) sheets fall back to column grouping. */
@@ -194,7 +205,7 @@ function paginateTableSection(no, title, sm, opts = {}){
   }
   const bodies = [];
   groups.forEach((cols, gi) => {
-    const orientation = forceLandscape || cols.length > WIDE_TABLE_COLS ? 'landscape' : 'portrait';
+    const orientation = forceLandscape || tbLandscape || cols.length > WIDE_TABLE_COLS ? 'landscape' : 'portrait';
     const compact = cols.length > 8;
     const parts = reportTableParts(sm, { ...opts, cols, compact });
     const marker = groups.length > 1 ? `<div class="wide-col-marker">Columns ${escapeHtml(_headLabel(cols[0]))} – ${escapeHtml(_headLabel(cols[cols.length - 1]))}</div>` : '';
@@ -229,7 +240,7 @@ function paginateTableSection(no, title, sm, opts = {}){
       used += h;
     }
     if (cur.length) chunks.push(cur);
-    if (forceLandscape){
+    if (forceLandscape || tbLandscape){
       bodies.push({
         orientation,
         body: sectionHead(no, title, tableSectionSub(sm), gi > 0) + marker +
@@ -443,7 +454,7 @@ function agingTableHtml(ag){
   const pc = v => v === null ? '—' : (v < 0 ? '-' : '') + Math.abs(v).toFixed(2) + '%';
   const body = ag.buckets.map(b => `<tr><td>${escapeHtml(b.label)}</td><td class="num">${escapeHtml(acctNumber(b.value))}</td><td class="num">${pc(pctOf(b.value))}</td></tr>`).join('');
   return `<table class="report-mini-table aging-summary-table"><thead><tr><th>Aging Bucket</th><th class="num">Open Balance</th><th class="num">% of Total</th></tr></thead>` +
-    `<tbody>${body}<tr class="row-total"><td>Total</td><td class="num">${escapeHtml(acctNumber(ag.total))}</td><td class="num">100.00%</td></tr></tbody></table>` +
+    `<tbody>${body}<tr class="row-total"><td>Total</td><td class="num">${escapeHtml(acctNumber(ag.total))}</td><td class="num">${pc(ag.total ? 100 : null)}</td></tr></tbody></table>` +
     '<div class="chart-note">Summarised from the aging detail report in the uploaded workbook.</div>';
 }
 
@@ -496,6 +507,8 @@ function reportSections(){
   if (md){
     sections.push({ id: 'dash', title: 'Analytical Dashboard' });
     if (md.roles.bs) sections.push({ id: 'bs', title: 'Balance Sheet', sheet: md.roles.bs });
+    if (md.roles.bsComparative) sections.push({ id: 'bsComparative', title: 'Balance Sheet — Comparative', sheet: md.roles.bsComparative });
+    if (md.roles.tb) sections.push({ id: 'tb', title: 'Trial Balance', sheet: md.roles.tb });
     if (md.roles.plMonthly)     sections.push({ id: 'plMonthly', title: 'Profit and Loss — Monthly', sheet: md.roles.plMonthly });
     if (md.roles.plComparative) sections.push({ id: 'plComparative', title: 'Profit and Loss — Comparative', sheet: md.roles.plComparative });
     if (!md.roles.plMonthly && !md.roles.plComparative && md.roles.pl)
