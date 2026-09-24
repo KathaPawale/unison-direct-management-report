@@ -80,18 +80,21 @@ function acctNumber(n, withSymbol = true){
 function formatReportCell(v, colType, opts = {}){
   const s = cellText(v);
   if (s === '') return '';
+  /* Financial formatting in every statement table: amounts $1,234.56 / ($1,234.56) — wide tables
+   * included (paginateTableSection shrinks a table to fit rather than dropping the $); zero on an
+   * account row "–"; percentages 12.5% / (12.5%), including percent text copied from the workbook. */
   if (colType === 'percent'){
-    if (isPercentText(s)) return escapeHtml(s);
-    const n = parseAmount(v);
-    if (n === null) return escapeHtml(s);
-    /* opts.fraction: the whole column is stored as fractions (0.25 = 25%), so a 1.0 total is 100% */
+    const pt = parsePercentText(s);
+    const n = pt === null ? parseAmount(v) : null;
+    if (pt === null && n === null) return escapeHtml(s);
     /* opts.fraction: the column's scale (true = fractions, false = whole percents); unknown → per value */
-    const p = opts.fraction === true ? n * 100 : opts.fraction === false ? n : (Math.abs(n) < 1 ? n * 100 : n);
-    return (p < 0 ? '(' + Math.abs(p).toFixed(1) + '%)' : p.toFixed(1) + '%');
+    const p = pt !== null ? pt : opts.fraction === true ? n * 100 : opts.fraction === false ? n : (Math.abs(n) < 1 ? n * 100 : n);
+    const r = Math.abs(p).toFixed(1);
+    return p < 0 && +r !== 0 ? '(' + r + '%)' : r + '%';
   }
   const n = parseAmount(v);
   if (n !== null && n === 0 && opts.zeroDash) return '&ndash;';
-  if (n !== null) return acctNumber(n, !opts.compact);
+  if (n !== null) return acctNumber(n);
   return escapeHtml(s);
 }
 
@@ -149,7 +152,8 @@ function reportTableParts(sm, { forExport = false, cols = null, compact = false,
       const n = parseAmount(v);
       const edited = !forExport &&
         (state.edited.has(sm.name + ':' + line.r + ':' + c.idx) || state.adjusted.has(sm.name + ':' + line.r + ':' + c.idx));
-      const cls = [(n !== null && n < 0) ? 'neg' : '', edited ? 'cell-edited' : ''].filter(Boolean).join(' ');
+      const negPct = parsePercentText(v);
+      const cls = [(n !== null && n < 0) ? 'neg' : (negPct !== null && negPct < 0) ? 'neg' : '', edited ? 'cell-edited' : ''].filter(Boolean).join(' ');
       tds += `<td class="val${cls ? ' ' + cls : ''}">${formatReportCell(v, c.type, { compact, zeroDash: kind === 'account', fraction: c.type === 'percent' ? fractionCols.has(c.idx) : undefined })}</td>`;
     }
     out.push({ html: `<tr${trCls ? ` class="${trCls}"` : ''}>${tds}</tr>`, orphanGuard: kind === 'section' });
