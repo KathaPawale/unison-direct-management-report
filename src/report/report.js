@@ -89,8 +89,8 @@ function formatReportCell(v, colType, opts = {}){
     if (pt === null && n === null) return escapeHtml(s);
     /* opts.fraction: the column's scale (true = fractions, false = whole percents); unknown → per value */
     const p = pt !== null ? pt : opts.fraction === true ? n * 100 : opts.fraction === false ? n : (Math.abs(n) < 1 ? n * 100 : n);
-    const r = Math.abs(p).toFixed(1);
-    return p < 0 && +r !== 0 ? '(' + r + '%)' : r + '%';
+    const r = Math.abs(p).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    return p < 0 && Math.abs(p) >= 0.05 ? '(' + r + '%)' : r + '%';
   }
   const n = parseAmount(v);
   if (n !== null && n === 0 && opts.zeroDash) return '&ndash;';
@@ -256,15 +256,9 @@ function paginateTableSection(no, title, sm, opts = {}){
       used += h;
     }
     if (cur.length) chunks.push(cur);
-    if (forceLandscape || tbLandscape){
-      bodies.push({
-        orientation,
-        body: sectionHead(no, title, tableSectionSub(sm), gi > 0) + marker +
-          `<div class="report-table-wrap"><table class="${tableCls}"${fitAttr}>${parts.colgroup}<thead>${parts.theadHtml}</thead><tbody>` +
-          parts.rows.map(r => r.html).join('') + '</tbody></table></div>'
-      });
-      return;
-    }
+    /* Rows 26/28/43: a monthly P&L (or trial balance) keeps ALL its columns — every month and the
+     * Total — on each landscape page; only a statement too long for one page continues by rows onto
+     * the next page, with the column header repeated. */
     chunks.forEach((chunk, ci) => bodies.push({
       orientation,
       body: sectionHead(no, title, tableSectionSub(sm), gi > 0 || ci > 0) + marker +
@@ -384,6 +378,15 @@ function comparisonTableHtml(cls){
     }).join('') + '</tbody></table>';
 }
 
+/* What the expense shares are a percentage of. Normally Total Expenses; when credits / refunds make a
+ * share exceed 100%, shares use total expense activity instead and the note says so. */
+function expenseShareNote(md){
+  const base = md.expensePctBase, tot = md.expenseTotal;
+  if (base !== null && base !== undefined && tot !== null && tot !== undefined && Math.abs(base - Math.abs(tot)) >= 0.005)
+    return `Each category as a percentage of total expense activity (${money(base)}, before credits and refunds). Total Expenses: ${money(tot)}.`;
+  return `Each category as a percentage of Total Expenses (${money(tot)}).`;
+}
+
 function liabilitiesTableHtml(cls){
   const md = state.model, items = md.liabilityBifurcation || [];
   if (!items.length) return '';
@@ -441,7 +444,7 @@ function dashboardBodies(no, title){
   if (md.expenseGroups.length){
     const top = md.expenseGroups.slice(0, 10);
     blocks.push(`<div class="report-section-title">Expense Breakdown — Top ${top.length} Categories</div>` +
-      '<div class="chart-note">Each category as a percentage of Total Expenses (' + escapeHtml(money(md.expenseTotal)) + ').</div>' +
+      '<div class="chart-note">' + escapeHtml(expenseShareNote(md)) + '</div>' +
       svgHBars({ items: top, color: CHART_COLORS.teal }));
   }
 
