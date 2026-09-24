@@ -52,7 +52,7 @@ ctx.window = ctx;
 vm.createContext(ctx);
 vm.runInContext(['src/core/util.js', 'src/core/state.js', 'src/core/parser.js', 'src/core/financials.js', 'src/core/recompute.js',
   'src/report/charts.js', 'src/report/report.js'].map(read).join('\n;\n') +
-  '\n;globalThis.__api = { parseWorkbook, state, reportBasis, coverBody, reportSections, liabilitiesTableHtml, reportTableParts };', ctx);
+  '\n;globalThis.__api = { parseWorkbook, state, reportBasis, coverBody, formatReportCell, accounting, reportSections, liabilitiesTableHtml, reportTableParts };', ctx);
 const api = ctx.__api;
 const load = sheets => { api.state.sheets = sheets; api.state.basisOverride = ''; const md = api.parseWorkbook(sheets); api.state.model = md; return md; };
 const fx = JSON.parse(read('tests/calc-fixtures.json')).fixtures;
@@ -168,6 +168,18 @@ for (const [form, fmt] of Object.entries({ fractions: v => v, 'whole percents': 
   });
   c(`Row 34 % of Income (${form}): every line = amount ÷ income (Bank Fees 0.4%, not 45%)`, ok);
 }
+
+/* Financial formatting — one format in every statement table. */
+c('Format: amount $1,234.56 / ($1,234.56), wide tables keep the $', api.formatReportCell(1234.5, 'current') === '$1,234.50' &&
+  api.formatReportCell(-1234.5, 'current', { compact: true }) === '($1,234.50)');
+c('Format: zero on an account row is "–"', api.formatReportCell(0, 'current', { zeroDash: true }) === '&ndash;');
+c('Format: -0.004 prints $0.00, never ($0.00)', api.accounting(-0.004) === '$0.00');
+c('Format: workbook percent text normalised — "23%" → 23.0%, "-25.0%" → (25.0%), "(3.5 %)" → (3.5%)',
+  api.formatReportCell('23%', 'percent') === '23.0%' && api.formatReportCell('-25.0%', 'percent') === '(25.0%)' && api.formatReportCell('(3.5 %)', 'percent') === '(3.5%)');
+c('Format: negative percent text is red', (() => {
+  const md = load({ 'Balance Sheet': [...head('Balance Sheet'), ['', 'Dec 31, 25', 'Dec 31, 24', '% Change'], ['Assets'], ['Checking', 750, 1000, '-25.0%'], ['Total Assets', 750, 1000, '-25.0%']] });
+  return /class="val neg">\(25\.0%\)</.test(api.reportTableParts(md.sheetModels['Balance Sheet'], {}).rows.map(r => r.html).join(''));
+})());
 
 console.log(`\n${p + f} regression assertions, ${p} pass, ${f} fail`);
 process.exit(f ? 1 : 0);

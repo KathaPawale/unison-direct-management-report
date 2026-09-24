@@ -12,9 +12,9 @@ function money(n){
 
 /* Consistent accounting display for financial values across report surfaces. */
 function accounting(n, withSymbol = true){
-  const v = Number(n);
-  if (!isFinite(v)) return '';
-  const a = Math.abs(round2(v)).toLocaleString('en-US', {
+  if (!isFinite(Number(n))) return '';
+  const v = round2(n);                 // round first: -0.004 is $0.00, never ($0.00)
+  const a = Math.abs(v).toLocaleString('en-US', {
     minimumFractionDigits: 2, maximumFractionDigits: 2
   });
   const s = (withSymbol ? '$' : '') + a;

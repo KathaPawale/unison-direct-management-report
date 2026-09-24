@@ -75,7 +75,7 @@ api.state.sheets = fmtSheets;
 const fmtMd = api.parseWorkbook(fmtSheets);
 api.state.model = fmtMd;
 const fmtRows = api.reportTableParts(fmtMd.sheetModels[fmtMd.roles.ap], {}).rows;
-check('Row 52 %-formatted A/P column prints %, not $', /100%<\/td><\/tr>$/.test(fmtRows[fmtRows.length - 1].html) && !fmtRows.some(r => /\$0\.75|\$1\.00/.test(r.html)));
+check('Row 52 %-formatted A/P column prints %, not $', /100(\.0+)?%<\/td><\/tr>$/.test(fmtRows[fmtRows.length - 1].html) && !fmtRows.some(r => /\$0\.75|\$1\.00/.test(r.html)));
 
 console.log(`${pass + fail} assertions, ${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);
