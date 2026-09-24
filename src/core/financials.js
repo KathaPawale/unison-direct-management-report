@@ -473,9 +473,24 @@ function formatPeriodText(t){
   return s;
 }
 
+/* The period line a worksheet states above its column headings ("As of July 31, 2026",
+ * "For the 7 months ended July 31, 2026"), or '' when it has none. */
+function sheetOwnPeriod(rows, sm){
+  const top = Math.max(1, Math.min(sm && sm.headerRow >= 0 ? sm.headerRow : (sm ? sm.bodyStart : 6), 8));
+  for (let i = 0; i < Math.min((rows || []).length, top); i++)
+    for (const v of rows[i] || []){
+      if (typeof v !== 'string') continue;
+      const t = cellText(v);
+      if (t && !isMetaText(t) && !STATEMENT_TITLE_RE.test(t) && parseAmount(t) === null && _periodLike(t)) return t;
+    }
+  return '';
+}
+
 function detectClientPeriod(sheets, model){
   const r = model.roles;
-  const order = [r.plMonthly, r.plComparative, r.pl, r.bs, r.ar, r.ap].filter(Boolean);
+  /* The full-period statements speak for the report period first: a month-by-month sheet is often titled
+   * "For the month ended …" even when it holds seven months. */
+  const order = [r.plComparative, r.pl, r.plMonthly, r.bs, r.ar, r.ap].filter(Boolean);
   let client = '', plPeriod = '', bsPeriod = '';
   for (const name of order){
     const rows = sheets[name] || [];
