@@ -419,8 +419,8 @@ function agingSummary(sheets, sm){
 /* ---------- basis, client, period ---------- */
 
 /* Bug 6: basis comes from text such as "Cash Basis", "Accrual Basis", "Basis: Cash",
- * "Basis of Preparation: Accrual" or "Reporting Basis: Cash", found in any sheet's title block or
- * footer (first 15 and last 5 rows of every sheet).
+ * "Basis of Preparation: Accrual" or "Reporting Basis: Cash", found in the first 15 or last 5 rows
+ * of every sheet.
  * Currency notes ("Amounts in US Dollars ($)") are never read as a basis. A bare "Cash" cell is not
  * used — it is also the name of a Balance Sheet account. */
 function detectBasis(sheets, roles){
@@ -438,7 +438,7 @@ function detectBasis(sheets, roles){
         if (typeof v !== 'string' || v.length > 200) continue;
         const s = v.toLowerCase();
         if (/amounts in us dollars|us dollars/.test(s)) continue;
-        if (MODIFIED.test(s)) score['Modified Cash'] += w;
+        if (MODIFIED.test(s)) score['Cash'] += w;
         else if (CASH.test(s)) score['Cash'] += w;
         else if (ACCRUAL.test(s)) score['Accrual'] += w;
       }

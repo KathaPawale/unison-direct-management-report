@@ -66,7 +66,7 @@ for (const [k, sheets] of Object.entries(fx)){
   c(`${tag} Bug 2 table header is "% of Total Liabilities"`, /% of Total Liabilities</.test(api.liabilitiesTableHtml('t')) && !/Liabilities &amp; Equity</.test(api.liabilitiesTableHtml('t')));
   const eg = md.expenseGroups;
   c(`${tag} Bug 4 every expense share ≤ 100% and shares sum to 100%`, eg.length > 0 && eg.every(x => Math.abs(x.pct) <= 100) && near(eg.reduce((s, x) => s + x.pct, 0), 100, 0.05));
-  c(`${tag} Bug 6 cover basis is a basis`, /^(Cash|Accrual|Modified Cash) Basis$/.test(api.reportBasis()));
+  c(`${tag} Bug 6 cover basis is a basis`, /^(Cash|Accrual) Basis$/.test(api.reportBasis()));
   const bs = md.sheetModels[md.roles.bs];
   const firstLabels = bs.lines.slice(0, 3).map(l => l.label).join(' | ');
   c(`${tag} Bug 9 title rows tagged meta and kept out of the Balance Sheet body (starts: ${firstLabels})`,

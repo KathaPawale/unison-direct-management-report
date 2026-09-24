@@ -21,7 +21,7 @@ function reportLogo(){
   return '<img class="report-logo" src="./assets/unison-logo.svg" alt="Unison Direct">';
 }
 
-/* Bug 6: always a basis — Cash or Accrual — never currency text.
+/* Bug 6: always a basis — Cash Basis or Accrual Basis — never currency text.
  * Nothing detected and no override → "Accrual Basis". */
 function reportBasis(){
   const v = String(state.basisOverride || (state.model && state.model.basisDetected) || '').trim();
@@ -60,7 +60,7 @@ function sectionHead(no, title, sub, continued = false){
 }
 
 /* Rows 48/51: Heading (3) — the period line under each statement title — shows only the period.
- * The currency is stated once on the cover, so the currency note is not repeated here. */
+ * The currency is stated once on the cover, so "Amounts in US Dollars ($)" is not repeated here. */
 function tableSectionSub(sm){
   return statementPeriodText(sm);
 }
@@ -390,7 +390,7 @@ function dashboardBodies(no, title){
   const md = state.model, m = md.metrics;
   const blocks = [];
 
-  blocks.push('<div class="report-section-title">Key Financial Indicators — Amounts in USD ($)</div>' +
+  blocks.push('<div class="report-section-title">Key Financial Indicators — Amounts in US Dollars ($)</div>' +
     '<div class="report-kpis">' + kpiTiles().map(t =>
       `<div class="rkpi"><div class="rkpi-label">${escapeHtml(t.label)}</div>` +
       `<div class="rkpi-value${t.value !== null && t.value < 0 ? ' neg' : ''}">${t.na || t.value === null ? '—' : escapeHtml(money(t.value))}</div>` +

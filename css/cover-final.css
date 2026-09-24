@@ -10,8 +10,8 @@
 .cover-page .cover-band h1{font-size:32px;line-height:1.12;margin:8px 0 8px;overflow-wrap:anywhere}
 .cover-page .cover-body{flex:0 0 auto;padding:24px 48px 26px}
 .cover-page .cover-body:before{display:none!important;content:none!important}
-.cover-page .cover-meta{display:grid;grid-template-columns:repeat(3,1fr);align-items:flex-start;gap:24px;margin:0 0 20px}
-.cover-page .cover-meta-item{display:flex;flex-direction:column;justify-content:flex-start;min-height:60px;min-width:0}
+.cover-page .cover-meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;align-items:flex-start;margin:0 0 20px}
+.cover-page .cover-meta-item{display:flex;flex-direction:column;justify-content:flex-start;min-height:60px}
 .cover-page .cover-meta-label{font-size:10px;letter-spacing:.08em;color:#6B7280;text-transform:uppercase;margin-bottom:6px;line-height:1}
 .cover-page .cover-meta-value{font-size:13px;font-weight:bold;color:#0B2F59;line-height:1.3;border:0!important;text-decoration:none!important;padding:0!important}
 .cover-meta-static{border:0!important;text-decoration:none!important}
