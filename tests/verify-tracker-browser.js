@@ -461,7 +461,8 @@ function checkWorkbook(w, r, excel, pdf, errors){
 (async () => {
   const exe = chromiumPath();
   const server = await serve();
-  const base = 'http://127.0.0.1:' + server.address().port + '/index.html';
+  /* TRACKER_URL=https://… runs the checks against a deployed site instead of this checkout. */
+  const base = process.env.TRACKER_URL || 'http://127.0.0.1:' + server.address().port + '/index.html';
   const browser = await chromium.launch({ executablePath: exe });
   /* TRACKER_XLSX=path/to/client.xlsx runs every check on a real client workbook instead of the built-in set. */
   const books = (process.env.TRACKER_XLSX
