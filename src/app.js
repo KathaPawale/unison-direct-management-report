@@ -152,7 +152,7 @@ function renderDashboard(){
   if (md.apAging && md.apAging.total > 0) alerts.push(['Review', `Outstanding payables of ${money(md.apAging.total)} — verify payment schedule.`]);
   if (p.income !== null && p.income !== 0){
     const d = (m.income - p.income) / Math.abs(p.income) * 100;
-    if (d < -20) alerts.push(['High', `Revenue is down ${Math.abs(d).toFixed(1)}% vs the prior-year period.`]);
+    if (d < -20) alerts.push(['High', `Revenue is down ${percentText(Math.abs(d))} vs the prior-year period.`]);
   }
   if (!md.roles.bs) alerts.push(['Info', 'No Balance Sheet worksheet was detected in this workbook.']);
   if (!md.roles.plMonthly && !md.roles.plComparative && !md.roles.pl) alerts.push(['Info', 'No Profit and Loss worksheet was detected in this workbook.']);

@@ -10,11 +10,14 @@ function money(n){
   return accounting(Number(n || 0));
 }
 
-/* Consistent accounting display for financial values across report surfaces. */
+/* Financial formatting standard — every surface (app, PDF, Excel, CSV, charts) uses these:
+ *   amounts  $1,234.56 / ($1,234.56)     percents  12.50% / (12.50%)
+ * (The Excel report shows amounts without the $ symbol — see XL.moneyFmt in exports.js.)
+ * Values that round to zero never show as negative: ($0.00) / (0.00%) cannot appear. */
 function accounting(n, withSymbol = true){
-  const v = Number(n);
+  const v = round2(Number(n));
   if (!isFinite(v)) return '';
-  const a = Math.abs(round2(v)).toLocaleString('en-US', {
+  const a = Math.abs(v).toLocaleString('en-US', {
     minimumFractionDigits: 2, maximumFractionDigits: 2
   });
   const s = (withSymbol ? '$' : '') + a;
@@ -29,8 +32,16 @@ function moneyShort(n){
   return sign + '$' + a.toFixed(0);
 }
 
+/* p is already in percent units (12.5 = 12.50%). */
+function percentText(p, dp = 2){
+  const v = Number(p);
+  if (!isFinite(v)) return '';
+  const r = Math.abs(v).toFixed(dp);
+  return v < 0 && +r !== 0 ? '(' + r + '%)' : r + '%';
+}
+
 function pct(n, dp = 2){
-  return (Number(n) || 0).toFixed(dp) + '%';
+  return percentText(Number(n) || 0, dp);
 }
 
 /* Parse "$1,234.00", "(500)", "-1,234.56" → number; '' / text → NaN-safe 0 */
