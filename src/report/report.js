@@ -278,13 +278,13 @@ function paginateBlocks(no, title, blocks, sub){
   const avail = _bodyBudget('portrait');
   const pages = [];
   /* Bug 10: _bodyBudget already keeps FOOTER_RESERVE (the 72px footer safe zone) clear at the
-   * bottom of every page; a table block of more than 20 rows also books 40px of font-metric slack.
+   * bottom of every page; a table block of 20 or more rows also books 40px of font-metric slack.
    * Bug 11: a block is never split, and an orphanGuard block that does not fit the rest of the page
    * starts the next page, so a table's header, body and total always stay together. */
   let cur = [], used = 0, budget = avail - h1;
   padded.forEach((b, i) => {
     const tableRows = (String(b.html).match(/<tr\b/gi) || []).length;
-    const h = heights[i] + (tableRows > 20 ? 40 : 0);
+    const h = heights[i] + (tableRows >= 20 ? 40 : 0);
     if (cur.length && used + h > budget){
       pages.push(cur); cur = []; used = 0; budget = avail - h2;
     }
