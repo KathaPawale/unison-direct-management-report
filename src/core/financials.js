@@ -221,14 +221,16 @@ function expenseBreakdown(sheets, sm, spec, totalExpenses){
     if (merged.has(k)) merged.get(k).value += it.value; else merged.set(k, { ...it });
   }
   const list = [...merged.values()].filter(x => Math.abs(x.value) >= 0.005);
+  list.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
   const leafSum = list.reduce((s, x) => s + Math.abs(x.value), 0);
   const denominator = (sectionTotal !== null && Math.abs(sectionTotal) > 0.005) ? Math.abs(sectionTotal) : (leafSum || 0);
   const total = (totalExpenses !== null && totalExpenses !== undefined && Math.abs(totalExpenses) >= 0.005) ? Math.abs(totalExpenses) : denominator;
   list.forEach(x => { x.pct = total > 0 ? (x.value / total) * 100 : 0; });
-  if (list.some(x => Math.abs(x.pct) > 100)) {
-    list.forEach(x => { x.pct = denominator > 0 ? (x.value / denominator) * 100 : 0; });
+  const shown = list.slice(0, 10);
+  if (shown.some(x => Math.abs(x.pct) > 100)) {
+    const shownSum = shown.reduce((s, x) => s + Math.abs(x.value), 0);
+    list.forEach(x => { x.pct = shownSum > 0 ? (x.value / shownSum) * 100 : 0; });
   }
-  list.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
   return { items: list, total: denominator || total };
 }
 
@@ -426,8 +428,8 @@ function detectBasis(sheets, roles){
     const s = text.toLowerCase();
     if (/amounts in us dollars|us dollars|\$\)/i.test(s)) return;
     if (/modified cash basis/.test(s)) score['Modified Cash'] += 1;
-    else if (/\bcash basis\b|\bbasis\s*[:\-]?\s*cash\b/.test(s)) score['Cash'] += 1;
-    else if (/\baccrual basis\b|\bbasis\s*[:\-]?\s*accrual\b/.test(s)) score['Accrual'] += 1;
+    else if (/cash\s*basis|basis\s*[:\-]?\s*cash/.test(s)) score['Cash'] += 1;
+    else if (/accrual\s*basis|basis\s*[:\-]?\s*accrual/.test(s)) score['Accrual'] += 1;
   };
   for (const [name, rows] of Object.entries(sheets)){
     const scan = rows.slice(0, 15).concat(rows.slice(-5));

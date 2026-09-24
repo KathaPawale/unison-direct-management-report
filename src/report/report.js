@@ -6,7 +6,7 @@
 'use strict';
 
 const PAGE_W = 816, PAGE_H = 1056;              // US Letter portrait @ 96 dpi
-const PAGE_PAD_TOP = 50, PAGE_PAD_BOTTOM = 46, FOOTER_RESERVE = 40;
+const PAGE_PAD_TOP = 50, PAGE_PAD_BOTTOM = 46, FOOTER_RESERVE = 72;
 const WIDE_TABLE_COLS = 6;                      // more value columns than this → landscape page
 const MAX_COLS_PER_PAGE = 20;                   // extended landscape budget keeps monthly P&L columns together
 const REPORT_DISCLAIMER =
@@ -25,8 +25,7 @@ function reportBasis(){
   const b = state.basisOverride || (state.model && state.model.basisDetected) || 'Accrual';
   const v = String(b || '').trim();
   if (!v) return 'Accrual Basis';
-  if (/amounts in us dollars|us dollars|\$\)/i.test(v)) return 'Accrual Basis';
-  return /basis$/i.test(v) ? v : v + ' Basis';
+  return /cash/i.test(v) && !/accrual/i.test(v) ? 'Cash Basis' : 'Accrual Basis';
 }
 
 function watermarkHtml(){
@@ -278,7 +277,8 @@ function paginateBlocks(no, title, blocks, sub){
   const pages = [];
   let cur = [], used = 0, budget = avail - h1 - 72;
   padded.forEach((b, i) => {
-    const h = heights[i] + (String(b.html).match(/<tr\b/gi)?.length > 20 ? 40 : 0);
+    const tableRows = (String(b.html).match(/<tr\b/gi) || []).length;
+    const h = heights[i] + (tableRows >= 20 ? 40 : 0);
     const breakBefore = b.orphanGuard && cur.length && used + h > budget;
     if (breakBefore){
       pages.push(cur); cur = []; used = 0; budget = avail - h2 - 72;
@@ -307,8 +307,8 @@ function coverBody(){
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const size = coverNameSize(state.client);
   return `
-    <div class="cover-top">
-      <h1 class="cover-client-top" style="font-size:${size}px">${escapeHtml(state.client)}</h1>
+    <div class="cover-top cover-header">
+      <h1 class="cover-client-top cover-header-name" style="font-size:${size}px">${escapeHtml(state.client)}</h1>
       ${reportLogo()}
       <div class="cover-brand-rule"></div>
     </div>

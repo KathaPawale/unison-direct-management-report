@@ -64,3 +64,5 @@
 .toc-item:hover>span:first-child,.toc-item:hover>.toc-page{color:#0b2f59}
 .report-page .report-table td{padding-top:3px;padding-bottom:3px}
 .report-page .report-table td{padding-top:3px;padding-bottom:3px}
+.cover-header{min-height:96px;padding-top:8px;box-sizing:border-box}
+.cover-header-name{line-height:1.15;overflow:visible;white-space:normal;word-break:break-word}
