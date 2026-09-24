@@ -165,10 +165,13 @@ function expenseBreakdown(sheets, sm, spec, totalExpenses){
   if (!sm || !spec) return { items: [], total: 0 };
   const items = [];
   const hasIndent = _hasIndent(sm);
+  let sectionTotal = null;
   for (const key of ['expenses']){
     const oi = _find(sm, _S(FIN[key].names), ['section', 'account']);
     if (oi < 0) continue;
     const { from, to } = _span(sm, oi);
+    const sectionLeaf = _leafSum(sheets, sm, oi, spec, to);
+    if (sectionLeaf !== null) sectionTotal = sectionLeaf;
     let i = from;
     while (i < to){
       const l = sm.lines[i];
@@ -212,10 +215,17 @@ function expenseBreakdown(sheets, sm, spec, totalExpenses){
     if (merged.has(k)) merged.get(k).value += it.value; else merged.set(k, { ...it });
   }
   const list = [...merged.values()].filter(x => Math.abs(x.value) >= 0.005);
-  const sumItems = list.reduce((s, x) => s + x.value, 0);
-  const total = totalExpenses !== null && totalExpenses !== undefined && Math.abs(totalExpenses) >= 0.005 ? totalExpenses : sumItems;
-  list.forEach(x => { x.pct = total ? x.value / Math.abs(total) * 100 : 0; });
   list.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+  /* Bug 4: every category is a share of the Expenses section itself — the leaf sum of its direct
+   * children — never a separate "Total for Expenses" line that can exclude part of the section. */
+  const itemSum = list.reduce((s, x) => s + x.value, 0);
+  let total = sectionTotal !== null && Math.abs(sectionTotal) >= 0.005 ? sectionTotal : itemSum;
+  list.forEach(x => { x.pct = Math.abs(total) >= 0.005 ? x.value / Math.abs(total) * 100 : 0; });
+  /* Hard cap: a share above 100% means the denominator is wrong — fall back to the sum of the rows. */
+  if (list.some(x => x.pct > 100 || x.pct < -100)){
+    total = list.reduce((s, x) => s + Math.abs(x.value), 0);
+    list.forEach(x => { x.pct = total ? x.value / total * 100 : 0; });
+  }
   return { items: list, total };
 }
 
@@ -245,6 +255,7 @@ function bsFigures(sheets, sm, spec, basis){
     currentAssets = assets - fixedAssets - (otherAssets || 0);
 
   const pctOf = (x, d) => (x === null || d === null || Math.abs(d) < 0.005) ? null : x / Math.abs(d) * 100;
+  const pctOfSigned = (x, d) => (x === null || d === null || Math.abs(d) < 0.005) ? null : x / d * 100;
   /* Row 36: when the denominator is negative or zero, raw signed percentages can
    * exceed 100 percent, producing a donut that visually breaks. Rescale each slice
    * using the sum of absolute values so no item exceeds 100 percent. Negative values
@@ -262,10 +273,6 @@ function bsFigures(sheets, sm, spec, basis){
     if (currentAssets !== null) assetItems.push({ label: 'Current Assets', value: currentAssets });
     if (fixedAssets !== null) assetItems.push({ label: 'Fixed Assets', value: fixedAssets });
     if (otherAssets !== null) assetItems.push({ label: 'Other Assets', value: otherAssets });
-    /* Only Current Assets and Fixed Assets are shown (plus a genuine "Other Assets" total when the
-     * statement has one). Anything else that sits outside those groups — e.g. Accumulated Depreciation
-     * listed on its own — is part of non-current assets, so it is folded into Fixed Assets and never
-     * shown as a separate slice. Current % + Fixed % (+ Other %) therefore always equals 100%. */
     const resid = assets - assetItems.reduce((s, x) => s + x.value, 0);
     if (assetItems.length && Math.abs(resid) >= 0.5){
       const fx = assetItems.find(x => x.label === 'Fixed Assets');
@@ -276,6 +283,16 @@ function bsFigures(sheets, sm, spec, basis){
     assetItems.forEach(x => { x.pct = pctOf(x.value, assets); });
     rescaleForNegativeTotal(assetItems, assets);
   }
+  /* Bug 2: Liabilities Bifurcation is "share of total liabilities". Every row uses the same
+   * denominator — the sum of the rows shown (current + long-term + other liabilities) — so the rows
+   * always add up to exactly 100%, whatever equity or Total L&E are. */
+  const liabilityRows = [];
+  if (currentLiabilities !== null) liabilityRows.push({ label: 'Current Liabilities', value: currentLiabilities });
+  if (longTermLiabilities !== null) liabilityRows.push({ label: 'Long-Term Liabilities', value: longTermLiabilities });
+  const liabResid = liabilities !== null ? liabilities - (currentLiabilities || 0) - (longTermLiabilities || 0) : 0;
+  if (Math.abs(liabResid) >= 0.5) liabilityRows.push({ label: 'Other Liabilities', value: liabResid });
+  const liabilitySumForPct = liabilityRows.reduce((s, x) => s + x.value, 0);
+  liabilityRows.forEach(x => { x.pct = Math.abs(liabilitySumForPct) >= 0.005 ? x.value / liabilitySumForPct * 100 : null; });
   const leItems = [];
   if (totalLE !== null){
     if (currentLiabilities !== null) leItems.push({ label: 'Current Liabilities', value: currentLiabilities });
@@ -340,7 +357,7 @@ function bsFigures(sheets, sm, spec, basis){
   const ar = explicit('ar'), ap = explicit('ap');
 
   return { assets, currentAssets, fixedAssets, otherAssets, liabilities, currentLiabilities, longTermLiabilities,
-           equity, totalLE, bank, ar, ap, assetItems, leItems };
+           equity, totalLE, bank, ar, ap, assetItems, leItems, liabilityRows };
 }
 
 /* ---------- aging ---------- */
@@ -401,19 +418,29 @@ function agingSummary(sheets, sm){
 
 /* ---------- basis, client, period ---------- */
 
+/* Bug 6: basis comes from text such as "Cash Basis", "Accrual Basis", "Basis: Cash",
+ * "Basis of Preparation: Accrual" or "Reporting Basis: Cash", found in the first 15 or last 5 rows
+ * of every sheet.
+ * Currency notes ("Amounts in US Dollars ($)") are never read as a basis. A bare "Cash" cell is not
+ * used — it is also the name of a Balance Sheet account. */
 function detectBasis(sheets, roles){
   const score = { 'Cash': 0, 'Accrual': 0, 'Modified Cash': 0 };
   const statements = new Set([roles.bs, roles.plMonthly, roles.plComparative, roles.pl, roles.plPercent].filter(Boolean));
+  const LABEL = '(?:reporting\\s+)?basis(?:\\s+of\\s+(?:preparation|accounting))?\\s*[:\\-]?\\s*';
+  const CASH = new RegExp('\\bcash\\s+basis\\b|\\b' + LABEL + 'cash\\b');
+  const ACCRUAL = new RegExp('\\baccrual\\s+basis\\b|\\b' + LABEL + 'accrual\\b');
+  const MODIFIED = new RegExp('\\bmodified\\s+cash\\s+basis\\b|\\b' + LABEL + 'modified\\s+cash\\b');
   for (const [name, rows] of Object.entries(sheets)){
     const w = statements.has(name) ? 3 : 1;
-    const scan = rows.length > 80 ? rows.slice(0, 40).concat(rows.slice(-40)) : rows;
+    const scan = rows.slice(0, 15).concat(rows.slice(-5));
     for (const row of scan){
       for (const v of row || []){
         if (typeof v !== 'string' || v.length > 200) continue;
         const s = v.toLowerCase();
-        if (/modified cash basis/.test(s)) score['Modified Cash'] += w;
-        else if (/\bcash basis\b|\bbasis\s*[:\-]?\s*cash\b/.test(s)) score['Cash'] += w;
-        else if (/\baccrual basis\b|\bbasis\s*[:\-]?\s*accrual\b/.test(s)) score['Accrual'] += w;
+        if (/amounts in us dollars|us dollars/.test(s)) continue;
+        if (MODIFIED.test(s)) score['Modified Cash'] += w;   // shown as Cash Basis on the cover; A/R rules still treat it as its own basis
+        else if (CASH.test(s)) score['Cash'] += w;
+        else if (ACCRUAL.test(s)) score['Accrual'] += w;
       }
     }
   }
@@ -589,10 +616,15 @@ function analyzeFinancials(model, sheets){
   const bsCur = bsFigures(sheets, bs, bsCurSpec) || {};
   const bsPri = bsPriSpec ? bsFigures(sheets, bs, bsPriSpec) : null;
 
-  const cashBasis = /cash/i.test(basisDetected || '') && !/modified/i.test(basisDetected || '');
-  /* Cash-basis clients have no receivables/payables unless the Balance Sheet itself carries them,
-   * so an aging sheet alone never puts A/R or A/P into the report for a cash-basis client. */
-  const suppressAR = cashBasis && (bsCur.ar === null || bsCur.ar === undefined);
+  /* Bug 5: "Cash Basis" anywhere in the workbook makes the whole workbook cash basis
+   * ("Modified Cash Basis" does not count). A cash-basis client never shows A/R: no A/R figure,
+   * no A/R aging, no A/R sheet in the exports and no Receivables & Payables block. */
+  const workbookCashBasis = Object.values(sheets).some(rows => (rows || []).some(row => (row || []).some(v =>
+    typeof v === 'string' && /cash\s*basis/i.test(v) && !/modified\s*cash\s*basis/i.test(v))));
+  const cashBasis = workbookCashBasis || (/cash/i.test(basisDetected || '') && !/modified/i.test(basisDetected || ''));
+  let suppressAR = false;
+  if (cashBasis) suppressAR = true;
+  /* Cash-basis clients have no payables unless the Balance Sheet itself carries them. */
   const suppressAP = cashBasis && (bsCur.ap === null || bsCur.ap === undefined);
   const arAging = suppressAR ? null : agingSummary(sheets, S('ar'));
   const apAging = suppressAP ? null : agingSummary(sheets, S('ap'));
@@ -607,7 +639,7 @@ function analyzeFinancials(model, sheets){
     otherExpenses: plCur.otherExpenses ?? null,
     net: plCur.net ?? 0,
     bank: bsCur.bank ?? null,
-    ar: pick(bsCur.ar, (!cashBasis && arAging) ? arAging.total : null),
+    ar: suppressAR ? null : pick(bsCur.ar, arAging ? arAging.total : null),
     ap: pick(bsCur.ap, (!cashBasis && apAging) ? apAging.total : null),
     assets: bsCur.assets ?? 0,
     currentAssets: bsCur.currentAssets ?? null,
@@ -665,7 +697,7 @@ function analyzeFinancials(model, sheets){
     expenseTotal: exp.total,
     arAging, apAging, suppressAR, suppressAP,
     bsComposition: { assets: bsCur.assetItems || [], liabEquity: bsCur.leItems || [] },
-    liabilityBifurcation: (bsCur.leItems || []),
+    liabilityBifurcation: (bsCur.liabilityRows || []),
     basisDetected,
     client: cp.client,
     period: formatPeriodText(period || 'For the period ended'),

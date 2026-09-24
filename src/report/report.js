@@ -6,7 +6,7 @@
 'use strict';
 
 const PAGE_W = 816, PAGE_H = 1056;              // US Letter portrait @ 96 dpi
-const PAGE_PAD_TOP = 50, PAGE_PAD_BOTTOM = 46, FOOTER_RESERVE = 40;
+const PAGE_PAD_TOP = 50, PAGE_PAD_BOTTOM = 46, FOOTER_RESERVE = 72;
 const WIDE_TABLE_COLS = 6;                      // more value columns than this → landscape page
 const MAX_COLS_PER_PAGE = 20;                   // extended landscape budget keeps monthly P&L columns together
 const REPORT_DISCLAIMER =
@@ -21,9 +21,11 @@ function reportLogo(){
   return '<img class="report-logo" src="./assets/unison-logo.svg" alt="Unison Direct">';
 }
 
+/* Bug 6: always a basis — Cash Basis or Accrual Basis — never currency text.
+ * Nothing detected and no override → "Accrual Basis". */
 function reportBasis(){
-  const b = state.basisOverride || (state.model && state.model.basisDetected) || 'Accrual';
-  return /basis$/i.test(b) ? b : b + ' Basis';
+  const v = String(state.basisOverride || (state.model && state.model.basisDetected) || '').trim();
+  return /cash/i.test(v) && !/accrual/i.test(v) ? 'Cash Basis' : 'Accrual Basis';
 }
 
 function watermarkHtml(){
@@ -58,7 +60,7 @@ function sectionHead(no, title, sub, continued = false){
 }
 
 /* Rows 48/51: Heading (3) — the period line under each statement title — shows only the period.
- * The currency is stated once on the cover, so "Amounts in US Dollars ($)" is not repeated here. */
+ * The currency is stated once on the cover, so it is not repeated here. */
 function tableSectionSub(sm){
   return statementPeriodText(sm);
 }
@@ -135,6 +137,7 @@ function reportTableParts(sm, { forExport = false, cols = null, compact = false,
 
   const out = [];
   for (const line of sm.lines){
+    if (line.kind === 'meta') continue;
     if (doSkip && isRowZero(line)) continue;
     const row = rows[line.r] || [];
     const kind = line.kind;
@@ -209,13 +212,25 @@ function paginateTableSection(no, title, sm, opts = {}){
     const compact = cols.length > 8;
     const parts = reportTableParts(sm, { ...opts, cols, compact });
     const marker = groups.length > 1 ? `<div class="wide-col-marker">Columns ${escapeHtml(_headLabel(cols[0]))} – ${escapeHtml(_headLabel(cols[cols.length - 1]))}</div>` : '';
-    const tableCls = 'report-table' + (compact ? ' compact' : '') + (orientation === 'landscape' ? ' wide' : '') + (cols.length <= 4 || forceLandscape ? ' roomy' : '');
+    let tableCls = 'report-table' + (compact ? ' compact' : '') + (orientation === 'landscape' ? ' wide' : '') + (cols.length <= 4 || forceLandscape ? ' roomy' : '');
     const shell = _measureShell(orientation);
     shell.innerHTML =
       `<div class="mh1">${sectionHead(no, title, tableSectionSub(sm), gi > 0)}${marker}</div>` +
       `<div class="mh2">${sectionHead(no, title, tableSectionSub(sm), true)}${marker}</div>` +
       `<table class="${tableCls}">${parts.colgroup}<thead>${parts.theadHtml}</thead><tbody>` +
       parts.rows.map(r => r.html).join('') + '</tbody></table>';
+    /* Row 21: no column may be cut off. If any amount is wider than its cell (large figures on a
+     * 12-month landscape P&L), step the table's font down until every cell fits (floor 6px). */
+    const tbl = shell.querySelector('table');
+    const overflowing = () => [...tbl.querySelectorAll('td.val, thead th')].some(td => td.scrollWidth > td.clientWidth + 0.5);
+    let fitAttr = '';
+    if (overflowing()){
+      tbl.classList.add('fit');
+      let fs = 9;
+      for (; fs > 6; fs -= 0.25){ tbl.style.setProperty('--fit-fs', fs + 'px'); if (!overflowing()) break; }
+      tableCls += ' fit';
+      fitAttr = ` style="--fit-fs:${fs}px"`;
+    }
     const h1 = _outerHeight(shell.querySelector('.mh1'));
     const h2 = _outerHeight(shell.querySelector('.mh2'));
     const theadH = shell.querySelector('thead').getBoundingClientRect().height;
@@ -244,7 +259,7 @@ function paginateTableSection(no, title, sm, opts = {}){
       bodies.push({
         orientation,
         body: sectionHead(no, title, tableSectionSub(sm), gi > 0) + marker +
-          `<div class="report-table-wrap"><table class="${tableCls}">${parts.colgroup}<thead>${parts.theadHtml}</thead><tbody>` +
+          `<div class="report-table-wrap"><table class="${tableCls}"${fitAttr}>${parts.colgroup}<thead>${parts.theadHtml}</thead><tbody>` +
           parts.rows.map(r => r.html).join('') + '</tbody></table></div>'
       });
       return;
@@ -252,7 +267,7 @@ function paginateTableSection(no, title, sm, opts = {}){
     chunks.forEach((chunk, ci) => bodies.push({
       orientation,
       body: sectionHead(no, title, tableSectionSub(sm), gi > 0 || ci > 0) + marker +
-        `<div class="report-table-wrap"><table class="${tableCls}">${parts.colgroup}<thead>${parts.theadHtml}</thead><tbody>` +
+        `<div class="report-table-wrap"><table class="${tableCls}"${fitAttr}>${parts.colgroup}<thead>${parts.theadHtml}</thead><tbody>` +
         chunk.map(r => r.html).join('') + '</tbody></table></div>'
     }));
   });
@@ -262,18 +277,24 @@ function paginateTableSection(no, title, sm, opts = {}){
 
 /* Pack independent blocks (charts, tables) onto as many portrait pages as needed. */
 function paginateBlocks(no, title, blocks, sub){
+  const padded = blocks.map(b => typeof b === 'string' ? { html: b, orphanGuard: false } : b);
   const shell = _measureShell('portrait');
   shell.innerHTML = `<div class="mh1">${sectionHead(no, title, sub)}</div><div class="mh2">${sectionHead(no, title, sub, true)}</div>` +
-    blocks.map(b => `<div class="rblock">${b}</div>`).join('');
+    padded.map(b => `<div class="rblock">${b.html}</div>`).join('');
   const h1 = _outerHeight(shell.querySelector('.mh1'));
   const h2 = _outerHeight(shell.querySelector('.mh2'));
   const heights = [...shell.querySelectorAll('.rblock')].map(el => _outerHeight(el));
   $('#pdfMeasure').innerHTML = '';
   const avail = _bodyBudget('portrait');
   const pages = [];
+  /* Bug 10: _bodyBudget already keeps FOOTER_RESERVE (the 72px footer safe zone) clear at the
+   * bottom of every page; a table block of 20 or more rows also books 40px of font-metric slack.
+   * Bug 11: a block is never split, and an orphanGuard block that does not fit the rest of the page
+   * starts the next page, so a table's header, body and total always stay together. */
   let cur = [], used = 0, budget = avail - h1;
-  blocks.forEach((b, i) => {
-    const h = heights[i];
+  padded.forEach((b, i) => {
+    const tableRows = (String(b.html).match(/<tr\b/gi) || []).length;
+    const h = heights[i] + (tableRows >= 20 ? 40 : 0);
     if (cur.length && used + h > budget){
       pages.push(cur); cur = []; used = 0; budget = avail - h2;
     }
@@ -283,7 +304,7 @@ function paginateBlocks(no, title, blocks, sub){
   if (!pages.length) pages.push([]);
   return pages.map((p, i) => ({
     orientation: 'portrait',
-    body: sectionHead(no, title, sub, i > 0) + p.map(b => `<div class="rblock">${b}</div>`).join('')
+    body: sectionHead(no, title, sub, i > 0) + p.map(b => `<div class="rblock">${b.html}</div>`).join('')
   }));
 }
 
@@ -298,8 +319,8 @@ function coverBody(){
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const size = coverNameSize(state.client);
   return `
-    <div class="cover-top">
-      <h1 class="cover-client-top" style="font-size:${size}px">${escapeHtml(state.client)}</h1>
+    <div class="cover-top cover-header">
+      <h1 class="cover-client-top cover-header-name" style="font-size:${size}px">${escapeHtml(state.client)}</h1>
       ${reportLogo()}
       <div class="cover-brand-rule"></div>
     </div>
@@ -311,10 +332,10 @@ function coverBody(){
     </div>
     <div class="cover-body">
       <div class="cover-meta">
-        <div><span>Prepared by</span><b>Unison Direct GCC INC</b></div>
-        <div><span>Report date</span><b>${escapeHtml(today)}</b></div>
-        <div><span>Basis</span><b>${escapeHtml(reportBasis())}</b></div>
-        <div><span>Currency</span><b>US Dollars ($)</b></div>
+        <div class="cover-meta-item"><span class="cover-meta-label">Prepared by</span><b class="cover-meta-value">Unison Direct GCC INC</b></div>
+        <div class="cover-meta-item"><span class="cover-meta-label">Report date</span><b class="cover-meta-value">${escapeHtml(today)}</b></div>
+        <div class="cover-meta-item"><span class="cover-meta-label">Basis</span><b class="cover-meta-value">${escapeHtml(reportBasis())}</b></div>
+        <div class="cover-meta-item"><span class="cover-meta-label">Currency</span><b class="cover-meta-value">US Dollars ($)</b></div>
       </div>
       <div class="cover-confidential">CONFIDENTIAL — Prepared for management use only</div>
     </div>`;
@@ -365,11 +386,12 @@ function comparisonTableHtml(cls){
 function liabilitiesTableHtml(cls){
   const md = state.model, items = md.liabilityBifurcation || [];
   if (!items.length) return '';
-  const tle = md.metrics.totalLE;
+  /* Bug 2: shares come from financials (denominator = sum of these liability rows), so they add to 100%. */
+  const totalLiab = items.reduce((s, x) => s + (x.value || 0), 0);
   const row = (label, v, p, extra = '') => `<tr class="${extra}"><td>${escapeHtml(label)}</td><td class="${v < 0 ? 'neg' : ''}">${money(v)}</td><td class="${p !== null && p < 0 ? 'neg' : ''}">${pctText(p)}</td></tr>`;
-  return `<table class="${cls}"><thead><tr><th>Liabilities &amp; Equity</th><th>Amount</th><th>% of Total Liabilities &amp; Equity</th></tr></thead><tbody>` +
+  return `<table class="${cls}"><thead><tr><th>Liability Type</th><th>Amount</th><th>% of Total Liabilities</th></tr></thead><tbody>` +
     items.map(x => row(x.label, x.value, x.pct)).join('') +
-    (tle !== null ? row('Total Liabilities & Equity', tle, 100, 'total') : '') + '</tbody></table>';
+    row('Total Liabilities', totalLiab, Math.abs(totalLiab) >= 0.005 ? 100 : null, 'total') + '</tbody></table>';
 }
 
 function monthlyLabels(){
@@ -381,7 +403,7 @@ function dashboardBodies(no, title){
   const md = state.model, m = md.metrics;
   const blocks = [];
 
-  blocks.push('<div class="report-section-title">Key Financial Indicators — Amounts in US Dollars ($)</div>' +
+  blocks.push('<div class="report-section-title">Key Financial Indicators — US Dollars ($)</div>' +
     '<div class="report-kpis">' + kpiTiles().map(t =>
       `<div class="rkpi"><div class="rkpi-label">${escapeHtml(t.label)}</div>` +
       `<div class="rkpi-value${t.value !== null && t.value < 0 ? ' neg' : ''}">${t.na || t.value === null ? '—' : escapeHtml(money(t.value))}</div>` +
@@ -422,14 +444,15 @@ function dashboardBodies(no, title){
       svgHBars({ items: top, color: CHART_COLORS.teal }));
   }
 
-  if (md.arAging || md.apAging){
+  /* Bug 5: a cash-basis client (A/R suppressed) gets no Receivables & Payables block at all. */
+  if (!md.suppressAR && (md.arAging || md.apAging)){
     const base = (md.arAging || md.apAging).buckets.map(b => b.label);
     const series = [];
     if (md.arAging) series.push({ name: 'A/R ' + moneyShort(md.arAging.total), color: CHART_COLORS.blue, values: md.arAging.buckets.map(b => b.value) });
     if (md.apAging) series.push({ name: 'A/P ' + moneyShort(md.apAging.total), color: CHART_COLORS.amber, values: md.apAging.buckets.map(b => b.value) });
     blocks.push('<div class="report-section-title">Receivables &amp; Payables Aging</div>' + chartLegend(series) +
       svgGroupedBars({ series, labels: base, height: 210 }));
-  } else if (m.ar !== null || m.ap !== null){
+  } else if (!md.suppressAR && (m.ar !== null || m.ap !== null)){
     const items = [];
     if (m.ar !== null) items.push({ label: 'Accounts Receivable', value: m.ar });
     if (m.ap !== null) items.push({ label: 'Accounts Payable', value: m.ap });
@@ -443,7 +466,7 @@ function dashboardBodies(no, title){
       '</div>');
   }
   const lt = liabilitiesTableHtml('report-mini-table');
-  if (lt) blocks.push('<div class="report-section-title">Liabilities Bifurcation</div>' + lt);
+  if (lt) blocks.push({ html: '<div class="report-section-title">Liabilities Bifurcation</div>' + lt, orphanGuard: true });
 
   return paginateBlocks(no, title, blocks);
 }
