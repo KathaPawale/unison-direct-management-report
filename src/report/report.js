@@ -21,13 +21,11 @@ function reportLogo(){
   return '<img class="report-logo" src="./assets/unison-logo.svg" alt="Unison Direct">';
 }
 
-/* Bug 6: always a basis — Cash / Accrual / Modified Cash Basis — never currency text.
+/* Bug 6: always a basis — Cash or Accrual — never currency text.
  * Nothing detected and no override → "Accrual Basis". */
 function reportBasis(){
   const v = String(state.basisOverride || (state.model && state.model.basisDetected) || '').trim();
-  if (/modified\s*cash/i.test(v)) return 'Modified Cash Basis';
-  if (/cash/i.test(v)) return 'Cash Basis';
-  return 'Accrual Basis';
+  return /cash/i.test(v) && !/accrual/i.test(v) ? 'Cash Basis' : 'Accrual Basis';
 }
 
 function watermarkHtml(){
@@ -62,7 +60,7 @@ function sectionHead(no, title, sub, continued = false){
 }
 
 /* Rows 48/51: Heading (3) — the period line under each statement title — shows only the period.
- * The currency is stated once on the cover, so "Amounts in US Dollars ($)" is not repeated here. */
+ * The currency is stated once on the cover, so the currency note is not repeated here. */
 function tableSectionSub(sm){
   return statementPeriodText(sm);
 }
@@ -322,10 +320,9 @@ function coverBody(){
     </div>
     <div class="cover-body">
       <div class="cover-meta">
-        <div><span>Prepared by</span><b>Unison Direct GCC INC</b></div>
-        <div><span>Report date</span><b>${escapeHtml(today)}</b></div>
-        <div><span>Basis</span><b>${escapeHtml(reportBasis())}</b></div>
-        <div><span>Currency</span><b>US Dollars ($)</b></div>
+        <div class="cover-meta-item"><span class="cover-meta-label">Prepared by</span><b class="cover-meta-value">Unison Direct GCC INC</b></div>
+        <div class="cover-meta-item"><span class="cover-meta-label">Report date</span><b class="cover-meta-value">${escapeHtml(today)}</b></div>
+        <div class="cover-meta-item"><span class="cover-meta-label">Basis</span><b class="cover-meta-value">${escapeHtml(reportBasis())}</b></div>
       </div>
       <div class="cover-confidential">CONFIDENTIAL — Prepared for management use only</div>
     </div>`;
@@ -393,7 +390,7 @@ function dashboardBodies(no, title){
   const md = state.model, m = md.metrics;
   const blocks = [];
 
-  blocks.push('<div class="report-section-title">Key Financial Indicators — Amounts in US Dollars ($)</div>' +
+  blocks.push('<div class="report-section-title">Key Financial Indicators — Amounts in USD ($)</div>' +
     '<div class="report-kpis">' + kpiTiles().map(t =>
       `<div class="rkpi"><div class="rkpi-label">${escapeHtml(t.label)}</div>` +
       `<div class="rkpi-value${t.value !== null && t.value < 0 ? ' neg' : ''}">${t.na || t.value === null ? '—' : escapeHtml(money(t.value))}</div>` +

@@ -63,6 +63,10 @@
 .toc-item:hover{background:#eaf4fb;color:#0b2f59}
 .toc-item:hover>span:first-child,.toc-item:hover>.toc-page{color:#0b2f59}
 .report-page .report-table td{padding-top:3px;padding-bottom:3px}
+.cover-meta{display:grid;grid-template-columns:repeat(3,1fr);align-items:flex-start;gap:24px}
+.cover-meta-item{display:flex;flex-direction:column;justify-content:flex-start;min-height:60px}
+.cover-meta-label{font-size:10px;letter-spacing:0.08em;color:#6B7280;text-transform:uppercase;margin-bottom:6px;line-height:1}
+.cover-meta-value{font-size:13px;font-weight:bold;color:#0B2F59;line-height:1.3}
 .report-page .report-table td{padding-top:3px;padding-bottom:3px}
 .cover-header{min-height:96px;padding-top:8px;box-sizing:border-box}
 .cover-header-name{line-height:1.15;overflow:visible;white-space:normal;word-break:break-word}

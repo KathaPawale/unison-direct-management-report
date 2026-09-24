@@ -128,7 +128,7 @@ const head = t => [['Pluto Test Co'], [t], ['As of December 31, 2025'], []];
   const basisOf = text => load({ 'Balance Sheet': [...head('Balance Sheet'), ['', 'Total'], ['Checking', 1], ['Total Assets', 1], [], [text]] }) && api.reportBasis();
   c('Bug 6 "Basis of Preparation: Cash" → Cash Basis', basisOf('Basis of Preparation: Cash') === 'Cash Basis');
   c('Bug 6 "Reporting Basis: Accrual" → Accrual Basis', basisOf('Reporting Basis: Accrual') === 'Accrual Basis');
-  c('Bug 6 "Modified Cash Basis" → Modified Cash Basis', basisOf('Modified Cash Basis') === 'Modified Cash Basis');
+  c('Bug 6 "Modified Cash Basis" → Cash Basis', basisOf('Modified Cash Basis') === 'Cash Basis');
   c('Bug 6 only "Amounts in US Dollars ($)" → Accrual Basis', basisOf('Amounts in US Dollars ($)') === 'Accrual Basis');
 }
 /* Bug 4: an over-100% share (Total for Expenses line smaller than the section) is impossible. */

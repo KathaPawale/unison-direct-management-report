@@ -420,7 +420,7 @@ function agingSummary(sheets, sm){
 
 /* Bug 6: basis comes from text such as "Cash Basis", "Accrual Basis", "Basis: Cash",
  * "Basis of Preparation: Accrual" or "Reporting Basis: Cash", found in any sheet's title block or
- * footer (first/last 40 rows; every row of a sheet up to 80 rows, so always the first 15 and last 5).
+ * footer (first 15 and last 5 rows of every sheet).
  * Currency notes ("Amounts in US Dollars ($)") are never read as a basis. A bare "Cash" cell is not
  * used — it is also the name of a Balance Sheet account. */
 function detectBasis(sheets, roles){
@@ -432,7 +432,7 @@ function detectBasis(sheets, roles){
   const MODIFIED = new RegExp('\\bmodified\\s+cash\\s+basis\\b|\\b' + LABEL + 'modified\\s+cash\\b');
   for (const [name, rows] of Object.entries(sheets)){
     const w = statements.has(name) ? 3 : 1;
-    const scan = rows.length > 80 ? rows.slice(0, 40).concat(rows.slice(-40)) : rows;
+    const scan = rows.slice(0, 15).concat(rows.slice(-5));
     for (const row of scan){
       for (const v of row || []){
         if (typeof v !== 'string' || v.length > 200) continue;
