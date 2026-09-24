@@ -216,12 +216,8 @@ function _modelSheetToWs(sm, title){
   _wsSetCell(ws, HEAD_R, 0, 'Particulars', { ...XL_STYLES.headL, alignment: { horizontal: 'left', vertical: 'center' } });
   cols.forEach((c, i) => _wsSetCell(ws, HEAD_R, i + 1, _headLabel(c), { ...XL_STYLES.head, alignment: { horizontal: 'center', vertical: 'center', wrapText: true } }));
 
-  /* Percent columns stored as fractions (every value within ±1) keep that scale for the total row too. */
-  const fractionCols = new Set(cols.filter(c => c.type === 'percent' && sm.lines.every(line => {
-    const v = (rows[line.r] || [])[c.idx];
-    const n = isPercentText(v) ? null : parseAmount(v);
-    return n === null || Math.abs(n) <= 1;
-  })).map(c => c.idx));
+  /* Rows 34 / 52: each percent column keeps one scale (fractions or whole percents) for every row. */
+  const fractionCols = new Set(cols.filter(c => c.type === 'percent' && percentColumnIsFraction(sm, rows, c.idx)).map(c => c.idx));
 
   let out = HEAD_R + 1;
   for (const line of sm.lines){
@@ -242,7 +238,7 @@ function _modelSheetToWs(sm, title){
       const base = isGrand ? XL_STYLES.grandVal : isTotal ? XL_STYLES.totalVal : c.type === 'percent' ? XL_STYLES.pctCell : XL_STYLES.money;
       const style = { ...base, alignment: { horizontal: 'right', vertical: 'center' } };
       if (c.type === 'percent' && (n !== null || isPercentText(v))){
-        const pv = isPercentText(v) ? parseFloat(String(v).replace(/[^\d.\-]/g, '')) / 100 * (/^\(/.test(String(v).trim()) ? -1 : 1) : (fractionCols.has(c.idx) || Math.abs(n) < 1 ? n : n / 100);
+        const pv = isPercentText(v) ? parseFloat(String(v).replace(/[^\d.\-]/g, '')) / 100 * (/^\(/.test(String(v).trim()) ? -1 : 1) : (fractionCols.has(c.idx) ? n : n / 100);
         _wsSetCell(ws, out, i + 1, pv, { ...style, numFmt: XL.pctFmt });
       } else if (n !== null) _wsSetCell(ws, out, i + 1, n, { ...style, font: { ...(style.font || {}), ...(n < 0 ? { color: { rgb: 'C93438' } } : {}) } });
       else if (cellText(v) !== '') _wsSetCell(ws, out, i + 1, cellText(v), { ...XL_STYLES.plain, alignment: { horizontal: 'right' } });
@@ -478,13 +474,14 @@ function downloadCurrentSheetCsv(){
   const sm = state.model && state.model.sheetModels[state.active];
   if (sm){
     const cols = displayColumns(sm);
+    const fractionCols = new Set(cols.filter(c => c.type === 'percent' && percentColumnIsFraction(sm, state.sheets[state.active], c.idx)).map(c => c.idx));
     rows.forEach((row, ri) => {
       if (ri === sm.headerRow) return;
       cols.forEach(c => {
         const n = parseAmount(row[c.idx]);
         if (n === null) return;
         if (c.type === 'percent'){
-          const p = Math.abs(n) < 1 ? n * 100 : n;
+          const p = fractionCols.has(c.idx) ? n * 100 : n;
           row[c.idx] = p < 0 ? `(${Math.abs(p).toFixed(2)}%)` : `${p.toFixed(2)}%`;
         } else row[c.idx] = accounting(n);
       });

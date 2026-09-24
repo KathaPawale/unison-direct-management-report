@@ -95,6 +95,17 @@ function keepPercentCells(ws, rows){
   return rows;
 }
 
+/* Row 34 / Row 52: a numeric percent column has ONE scale, read from all of its values — every value
+ * within ±1 → fractions (0.45 = 45%); any value beyond ±1 → whole percents (0.45 = 0.45%). Deciding
+ * cell by cell turned small whole-percent lines (Bank Fees 0.45%) into 45%. */
+function percentColumnIsFraction(sm, rows, idx){
+  return sm.lines.every(line => {
+    const v = (rows[line.r] || [])[idx];
+    const n = isPercentText(v) ? null : parseAmount(v);
+    return n === null || Math.abs(n) <= 1;
+  });
+}
+
 function isPercentText(v){
   return /^\(?-?\d[\d,]*(\.\d+)?\s*%\)?$/.test(cellText(v));
 }

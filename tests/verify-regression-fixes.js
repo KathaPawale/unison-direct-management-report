@@ -145,5 +145,29 @@ const head = t => [['Pluto Test Co'], [t], ['As of December 31, 2025'], []];
   c('Bug 4 wrong "Total Expenses" line cannot push a share above 100%', md.expenseGroups.every(x => Math.abs(x.pct) <= 100) && near(md.expenseGroups.reduce((s, x) => s + x.pct, 0), 100, 0.05));
 }
 
+/* Tracker row 36: no Balance Sheet composition share above 100%; negative equity keeps a negative share. */
+for (const [k, sheets] of Object.entries(fx)){
+  const md = load(JSON.parse(JSON.stringify(sheets)));
+  const all = [...md.bsComposition.assets, ...md.bsComposition.liabEquity];
+  const eq = md.bsComposition.liabEquity.find(x => x.label === 'Equity');
+  c(`[${k}] Row 36 every composition share within ±100%${eq && eq.value < 0 ? ', equity share negative' : ''}`,
+    all.every(x => x.pct === null || Math.abs(x.pct) <= 100.001) && (!eq || eq.value >= 0 || eq.pct < 0));
+}
+/* Tracker row 34: "% of Income" columns keep one scale per column. */
+for (const [form, fmt] of Object.entries({ fractions: v => v, 'whole percents': v => v * 100, text: v => (v * 100).toFixed(2) + ' %' })){
+  const lines = [['Sales', 100000, 75000], ['Total Income', 100000, 75000], ['Rent', 12000, 12000], ['Bank Fees', 450, 300], ['Postage', 75, 60], ['Net Income', 87475, 62640]];
+  const rows = [...head('Profit and Loss'), ['', 'Jan - Dec 2025', '% of Income', 'Jan - Dec 2024 (PY)', '% of Income'], ['Income'],
+    ...lines.map(([l, cur, pri]) => [l, cur, fmt(cur / 100000), pri, fmt(pri / 75000)])];
+  const md = load({ 'Profit and Loss': rows });
+  const shown = api.reportTableParts(md.sheetModels['Profit and Loss'], {}).rows
+    .map(r => [...r.html.matchAll(/<td[^>]*>([^<]*)<\/td>/g)].map(m => m[1]));
+  const pctOf = t => parseFloat(String(t).replace(/[()%,\s]/g, ''));
+  const ok = lines.every(([l, cur, pri]) => {
+    const r = shown.find(x => x[0] === l);
+    return r && Math.abs(pctOf(r[2]) - cur / 1000) < 0.06 && Math.abs(pctOf(r[4]) - pri / 750) < 0.06;
+  });
+  c(`Row 34 % of Income (${form}): every line = amount ÷ income (Bank Fees 0.4%, not 45%)`, ok);
+}
+
 console.log(`\n${p + f} regression assertions, ${p} pass, ${f} fail`);
 process.exit(f ? 1 : 0);
