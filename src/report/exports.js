@@ -352,7 +352,7 @@ function downloadReportExcel(){
   };
   if (md.expenseGroups.length)
     table('Expense Breakdown (Expense ÷ Total Expenses × 100)', ['Expense Category', 'Amount', '% of Total Expenses'],
-      md.expenseGroups.map(x => [x.label, x.value, x.pct]).concat([['Total Expenses', md.expenseTotal, 100]]));
+      md.expenseGroups.map(x => [x.label, x.value, x.pct]).concat([['Total Expenses', md.expenseTotal, md.expensePctBase ? md.expenseTotal / md.expensePctBase * 100 : 100]]));
   if (md.bsComposition.assets.length)
     table('Balance Sheet Composition — Assets', ['Asset Type', 'Amount', '% of Total Assets'],
       md.bsComposition.assets.map(x => [x.label, x.value, x.pct]).concat([['Total Assets', m.assets, 100]]));

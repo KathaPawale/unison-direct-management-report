@@ -117,7 +117,7 @@ function renderDashboard(){
 
   const top = md.expenseGroups.slice(0, 10);
   $('#chartExpenses').innerHTML = top.length
-    ? `<h3>Expense Breakdown — Top ${top.length} Categories</h3><div class="help">Expense ÷ Total Expenses (${money(md.expenseTotal)}) × 100</div>` +
+    ? `<h3>Expense Breakdown — Top ${top.length} Categories</h3><div class="help">${escapeHtml(expenseShareNote(md))}</div>` +
       svgHBars({ items: top, color: CHART_COLORS.teal, width: 760 })
     : '';
 

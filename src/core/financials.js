@@ -219,14 +219,17 @@ function expenseBreakdown(sheets, sm, spec, totalExpenses){
   /* Bug 4: every category is a share of the Expenses section itself — the leaf sum of its direct
    * children — never a separate "Total for Expenses" line that can exclude part of the section. */
   const itemSum = list.reduce((s, x) => s + x.value, 0);
-  let total = sectionTotal !== null && Math.abs(sectionTotal) >= 0.005 ? sectionTotal : itemSum;
-  list.forEach(x => { x.pct = Math.abs(total) >= 0.005 ? x.value / Math.abs(total) * 100 : 0; });
-  /* Hard cap: a share above 100% means the denominator is wrong — fall back to the sum of the rows. */
+  const total = sectionTotal !== null && Math.abs(sectionTotal) >= 0.005 ? sectionTotal : itemSum;
+  let pctBase = Math.abs(total);
+  list.forEach(x => { x.pct = pctBase >= 0.005 ? x.value / pctBase * 100 : 0; });
+  /* Hard cap: a share above 100% can only come from credits / refunds (negative expense lines)
+   * shrinking the net total. Shares then use total expense activity (the sum of the rows as absolute
+   * values) so none exceeds 100%; `total` stays the real Total Expenses shown everywhere. */
   if (list.some(x => x.pct > 100 || x.pct < -100)){
-    total = list.reduce((s, x) => s + Math.abs(x.value), 0);
-    list.forEach(x => { x.pct = total ? x.value / total * 100 : 0; });
+    pctBase = list.reduce((s, x) => s + Math.abs(x.value), 0);
+    list.forEach(x => { x.pct = pctBase ? x.value / pctBase * 100 : 0; });
   }
-  return { items: list, total };
+  return { items: list, total, pctBase };
 }
 
 /* ---------- Balance Sheet ---------- */
@@ -293,6 +296,9 @@ function bsFigures(sheets, sm, spec, basis){
   if (longTermLiabilities !== null) liabilityRows.push({ label: 'Long-Term Liabilities', value: longTermLiabilities });
   const liabResid = liabilities !== null ? liabilities - (currentLiabilities || 0) - (longTermLiabilities || 0) : 0;
   if (Math.abs(liabResid) >= 0.5) liabilityRows.push({ label: 'Other Liabilities', value: liabResid });
+  /* Row 14: Current and Long-Term Liabilities are both always listed ($0.00 when empty); with no
+   * liabilities at all there is nothing to bifurcate, so no rows and no table. */
+  if (liabilityRows.every(x => Math.abs(x.value) < 0.005)) liabilityRows.length = 0;
   const liabilitySumForPct = liabilityRows.reduce((s, x) => s + x.value, 0);
   liabilityRows.forEach(x => { x.pct = Math.abs(liabilitySumForPct) >= 0.005 ? x.value / liabilitySumForPct * 100 : null; });
   const leItems = [];
@@ -697,6 +703,7 @@ function analyzeFinancials(model, sheets){
     hasPrior: !!plPri,
     expenseGroups: exp.items,
     expenseTotal: exp.total,
+    expensePctBase: exp.pctBase ?? (exp.total !== null && exp.total !== undefined ? Math.abs(exp.total) : null),
     arAging, apAging, suppressAR, suppressAP,
     bsComposition: { assets: bsCur.assetItems || [], liabEquity: bsCur.leItems || [] },
     liabilityBifurcation: (bsCur.liabilityRows || []),
