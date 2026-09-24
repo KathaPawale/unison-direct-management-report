@@ -99,6 +99,14 @@ function isPercentText(v){
   return /^\(?-?\d[\d,]*(\.\d+)?\s*%\)?$/.test(cellText(v));
 }
 
+/* "12.5%" → 12.5, "(12.5%)" / "-12.5%" → -12.5 (percent units); null when not percent text. */
+function parsePercentText(v){
+  if (!isPercentText(v)) return null;
+  const s = cellText(v);
+  const n = parseFloat(s.replace(/[^\d.]/g, ''));
+  return /^\(|^-/.test(s) ? -n : n;
+}
+
 function monthNo(tok){ return MONTH_ABBR.indexOf(String(tok || '').toLowerCase().slice(0, 3)); }
 function fullYear(y){ y = +y; return y < 100 ? 2000 + y : y; }
 

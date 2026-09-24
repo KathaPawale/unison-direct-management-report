@@ -130,6 +130,8 @@ async function savePdf(open = false){
 
 const XL = {
   navy: '0B2F59', blue: '2597D4', light: 'EAF2FB', line: 'D5DDE7',
+  /* Strict accounting-format rules enforced for every Excel export: values use the accounting
+   * pattern, negatives are red, zero prints as a dash, and percent cells preserve red negatives. */
   moneyFmt: '_-* #,##0.00_-;[Red]_-* (#,##0.00)_-;_-* "-"_-;_-@_-',
   totalFmt: '_-* #,##0.00_-;[Red]_-* (#,##0.00)_-;_-* 0.00_-;_-@_-',
   pctFmt: '0.00%;[Red](0.00%)'
@@ -141,7 +143,7 @@ const XL_STYLES = {
   headL:   { font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 10 }, fill: { fgColor: { rgb: XL.navy } }, alignment: { horizontal: 'left' } },
   section: { font: { bold: true, sz: 10, color: { rgb: XL.navy } } },
   money:   { numFmt: XL.moneyFmt, alignment: { horizontal: 'right' }, font: { sz: 10 } },
-  pctCell: { numFmt: XL.pctFmt, alignment: { horizontal: 'right' }, font: { sz: 10 } },
+  pctCell: { numFmt: '0.00%;[Red](0.00%)', alignment: { horizontal: 'right' }, font: { sz: 10 } },
   totalLbl:{ font: { bold: true, sz: 10 }, border: { top: { style: 'thin', color: { rgb: XL.navy } } } },
   totalVal:{ numFmt: XL.totalFmt, alignment: { horizontal: 'right' }, font: { bold: true, sz: 10 },
              border: { top: { style: 'thin', color: { rgb: XL.navy } } }, fill: { fgColor: { rgb: XL.light } } },
@@ -241,8 +243,8 @@ function _modelSheetToWs(sm, title){
       const base = isGrand ? XL_STYLES.grandVal : isTotal ? XL_STYLES.totalVal : c.type === 'percent' ? XL_STYLES.pctCell : XL_STYLES.money;
       const style = { ...base, alignment: { horizontal: 'right', vertical: 'center' } };
       if (c.type === 'percent' && (n !== null || isPercentText(v))){
-        const pv = isPercentText(v) ? parseFloat(String(v).replace(/[^\d.\-]/g, '')) / 100 * (/^\(/.test(String(v).trim()) ? -1 : 1) : (fractionCols.has(c.idx) || Math.abs(n) < 1 ? n : n / 100);
-        _wsSetCell(ws, out, i + 1, pv, { ...style, numFmt: XL.pctFmt });
+        const pv = isPercentText(v) ? parsePercentText(v) / 100 : (fractionCols.has(c.idx) || Math.abs(n) < 1 ? n : n / 100);
+        _wsSetCell(ws, out, i + 1, pv, { ...style, numFmt: '0.00%;[Red](0.00%)' });
       } else if (n !== null) _wsSetCell(ws, out, i + 1, n, { ...style, font: { ...(style.font || {}), ...(n < 0 ? { color: { rgb: 'C93438' } } : {}) } });
       else if (cellText(v) !== '') _wsSetCell(ws, out, i + 1, cellText(v), { ...XL_STYLES.plain, alignment: { horizontal: 'right' } });
       else _wsSetCell(ws, out, i + 1, '', style);
@@ -346,7 +348,7 @@ function downloadReportExcel(){
     data.forEach((row, ri) => row.forEach((v, ci) => {
       const isPct = ci === 2;
       const isTot = /^total\b/i.test(String(row[0] || ''));
-      const valStyle = isTot ? (isPct ? { ...XL_STYLES.totalVal, numFmt: '0.00%' } : XL_STYLES.totalVal) : (isPct ? XL_STYLES.pctCell : XL_STYLES.money);
+      const valStyle = isTot ? (isPct ? { ...XL_STYLES.totalVal, numFmt: '0.00%;[Red](0.00%)' } : XL_STYLES.totalVal) : (isPct ? XL_STYLES.pctCell : XL_STYLES.money);
       if (v === null || v === undefined) _wsSetCell(s, nextRow + 2 + ri, ci, '', isTot ? XL_STYLES.totalLbl : XL_STYLES.plain);
       else if (typeof v === 'number') _wsSetCell(s, nextRow + 2 + ri, ci, isPct ? v / 100 : v, valStyle);
       else _wsSetCell(s, nextRow + 2 + ri, ci, v, isTot ? XL_STYLES.totalLbl : XL_STYLES.plain);
@@ -389,7 +391,7 @@ function downloadReportExcel(){
       const tr = 5 + ag.buckets.length;
       _wsSetCell(ws, tr, 0, 'Total', XL_STYLES.totalLbl);
       _wsSetCell(ws, tr, 1, ag.total, XL_STYLES.totalVal);
-      _wsSetCell(ws, tr, 2, 1, { ...XL_STYLES.totalVal, numFmt: '0.00%' });
+      _wsSetCell(ws, tr, 2, 1, { ...XL_STYLES.totalVal, numFmt: XL.pctFmt });
       ws['!cols'] = [{ wch: 34 }, { wch: 14 }, { wch: 12 }];
       _decorateSheet(ws, role, 5, 1);
       XLSX.utils.book_append_sheet(wb, ws, _sheetNameSafe(wb, ROLE_LABELS[role] || name));
@@ -480,11 +482,11 @@ function downloadCurrentSheetCsv(){
     rows.forEach((row, ri) => {
       if (ri === sm.headerRow) return;
       cols.forEach(c => {
+        if (c.type === 'percent' && isPercentText(row[c.idx])){ row[c.idx] = percentText(parsePercentText(row[c.idx])); return; }
         const n = parseAmount(row[c.idx]);
         if (n === null) return;
         if (c.type === 'percent'){
-          const p = Math.abs(n) < 1 ? n * 100 : n;
-          row[c.idx] = p < 0 ? `(${Math.abs(p).toFixed(2)}%)` : `${p.toFixed(2)}%`;
+          row[c.idx] = percentText(Math.abs(n) < 1 ? n * 100 : n);
         } else row[c.idx] = accounting(n);
       });
     });

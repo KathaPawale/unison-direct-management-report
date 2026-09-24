@@ -114,7 +114,7 @@ function svgHBars({ items, width = 760, height = null, color = CHART_COLORS.blue
       if (it.pct !== undefined && it.pct !== null) p = it.pct;
       else if (totalForPct) p = v / Math.abs(totalForPct) * 100;
     }
-    const pctTxt = p !== null ? ' (' + (p < 0 ? '-' : '') + Math.abs(p).toFixed(2) + '%)' : '';
+    const pctTxt = p !== null ? ' ' + (p < 0 ? percentText(p) : '(' + percentText(p) + ')') : '';
     out += `<text x="${(labelW + w + 6).toFixed(1)}" y="${(yMid + 3.5).toFixed(1)}" font-size="10" fill="${CHART_COLORS.text}">${escapeHtml(valueFmt(v) + pctTxt)}</text>`;
   });
   out += '</svg>';
@@ -136,7 +136,7 @@ function donutChart({ items, size = 168, title = '' }){
     const color = DONUT_PALETTE[i % DONUT_PALETTE.length];
     const val = Number(it.value);
     const shown = (it.pct !== undefined && it.pct !== null) ? it.pct : (val > 0 ? val / total * 100 : null);
-    const pctLabel = shown === null ? '' : (shown < 0 ? '-' : '') + Math.abs(shown).toFixed(2) + '%';
+    const pctLabel = shown === null ? '' : percentText(shown);
     if (val > 0){
       const frac = val / total;
       const a1 = a0 + frac * Math.PI * 2;

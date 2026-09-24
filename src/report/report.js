@@ -79,12 +79,11 @@ function formatReportCell(v, colType, opts = {}){
   const s = cellText(v);
   if (s === '') return '';
   if (colType === 'percent'){
-    if (isPercentText(s)) return escapeHtml(s);
+    if (isPercentText(s)) return percentText(parsePercentText(s));
     const n = parseAmount(v);
     if (n === null) return escapeHtml(s);
     /* opts.fraction: the whole column is stored as fractions (0.25 = 25%), so a 1.0 total is 100% */
-    const p = opts.fraction || Math.abs(n) < 1 ? n * 100 : n;
-    return (p < 0 ? '(' + Math.abs(p).toFixed(1) + '%)' : p.toFixed(1) + '%');
+    return percentText(opts.fraction || Math.abs(n) < 1 ? n * 100 : n);
   }
   const n = parseAmount(v);
   if (n !== null && n === 0 && opts.zeroDash) return '&ndash;';
@@ -322,12 +321,12 @@ function coverBody(){
 
 /* ---------- shared analytical figures (dashboard + report) ---------- */
 
-function pctText(v, dp = 2){ return v === null || v === undefined || !isFinite(v) ? '—' : (v < 0 ? '-' : '') + Math.abs(v).toFixed(dp) + '%'; }
+function pctText(v, dp = 2){ return v === null || v === undefined || !isFinite(v) ? '—' : percentText(v, dp); }
 
 function varianceChip(cur, pri, cls = 'kchip'){
   if (pri === null || pri === undefined || Math.abs(pri) < 0.005) return '';
   const d = (cur - pri) / Math.abs(pri) * 100;
-  return `<span class="${cls} ${d >= 0 ? 'good' : 'bad'}">${d >= 0 ? '▲' : '▼'} ${Math.abs(d).toFixed(1)}% vs PY</span>`;
+  return `<span class="${cls} ${d >= 0 ? 'good' : 'bad'}">${d >= 0 ? '▲' : '▼'} ${percentText(Math.abs(d))} vs PY</span>`;
 }
 
 /* KPI tiles — every tile carries a percentage. */
@@ -358,7 +357,7 @@ function comparisonTableHtml(cls){
     rows.map(([l, c, pr]) => {
       const varAmt = pr === null || pr === undefined ? null : (c || 0) - pr;
       const varPct = pr ? varAmt / Math.abs(pr) * 100 : null;
-      return `<tr><td>${escapeHtml(l)}</td>${td(c)}${td(pr)}${td(varAmt)}<td class="${varPct !== null && varPct < 0 ? 'neg' : ''}">${varPct === null ? '—' : (varPct >= 0 ? '▲ ' : '▼ ') + Math.abs(varPct).toFixed(1) + '%'}</td></tr>`;
+      return `<tr><td>${escapeHtml(l)}</td>${td(c)}${td(pr)}${td(varAmt)}<td class="${varPct !== null && varPct < 0 ? 'neg' : ''}">${varPct === null ? '—' : (varPct >= 0 ? '▲ ' : '▼ ') + percentText(Math.abs(varPct))}</td></tr>`;
     }).join('') + '</tbody></table>';
 }
 
@@ -451,7 +450,7 @@ function dashboardBodies(no, title){
 /* Summary table for aging built from an Aging Detail report */
 function agingTableHtml(ag){
   const pctOf = v => ag.total ? (v / Math.abs(ag.total) * 100) : null;
-  const pc = v => v === null ? '—' : (v < 0 ? '-' : '') + Math.abs(v).toFixed(2) + '%';
+  const pc = v => v === null ? '—' : percentText(v);
   const body = ag.buckets.map(b => `<tr><td>${escapeHtml(b.label)}</td><td class="num">${escapeHtml(acctNumber(b.value))}</td><td class="num">${pc(pctOf(b.value))}</td></tr>`).join('');
   return `<table class="report-mini-table aging-summary-table"><thead><tr><th>Aging Bucket</th><th class="num">Open Balance</th><th class="num">% of Total</th></tr></thead>` +
     `<tbody>${body}<tr class="row-total"><td>Total</td><td class="num">${escapeHtml(acctNumber(ag.total))}</td><td class="num">${pc(ag.total ? 100 : null)}</td></tr></tbody></table>` +

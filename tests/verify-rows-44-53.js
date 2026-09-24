@@ -23,7 +23,7 @@ check('Row 46 tb tabColor', /tb:\s*['"]?[0-9A-F]{6}/i.test(src));
 check('Row 47 freeze row 5', /freezeRow\s*=\s*5|ySplit:\s*5/.test(src));
 check('Row 48/51 statement heading has no USD note', !/function tableSectionSub[\s\S]*?US Dollars[\s\S]*?\n}/.test(rep.slice(rep.indexOf('function tableSectionSub'), rep.indexOf('function pageFooter'))));
 check('Row 48/51 Excel heading row 3 uses the shared subtitle', /_wsSetCell\(ws, 2, 0, tableSectionSub\(sm\)/.test(src));
-check('Row 52 A/P total pct format', /numFmt.*'0\.00%/.test(src) && /totalVal/.test(src));
+check('Row 52 A/P total pct format', /totalVal, numFmt: XL\.pctFmt/.test(src) && /pctFmt: '0\.00%/.test(src));
 
 /* Behaviour: parse a Pluto-style workbook with the real parser + report code. */
 const vm = require('vm');
@@ -61,7 +61,7 @@ check('Row 46/53 "TrialBalance" tab captured', md.roles.tb === 'TrialBalance' &&
 check('Row 48/51 statement headings drop the USD note',
   Object.values(md.sheetModels).every(sm => !/US Dollars/.test(api.tableSectionSub(sm))));
 const apRows = api.reportTableParts(md.sheetModels[md.roles.ap], {}).rows;
-check('Row 52 A/P aging bottom-line % shows 100.0%', /100\.0%<\/td><\/tr>$/.test(apRows[apRows.length - 1].html));
+check('Row 52 A/P aging bottom-line % shows 100.00%', /100\.00%<\/td><\/tr>$/.test(apRows[apRows.length - 1].html));
 check('Row 52 A/P aging detail total % shows 100.00%',
   /<td class="num">100\.00%<\/td><\/tr>/.test(api.agingTableHtml({ total: 100, buckets: [{ label: 'Current', value: 85 }, { label: '1 - 30', value: 15 }] })));
 
@@ -75,7 +75,7 @@ api.state.sheets = fmtSheets;
 const fmtMd = api.parseWorkbook(fmtSheets);
 api.state.model = fmtMd;
 const fmtRows = api.reportTableParts(fmtMd.sheetModels[fmtMd.roles.ap], {}).rows;
-check('Row 52 %-formatted A/P column prints %, not $', /100%<\/td><\/tr>$/.test(fmtRows[fmtRows.length - 1].html) && !fmtRows.some(r => /\$0\.75|\$1\.00/.test(r.html)));
+check('Row 52 %-formatted A/P column prints %, not $', /100\.00%<\/td><\/tr>$/.test(fmtRows[fmtRows.length - 1].html) && !fmtRows.some(r => /\$0\.75|\$1\.00/.test(r.html)));
 
 console.log(`${pass + fail} assertions, ${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);
