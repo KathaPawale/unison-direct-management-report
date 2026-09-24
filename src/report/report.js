@@ -323,6 +323,7 @@ function coverBody(){
         <div class="cover-meta-item"><span class="cover-meta-label">Prepared by</span><b class="cover-meta-value">Unison Direct GCC INC</b></div>
         <div class="cover-meta-item"><span class="cover-meta-label">Report date</span><b class="cover-meta-value">${escapeHtml(today)}</b></div>
         <div class="cover-meta-item"><span class="cover-meta-label">Basis</span><b class="cover-meta-value">${escapeHtml(reportBasis())}</b></div>
+        <div class="cover-meta-item"><span class="cover-meta-label">Currency</span><b class="cover-meta-value">US Dollars ($)</b></div>
       </div>
       <div class="cover-confidential">CONFIDENTIAL — Prepared for management use only</div>
     </div>`;

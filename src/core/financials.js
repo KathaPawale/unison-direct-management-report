@@ -438,7 +438,7 @@ function detectBasis(sheets, roles){
         if (typeof v !== 'string' || v.length > 200) continue;
         const s = v.toLowerCase();
         if (/amounts in us dollars|us dollars/.test(s)) continue;
-        if (MODIFIED.test(s)) score['Cash'] += w;
+        if (MODIFIED.test(s)) score['Modified Cash'] += w;   // shown as Cash Basis on the cover; A/R rules still treat it as its own basis
         else if (CASH.test(s)) score['Cash'] += w;
         else if (ACCRUAL.test(s)) score['Accrual'] += w;
       }

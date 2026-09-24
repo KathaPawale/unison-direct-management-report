@@ -18,7 +18,7 @@ const state = {
   active: '',
   client: 'Client',
   period: 'For the period ended',
-  basis: 'Amounts in US Dollars ($)',
+  basis: '',              // legacy field, never shown — the cover uses reportBasis()
   notes: '',
   notesManual: false,     // true once notes were edited by hand (workbook notes no longer overwrite them)
   basisOverride: '',      // '' = use the basis detected in the workbook; 'Cash' | 'Accrual' | 'Modified Cash'
@@ -102,7 +102,7 @@ function resetState(){
   state.active = '';
   state.client = 'Client';
   state.period = 'For the period ended';
-  state.basis = 'Amounts in US Dollars ($)';
+  state.basis = '';
   state.notes = '';
   state.notesManual = false;
   state.basisOverride = '';

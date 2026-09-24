@@ -52,7 +52,7 @@ ctx.window = ctx;
 vm.createContext(ctx);
 vm.runInContext(['src/core/util.js', 'src/core/state.js', 'src/core/parser.js', 'src/core/financials.js', 'src/core/recompute.js',
   'src/report/charts.js', 'src/report/report.js'].map(read).join('\n;\n') +
-  '\n;globalThis.__api = { parseWorkbook, state, reportBasis, reportSections, liabilitiesTableHtml, reportTableParts };', ctx);
+  '\n;globalThis.__api = { parseWorkbook, state, reportBasis, coverBody, reportSections, liabilitiesTableHtml, reportTableParts };', ctx);
 const api = ctx.__api;
 const load = sheets => { api.state.sheets = sheets; api.state.basisOverride = ''; const md = api.parseWorkbook(sheets); api.state.model = md; return md; };
 const fx = JSON.parse(read('tests/calc-fixtures.json')).fixtures;
@@ -129,6 +129,11 @@ const head = t => [['Pluto Test Co'], [t], ['As of December 31, 2025'], []];
   c('Bug 6 "Basis of Preparation: Cash" → Cash Basis', basisOf('Basis of Preparation: Cash') === 'Cash Basis');
   c('Bug 6 "Reporting Basis: Accrual" → Accrual Basis', basisOf('Reporting Basis: Accrual') === 'Accrual Basis');
   c('Bug 6 "Modified Cash Basis" → Cash Basis', basisOf('Modified Cash Basis') === 'Cash Basis');
+  c('Bug 6 Modified Cash stays its own basis internally (A/R not suppressed)', api.state.model.basisDetected === 'Modified Cash' && api.state.model.suppressAR === false);
+  const cover = api.coverBody();
+  c('Cover meta: 4 aligned fields incl. Currency, basis is Cash/Accrual, no currency text as basis',
+    (cover.match(/class="cover-meta-item"/g) || []).length === 4 && /Currency<\/span><b class="cover-meta-value">US Dollars \(\$\)</.test(cover) &&
+    /Basis<\/span><b class="cover-meta-value">(Cash|Accrual) Basis</.test(cover));
   c('Bug 6 only "Amounts in US Dollars ($)" → Accrual Basis', basisOf('Amounts in US Dollars ($)') === 'Accrual Basis');
 }
 /* Bug 4: an over-100% share (Total for Expenses line smaller than the section) is impossible. */
