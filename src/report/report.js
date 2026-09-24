@@ -212,13 +212,25 @@ function paginateTableSection(no, title, sm, opts = {}){
     const compact = cols.length > 8;
     const parts = reportTableParts(sm, { ...opts, cols, compact });
     const marker = groups.length > 1 ? `<div class="wide-col-marker">Columns ${escapeHtml(_headLabel(cols[0]))} – ${escapeHtml(_headLabel(cols[cols.length - 1]))}</div>` : '';
-    const tableCls = 'report-table' + (compact ? ' compact' : '') + (orientation === 'landscape' ? ' wide' : '') + (cols.length <= 4 || forceLandscape ? ' roomy' : '');
+    let tableCls = 'report-table' + (compact ? ' compact' : '') + (orientation === 'landscape' ? ' wide' : '') + (cols.length <= 4 || forceLandscape ? ' roomy' : '');
     const shell = _measureShell(orientation);
     shell.innerHTML =
       `<div class="mh1">${sectionHead(no, title, tableSectionSub(sm), gi > 0)}${marker}</div>` +
       `<div class="mh2">${sectionHead(no, title, tableSectionSub(sm), true)}${marker}</div>` +
       `<table class="${tableCls}">${parts.colgroup}<thead>${parts.theadHtml}</thead><tbody>` +
       parts.rows.map(r => r.html).join('') + '</tbody></table>';
+    /* Row 21: no column may be cut off. If any amount is wider than its cell (large figures on a
+     * 12-month landscape P&L), step the table's font down until every cell fits (floor 6px). */
+    const tbl = shell.querySelector('table');
+    const overflowing = () => [...tbl.querySelectorAll('td.val, thead th')].some(td => td.scrollWidth > td.clientWidth + 0.5);
+    let fitAttr = '';
+    if (overflowing()){
+      tbl.classList.add('fit');
+      let fs = 9;
+      for (; fs > 6; fs -= 0.25){ tbl.style.setProperty('--fit-fs', fs + 'px'); if (!overflowing()) break; }
+      tableCls += ' fit';
+      fitAttr = ` style="--fit-fs:${fs}px"`;
+    }
     const h1 = _outerHeight(shell.querySelector('.mh1'));
     const h2 = _outerHeight(shell.querySelector('.mh2'));
     const theadH = shell.querySelector('thead').getBoundingClientRect().height;
@@ -247,7 +259,7 @@ function paginateTableSection(no, title, sm, opts = {}){
       bodies.push({
         orientation,
         body: sectionHead(no, title, tableSectionSub(sm), gi > 0) + marker +
-          `<div class="report-table-wrap"><table class="${tableCls}">${parts.colgroup}<thead>${parts.theadHtml}</thead><tbody>` +
+          `<div class="report-table-wrap"><table class="${tableCls}"${fitAttr}>${parts.colgroup}<thead>${parts.theadHtml}</thead><tbody>` +
           parts.rows.map(r => r.html).join('') + '</tbody></table></div>'
       });
       return;
@@ -255,7 +267,7 @@ function paginateTableSection(no, title, sm, opts = {}){
     chunks.forEach((chunk, ci) => bodies.push({
       orientation,
       body: sectionHead(no, title, tableSectionSub(sm), gi > 0 || ci > 0) + marker +
-        `<div class="report-table-wrap"><table class="${tableCls}">${parts.colgroup}<thead>${parts.theadHtml}</thead><tbody>` +
+        `<div class="report-table-wrap"><table class="${tableCls}"${fitAttr}>${parts.colgroup}<thead>${parts.theadHtml}</thead><tbody>` +
         chunk.map(r => r.html).join('') + '</tbody></table></div>'
     }));
   });

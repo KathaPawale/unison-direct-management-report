@@ -66,3 +66,5 @@
 .report-page .report-table td{padding-top:3px;padding-bottom:3px}
 .cover-header{min-height:96px;padding-top:8px;box-sizing:border-box}
 .cover-header-name{line-height:1.15;overflow:visible;white-space:normal;word-break:break-word}
+/* Row 21: statement tables whose figures would not fit are shrunk to --fit-fs (set per table by paginateTableSection). */
+.report-page .report-table.fit td,.report-page .report-table.fit td.val,.report-page .report-table.fit thead th{font-size:var(--fit-fs)!important;padding-left:3px!important;padding-right:3px!important}
