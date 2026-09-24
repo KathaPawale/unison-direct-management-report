@@ -43,7 +43,7 @@ function statementPeriodText(sm){
     }
     if (md && md.bsAsOf) return md.bsAsOf;
   }
-  if (sm && sm.role === 'bs' && md && md.bsAsOf) return md.bsAsOf;
+  if (sm && (sm.role === 'bs' || sm.role === 'bsComparative') && md && md.bsAsOf) return md.bsAsOf;
   return state.period;
 }
 
@@ -60,7 +60,7 @@ function sectionHead(no, title, sub, continued = false){
 function tableSectionSub(sm){
   const p = statementPeriodText(sm);
   const section = sm && sm.role === 'plComparative' ? 3 : 0;
-  return section !== 3 ? p + '  ·  Amounts in US Dollars ($)' : p;
+  return section !== 3 && !(sm && sm.role === 'plComparative') ? p + '  ·  Amounts in US Dollars ($)' : p;
 }
 
 function pageFooter(pageNo, pageCount){

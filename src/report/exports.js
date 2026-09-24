@@ -201,7 +201,7 @@ function _modelSheetToWs(sm, title){
   const cols = displayColumns(sm);
   const last = Math.max(cols.length, 1);
   const center = { horizontal: 'center', vertical: 'center', wrapText: true };
-  const sub = sm.role === 'bs' && state.model.bsAsOf ? state.model.bsAsOf : state.period;
+  const sub = (sm.role === 'bs' || sm.role === 'bsComparative') && state.model.bsAsOf ? state.model.bsAsOf : state.period;
 
   /* Centered heading block: company, statement, period */
   _wsSetCell(ws, 0, 0, state.client, { ...XL_STYLES.title, font: { bold: true, sz: 16, color: { rgb: 'FFFFFF' } }, alignment: center }, null, { border: false });
@@ -433,7 +433,7 @@ function downloadReportExcel(){
   }
   notes['!cols'] = [{ wch: 34 }, { wch: 78 }];
   notes['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }];
-  _decorateSheet(notes, 'notes', 3, 1);
+  _decorateSheet(notes, 'notes', 5, 1);
   XLSX.utils.book_append_sheet(wb, notes, 'Notes');
 
   const disc = {};

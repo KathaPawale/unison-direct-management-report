@@ -24,7 +24,7 @@ const ROLE_LABELS = {
   plPercent: 'Profit and Loss (% of Income)',
   pl: 'Profit and Loss',
   bs: 'Balance Sheet',
-  bsComparative: 'Balance Sheet (Comparative)',
+  bsComparative: 'Balance Sheet — Comparative',
   tb: 'Trial Balance',
   ar: 'A/R Aging',
   ap: 'A/P Aging',
@@ -522,6 +522,25 @@ function detectRoles(sheets, sheetModels){
     if (x.pct && !roles.plPercent && (roles.pl || roles.plMonthly || roles.plComparative)){ roles.plPercent = x.n; continue; }
     if (!roles.pl && !roles.plMonthly && !roles.plComparative){ roles.pl = x.n; continue; }
     if (!roles.pl && x.periods >= 1 && !roles.plComparative){ roles.pl = x.n; continue; }
+  }
+  if (!roles.pl && !roles.plMonthly && !roles.plComparative){
+    for (const [n, sm] of Object.entries(sheetModels)){
+      if (roles.pl || roles.plMonthly || roles.plComparative) break;
+      if (/^(pl|p&l|profit\s*(and|&)\s*loss|income\s*statement)$/i.test(n)){
+        const hasMonths = sm.cols && sm.cols.some(c => /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i.test(String(c.label || '')));
+        roles[hasMonths ? 'plMonthly' : 'pl'] = n;
+      }
+    }
+  }
+  if (!roles.bs && !roles.bsComparative){
+    for (const [n] of Object.entries(sheetModels)){
+      if (roles.bs || roles.bsComparative) break;
+      if (/^bs[\s_\-]*comparative$/i.test(n) || /^balance[\s_]*sheet[\s_\-]*(comparative|comp)$/i.test(n)){
+        roles.bsComparative = n;
+      } else if (/^(bs|b\.s\.|balance[\s_]*sheet)$/i.test(n)){
+        roles.bs = n;
+      }
+    }
   }
   for (const x of info){
     if (free(x) && x.notes && !roles.notes){ roles.notes = x.n; }
