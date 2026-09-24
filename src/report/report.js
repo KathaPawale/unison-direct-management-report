@@ -85,7 +85,8 @@ function formatReportCell(v, colType, opts = {}){
     const n = parseAmount(v);
     if (n === null) return escapeHtml(s);
     /* opts.fraction: the whole column is stored as fractions (0.25 = 25%), so a 1.0 total is 100% */
-    const p = opts.fraction || Math.abs(n) < 1 ? n * 100 : n;
+    /* opts.fraction: the column's scale (true = fractions, false = whole percents); unknown → per value */
+    const p = opts.fraction === true ? n * 100 : opts.fraction === false ? n : (Math.abs(n) < 1 ? n * 100 : n);
     return (p < 0 ? '(' + Math.abs(p).toFixed(1) + '%)' : p.toFixed(1) + '%');
   }
   const n = parseAmount(v);
@@ -127,13 +128,9 @@ function reportTableParts(sm, { forExport = false, cols = null, compact = false,
     return true;
   };
 
-  /* Row 52: a percent column holding fractions (every value within ±1) is scaled as a whole, so the
-   * bottom-line total of 1 prints as 100.0% rather than 1.0%. */
-  const fractionCols = new Set(showCols.filter(c => c.type === 'percent' && sm.lines.every(line => {
-    const v = (rows[line.r] || [])[c.idx];
-    const n = isPercentText(v) ? null : parseAmount(v);
-    return n === null || Math.abs(n) <= 1;
-  })).map(c => c.idx));
+  /* Rows 34 / 52: each percent column is scaled as a whole (fractions → the total of 1 prints 100%;
+   * whole percents → a 0.45 line prints 0.45%, not 45%). */
+  const fractionCols = new Set(showCols.filter(c => c.type === 'percent' && percentColumnIsFraction(sm, rows, c.idx)).map(c => c.idx));
 
   const out = [];
   for (const line of sm.lines){
@@ -153,7 +150,7 @@ function reportTableParts(sm, { forExport = false, cols = null, compact = false,
       const edited = !forExport &&
         (state.edited.has(sm.name + ':' + line.r + ':' + c.idx) || state.adjusted.has(sm.name + ':' + line.r + ':' + c.idx));
       const cls = [(n !== null && n < 0) ? 'neg' : '', edited ? 'cell-edited' : ''].filter(Boolean).join(' ');
-      tds += `<td class="val${cls ? ' ' + cls : ''}">${formatReportCell(v, c.type, { compact, zeroDash: kind === 'account', fraction: fractionCols.has(c.idx) })}</td>`;
+      tds += `<td class="val${cls ? ' ' + cls : ''}">${formatReportCell(v, c.type, { compact, zeroDash: kind === 'account', fraction: c.type === 'percent' ? fractionCols.has(c.idx) : undefined })}</td>`;
     }
     out.push({ html: `<tr${trCls ? ` class="${trCls}"` : ''}>${tds}</tr>`, orphanGuard: kind === 'section' });
   }

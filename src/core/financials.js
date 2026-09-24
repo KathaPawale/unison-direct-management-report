@@ -259,11 +259,13 @@ function bsFigures(sheets, sm, spec, basis){
   /* Row 36: when the denominator is negative or zero, raw signed percentages can
    * exceed 100 percent, producing a donut that visually breaks. Rescale each slice
    * using the sum of absolute values so no item exceeds 100 percent. Negative values
-   * keep their sign as a display flag. Positive-total cases keep the raw computation
-   * so cases like Long-Term Liab exceeding Total L&E stay visible as a real signal. */
+   * keep their sign as a display flag. Tracker row 36: the same rescale applies to a positive
+   * total whenever a raw share would exceed 100% (e.g. negative equity pushing Long-Term
+   * Liabilities above 100% of Total L&E), so no share ever exceeds 100% and equity stays negative. */
   const rescaleForNegativeTotal = (items, total) => {
     if (!items || !items.length) return;
-    if (total === null || total > 0) return;
+    const over100 = items.some(x => x.pct !== null && x.pct !== undefined && Math.abs(x.pct) > 100);
+    if (!over100 && (total === null || total > 0)) return;
     const absTotal = items.reduce((s, x) => s + Math.abs(x.value), 0);
     if (absTotal < 0.005) return;
     items.forEach(x => { x.pct = (x.value / absTotal) * 100; });
