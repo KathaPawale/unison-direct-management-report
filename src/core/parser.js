@@ -263,9 +263,7 @@ function findHeaderRow(rows){
 function isMetaText(s){
   const t = normLabel(s);
   return /^(cash|accrual|modified cash) basis\b/.test(t) || /\bbasis (monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/.test(t) ||
-    /^(monday|tuesday|wednesday|thursday|friday|saturday|sunday) \w+ \d/.test(t) || /gmt ?[+-]?\d/.test(t) ||
-    /^(ml|jacob|seneca|hinton)\b/.test(t) || /^(balance sheet|profit and loss|trial balance|a\/r aging|a\/p aging|accounts receivable|accounts payable|notes to financial statements|management purpose disclaimer)\b/.test(t) ||
-    /^(as of|january|february|march|april|may|june|july|august|september|october|november|december)\b/.test(t) || /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)(?:uary|ruary|ch|il|e|ly|ust|tember|ober|ember)?\b/.test(t);
+    /^(monday|tuesday|wednesday|thursday|friday|saturday|sunday) \w+ \d/.test(t) || /gmt ?[+-]?\d/.test(t);
 }
 
 function classifyColumns(rows, headerRow){
@@ -397,6 +395,16 @@ function buildLines(rows, headerRow, cols){
   const start = _titleRowCount(rows, headerRow);
   let indentUnit = 0;
 
+  /* Bug 9: the workbook's own title block (client name, statement title, period / "As of" date)
+   * sits above the column header. It is already shown in the section heading, so those rows are
+   * tagged kind 'meta' and kept apart from the statement lines — never rendered as blank rows and
+   * never seen by the calculations. */
+  const metaLines = [];
+  for (let r = 0; r < start; r++){
+    const label = (rows[r] || []).map(cellText).filter(Boolean).join(' ');
+    if (label && r !== headerRow) metaLines.push({ r, label, kind: 'meta' });
+  }
+
   for (let r = start; r < rows.length; r++){
     const row = rows[r] || [];
     let label = '', raw = '', level = 0, code = '';
@@ -412,11 +420,6 @@ function buildLines(rows, headerRow, cols){
     else if (code && !label){ label = code; raw = code; }
     const hasValues = valCols.some(c => parseAmount(row[c]) !== null || isPercentText(row[c]));
     if (!label) continue;                        // stray values with no label — not a line
-    const metaLike = (r <= headerRow && isMetaText(label)) || (/^(client|company|ml jones|jacob nursing|seneca real estate|hinton heavy equipment|balance sheet|profit and loss)\b/i.test(label) && r <= headerRow);
-    if (metaLike && !hasValues){
-      lines.push({ r, rawLabel: raw, label, key: normLabel(label), level, leading: 0, kind: 'meta', closes: null, hasValues, openerIdx: null, totalIdx: null, indent: 0 });
-      continue;
-    }
     if (isMetaText(label) && !hasValues) continue;
     const leading = raw.match(/^ */)[0].length;
     if (leading > 0) indentUnit = indentUnit ? Math.min(indentUnit, leading) : leading;
@@ -458,14 +461,14 @@ function buildLines(rows, headerRow, cols){
     const k = lines[i].label.toLowerCase().replace(/\s+/g, ' ').trim();
     if (!(k in byLabel)) byLabel[k] = i;   // first occurrence wins
   }
-  return { lines, byLabel, indentUnit, start };
+  return { lines, metaLines, byLabel, indentUnit, start };
 }
 
 function buildSheetModel(name, rows, role){
   const headerRow = findHeaderRow(rows);
   const cols = classifyColumns(rows, headerRow);
-  const { lines, byLabel, indentUnit, start } = buildLines(rows, headerRow, cols);
-  return { name, role, headerRow, bodyStart: start, cols, lines, byLabel, indentUnit,
+  const { lines, metaLines, byLabel, indentUnit, start } = buildLines(rows, headerRow, cols);
+  return { name, role, headerRow, bodyStart: start, cols, lines, metaLines, byLabel, indentUnit,
            labelCols: cols.filter(c => c.type === 'label').map(c => c.idx) };
 }
 

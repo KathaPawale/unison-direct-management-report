@@ -21,11 +21,13 @@ function reportLogo(){
   return '<img class="report-logo" src="./assets/unison-logo.svg" alt="Unison Direct">';
 }
 
+/* Bug 6: always a basis — Cash / Accrual / Modified Cash Basis — never currency text.
+ * Nothing detected and no override → "Accrual Basis". */
 function reportBasis(){
-  const b = state.basisOverride || (state.model && state.model.basisDetected) || 'Accrual';
-  const v = String(b || '').trim();
-  if (!v) return 'Accrual Basis';
-  return /cash/i.test(v) && !/accrual/i.test(v) ? 'Cash Basis' : 'Accrual Basis';
+  const v = String(state.basisOverride || (state.model && state.model.basisDetected) || '').trim();
+  if (/modified\s*cash/i.test(v)) return 'Modified Cash Basis';
+  if (/cash/i.test(v)) return 'Cash Basis';
+  return 'Accrual Basis';
 }
 
 function watermarkHtml(){
@@ -275,16 +277,16 @@ function paginateBlocks(no, title, blocks, sub){
   $('#pdfMeasure').innerHTML = '';
   const avail = _bodyBudget('portrait');
   const pages = [];
-  let cur = [], used = 0, budget = avail - h1 - 72;
+  /* Bug 10: _bodyBudget already keeps FOOTER_RESERVE (the 72px footer safe zone) clear at the
+   * bottom of every page; a table block of more than 20 rows also books 40px of font-metric slack.
+   * Bug 11: a block is never split, and an orphanGuard block that does not fit the rest of the page
+   * starts the next page, so a table's header, body and total always stay together. */
+  let cur = [], used = 0, budget = avail - h1;
   padded.forEach((b, i) => {
     const tableRows = (String(b.html).match(/<tr\b/gi) || []).length;
-    const h = heights[i] + (tableRows >= 20 ? 40 : 0);
-    const breakBefore = b.orphanGuard && cur.length && used + h > budget;
-    if (breakBefore){
-      pages.push(cur); cur = []; used = 0; budget = avail - h2 - 72;
-    }
+    const h = heights[i] + (tableRows > 20 ? 40 : 0);
     if (cur.length && used + h > budget){
-      pages.push(cur); cur = []; used = 0; budget = avail - h2 - 72;
+      pages.push(cur); cur = []; used = 0; budget = avail - h2;
     }
     cur.push(b); used += h;
   });
@@ -374,11 +376,12 @@ function comparisonTableHtml(cls){
 function liabilitiesTableHtml(cls){
   const md = state.model, items = md.liabilityBifurcation || [];
   if (!items.length) return '';
+  /* Bug 2: shares come from financials (denominator = sum of these liability rows), so they add to 100%. */
   const totalLiab = items.reduce((s, x) => s + (x.value || 0), 0);
   const row = (label, v, p, extra = '') => `<tr class="${extra}"><td>${escapeHtml(label)}</td><td class="${v < 0 ? 'neg' : ''}">${money(v)}</td><td class="${p !== null && p < 0 ? 'neg' : ''}">${pctText(p)}</td></tr>`;
   return `<table class="${cls}"><thead><tr><th>Liability Type</th><th>Amount</th><th>% of Total Liabilities</th></tr></thead><tbody>` +
-    items.map(x => row(x.label, x.value, totalLiab && Math.abs(totalLiab) > 0.005 ? (x.value / totalLiab) * 100 : 0)).join('') +
-    (totalLiab !== null ? row('Total Liabilities', totalLiab, 100, 'total') : '') + '</tbody></table>';
+    items.map(x => row(x.label, x.value, x.pct)).join('') +
+    row('Total Liabilities', totalLiab, Math.abs(totalLiab) >= 0.005 ? 100 : null, 'total') + '</tbody></table>';
 }
 
 function monthlyLabels(){
@@ -431,14 +434,15 @@ function dashboardBodies(no, title){
       svgHBars({ items: top, color: CHART_COLORS.teal }));
   }
 
-  if (md.arAging || md.apAging){
+  /* Bug 5: a cash-basis client (A/R suppressed) gets no Receivables & Payables block at all. */
+  if (!md.suppressAR && (md.arAging || md.apAging)){
     const base = (md.arAging || md.apAging).buckets.map(b => b.label);
     const series = [];
     if (md.arAging) series.push({ name: 'A/R ' + moneyShort(md.arAging.total), color: CHART_COLORS.blue, values: md.arAging.buckets.map(b => b.value) });
     if (md.apAging) series.push({ name: 'A/P ' + moneyShort(md.apAging.total), color: CHART_COLORS.amber, values: md.apAging.buckets.map(b => b.value) });
     blocks.push('<div class="report-section-title">Receivables &amp; Payables Aging</div>' + chartLegend(series) +
       svgGroupedBars({ series, labels: base, height: 210 }));
-  } else if (m.ar !== null || m.ap !== null){
+  } else if (!md.suppressAR && (m.ar !== null || m.ap !== null)){
     const items = [];
     if (m.ar !== null) items.push({ label: 'Accounts Receivable', value: m.ar });
     if (m.ap !== null) items.push({ label: 'Accounts Payable', value: m.ap });

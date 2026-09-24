@@ -225,6 +225,7 @@ function _modelSheetToWs(sm, title){
 
   let out = HEAD_R + 1;
   for (const line of sm.lines){
+    if (line.kind === 'meta') continue;
     const row = rows[line.r] || [];
     const kind = line.kind;
     const key = line.mkey || labelKey(line.label);
@@ -360,8 +361,8 @@ function downloadReportExcel(){
     table('Balance Sheet Composition — Assets', ['Asset Type', 'Amount', '% of Total Assets'],
       md.bsComposition.assets.map(x => [x.label, x.value, x.pct]).concat([['Total Assets', m.assets, 100]]));
   if (md.liabilityBifurcation.length)
-    table('Liabilities Bifurcation', ['Liabilities & Equity', 'Amount', '% of Total Liabilities & Equity'],
-      md.liabilityBifurcation.map(x => [x.label, x.value, x.pct]).concat(m.totalLE !== null ? [['Total Liabilities & Equity', m.totalLE, 100]] : []));
+    table('Liabilities Bifurcation', ['Liability Type', 'Amount', '% of Total Liabilities'],
+      md.liabilityBifurcation.map(x => [x.label, x.value, x.pct]).concat([['Total Liabilities', md.liabilityBifurcation.reduce((s, x) => s + x.value, 0), 100]]));
   s['!cols'] = [{ wch: 34 }, ...Array(Math.max(md.months.length, 3)).fill({ wch: 16 })];
   _decorateSheet(s, 'summary', 5, 1);
   XLSX.utils.book_append_sheet(wb, s, 'Analytical Summary');
