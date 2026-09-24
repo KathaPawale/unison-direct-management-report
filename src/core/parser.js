@@ -1,7 +1,7 @@
 /* Unison Direct Management Reporting — workbook parser
  *
  * parseWorkbook(sheets) → model
- *   roles:        { plMonthly, plComparative, plPercent, pl, bs, ar, ap, notes } → sheet name | null
+ *   roles:        { plMonthly, plComparative, plPercent, plClass, pl, bs, ar, ap, notes } → sheet name | null
  *   sheetModels:  { sheetName: {name, role, headerRow, cols, lines, byLabel, labelCols, titleRows} }
  *   …plus the analysis produced by analyzeFinancials() in financials.js.
  *
@@ -22,6 +22,7 @@ const ROLE_LABELS = {
   plMonthly: 'Profit and Loss (Monthly)',
   plComparative: 'Profit and Loss (Comparative)',
   plPercent: 'Profit and Loss (% of Income)',
+  plClass: 'Profit and Loss (by Class)',
   pl: 'Profit and Loss',
   bs: 'Balance Sheet',
   bsComparative: 'Balance Sheet — Comparative',
@@ -255,6 +256,9 @@ function findHeaderRow(rows){
     const serial = _serialMonthRow(row);
     const serialCols = new Set(serial ? serial.map(x => x.c) : []);
     let firstText = null;
+    /* Row 54: a "P&L by Class" heading row — class / department / location names ending in a Total column.
+     * The names are column headings when a Total heading sits in the same row over numbers. */
+    const totalHead = row.some((v, c) => c > 0 && typeof v === 'string' && /^(grand )?total$/i.test(v.trim()) && _numericBelow(rows, r, c));
     for (let c = 0; c < row.length; c++){
       const v = row[c];
       if (cellText(v) === '') continue;
@@ -262,6 +266,7 @@ function findHeaderRow(rows){
       const h = classifyHeader(v);
       if (!h){
         if (parseAmount(v) !== null) penalty += 2;
+        else if (totalHead && c > 0 && _numericBelow(rows, r, c)){ score += 2; periodish++; }
         else if (firstText === null) firstText = normLabel(v);
         continue;
       }
@@ -509,7 +514,7 @@ function _allLabelKeys(rows){
 }
 
 function detectRoles(sheets, sheetModels){
-  const roles = { plMonthly: null, plComparative: null, plPercent: null, pl: null, bs: null, bsComparative: null, tb: null, ar: null, ap: null, notes: null, summary: null };
+  const roles = { plMonthly: null, plComparative: null, plPercent: null, plClass: null, pl: null, bs: null, bsComparative: null, tb: null, ar: null, ap: null, notes: null, summary: null };
   const names = Object.keys(sheets);
   const info = names.map(n => {
     const rows = sheets[n] || [];
@@ -523,16 +528,27 @@ function detectRoles(sheets, sheetModels){
     const text = nameT + ' ' + title;
     const rawName = cellText(n);
     const plName = /^(pl|p&l|profit ?(and|&) ?loss|income statement)$/i.test(rawName) || /profit and loss|profit loss|\bp and l\b|\bpl\b|\bp l\b|income statement|statement of (operations|income|comprehensive income)|income and expense|operating statement|revenue and expense/.test(text);
-    const bsComparative = /^(bs|b\.?s\.?|balance ?sheet)(_|-|\s)*(comparative|comp)?$/i.test(rawName);
-    const bsName = bsComparative || /balance sheet|statement of financial (position|condition)|\bbs\b/.test(text);
+    /* "BS" / "Balance Sheet" is the Balance Sheet; only a name that says so ("BS_Comparative", "Balance Sheet Comp")
+     * is the comparative one, whatever the tab order. */
+    const bsTab = /^(bs|b\.?s\.?|balance ?sheet)(_|-|\s)*(comparative|comp)?$/i.test(rawName);
+    const bsComparative = bsTab && /(comparative|comp)$/i.test(rawName.trim());
+    const bsName = bsTab || /balance sheet|statement of financial (position|condition)|\bbs\b/.test(text);
     const tbName = /^(tb|t\.?b\.?|trial ?balance)$/i.test(rawName);
     const plContent = (has(/^total (for )?(income|revenues?|sales)$/) || has(/^gross profit$/)) && has(/^net (income|profit|loss|ordinary income)/);
     const bsContent = has(/^total (for )?assets$/) && (has(/^total (for )?liabilities/) || has(/equity$/));
     const recv = /receivable|\ba r\b|\bar\b|customer/.test(text), pay = /payable|\ba p\b|\bap\b|vendor|supplier/.test(text);
     const agingName = /ag(e)?ing|aged/.test(text);
     const notes = /\bnotes?\b|comments?/.test(nameT) || /notes? to (the )?(financial statements?|accounts)/.test(title);
-    return { n, sm, months, buckets, periods, plName, bsName, bsComparative, tbName, plContent, bsContent, recv, pay, agingName, notes,
-             pct: sm.cols.some(c => c.type === 'percent') && !periods && !months, detail: /detail|by class|by customer|by vendor|transaction/.test(text) };
+    /* "PL (% Income)" / "Profit and Loss % of Total Income": a P&L with a % of income column and one amount column
+     * (a Total or a single period such as "Jan - Dec 2025"). A tab/title that says so counts even with more periods. */
+    const pctCol = sm.cols.some(c => c.type === 'percent');
+    const pctName = /%|percent|pct/i.test(rawName) || /(%|percent(age)?) (of )?(total )?(income|revenues?|sales)|common size|vertical analysis/.test(normLabel(rawName) + ' ' + title);
+    /* Row 54: "P&L(Classwise)" / "Profit and Loss by Class" — one column per class / department / location plus Total. */
+    const segCols = sm.cols.filter(c => c.type === 'value' && c.label).length;
+    const className = /class ?wise|\bby (class|department|location|division|segment|project|site|branch)\b|\bclass(es)?\b|department ?wise|location ?wise/.test(text);
+    const cls = !months && periods <= 1 && (className || (segCols >= 2 && sm.cols.some(c => c.type === 'rowTotal')));
+    return { n, sm, months, buckets, periods, plName, bsName, bsComparative, tbName, plContent, bsContent, recv, pay, agingName, notes, cls,
+             pct: pctCol && months < 2 && (periods <= 1 || pctName), detail: /detail|by customer|by vendor|transaction/.test(text) };
   });
   const free = x => !Object.values(roles).includes(x.n);
 
@@ -550,12 +566,16 @@ function detectRoles(sheets, sheetModels){
     roles.tb = x.n;
   }
   const bsCands = info.filter(x => free(x) && ((x.bsName && !x.plName) || (x.bsContent && !x.plContent)));
-  const primaryBs = bsCands.find(x => !x.bsComparative) || bsCands[0];
+  const primaryBs = bsCands.find(x => !x.bsComparative && x.periods < 2) || bsCands.find(x => !x.bsComparative) || bsCands[0];
   if (primaryBs) roles.bs = primaryBs.n;
   for (const x of bsCands){
     if (x.n !== roles.bs && !roles.bsComparative && (x.bsComparative || x.periods >= 2)) roles.bsComparative = x.n;
   }
-  const plCands = info.filter(x => free(x) && !x.detail && (x.plName || x.plContent) && !(x.bsContent && !x.plContent));
+  const plAll = info.filter(x => free(x) && !x.detail && (x.plName || x.plContent) && !(x.bsContent && !x.plContent));
+  /* The main P&L roles go to amount sheets first, whatever the tab order; a % of Income or by-Class sheet is
+   * the main P&L only when the workbook has no other P&L. */
+  const plMain = plAll.filter(x => !x.pct && !x.cls);
+  const plCands = plMain.length ? plMain : plAll.filter(x => !x.pct).length ? plAll.filter(x => !x.pct) : plAll;
   for (const x of plCands){
     if (x.months >= 2 && !roles.plMonthly){ roles.plMonthly = x.n; continue; }
   }
@@ -565,9 +585,14 @@ function detectRoles(sheets, sheetModels){
   }
   for (const x of plCands){
     if (!free(x)) continue;
-    if (x.pct && !roles.plPercent && (roles.pl || roles.plMonthly || roles.plComparative)){ roles.plPercent = x.n; continue; }
     if (!roles.pl && !roles.plMonthly && !roles.plComparative){ roles.pl = x.n; continue; }
     if (!roles.pl && x.periods >= 1 && !roles.plComparative){ roles.pl = x.n; continue; }
+  }
+  for (const x of plAll){
+    if (free(x) && x.pct && !roles.plPercent && (roles.pl || roles.plMonthly || roles.plComparative)) roles.plPercent = x.n;
+  }
+  for (const x of plAll){
+    if (free(x) && x.cls && !roles.plClass && (roles.pl || roles.plMonthly || roles.plComparative)) roles.plClass = x.n;
   }
   if (!roles.pl && !roles.plMonthly && !roles.plComparative){
     for (const [n, sm] of Object.entries(sheetModels)){
@@ -630,7 +655,7 @@ function parseWorkbook(sheets){
   for (const [r, n] of Object.entries(roles)) if (n && sheetModels[n]) sheetModels[n].role = r;
   /* "Net Income" inside a Balance Sheet's equity section is an ordinary posting line, not a P&L formula row. */
   for (const sm of Object.values(sheetModels)){
-    if (['plMonthly', 'plComparative', 'pl', 'plPercent'].includes(sm.role)) continue;
+    if (['plMonthly', 'plComparative', 'pl', 'plPercent', 'plClass'].includes(sm.role)) continue;
     for (const l of sm.lines) if (l.kind === 'computed') l.kind = l.hasValues ? 'account' : 'section';
   }
   const model = { roles, sheetModels };

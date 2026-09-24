@@ -180,6 +180,12 @@ function renderStatements(){
   $('#plView').innerHTML = (pl ? head(pl.role === 'plMonthly' ? 'Profit and Loss — Monthly' : 'Profit and Loss', pl) : '') + statementViewHtml(pl);
   $('#plCompView').innerHTML = md && md.roles.plComparative && md.roles.plMonthly
     ? head('Profit and Loss — Comparative', get('plComparative')) + statementViewHtml(get('plComparative')) : '';
+  /* Row 54: every captured statement is on this page, in report order. */
+  const extra = [['bsComparative', 'Balance Sheet — Comparative'], ['tb', 'Trial Balance'],
+                 ['plPercent', 'Profit and Loss (% of Income)'], ['plClass', 'Profit and Loss — by Class']];
+  const extraBox = $('#extraViews');
+  if (extraBox) extraBox.innerHTML = extra.filter(([role]) => get(role)).map(([role, title]) =>
+    `<div class="card" style="margin-top:18px">${head(title, get(role))}${statementViewHtml(get(role))}</div>`).join('');
   const agingView = (role, ag, suppressed) => {
     if (suppressed) return '<div class="empty">Not applicable — cash-basis client with no balance in the Balance Sheet.</div>';
     if (ag && ag.fromDetail) return head(role === 'ar' ? 'A/R Aging Summary' : 'A/P Aging Summary', get(role)) + agingTableHtml(ag);

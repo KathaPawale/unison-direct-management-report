@@ -433,7 +433,7 @@ function agingSummary(sheets, sm){
  * used — it is also the name of a Balance Sheet account. */
 function detectBasis(sheets, roles){
   const score = { 'Cash': 0, 'Accrual': 0, 'Modified Cash': 0 };
-  const statements = new Set([roles.bs, roles.plMonthly, roles.plComparative, roles.pl, roles.plPercent].filter(Boolean));
+  const statements = new Set([roles.bs, roles.plMonthly, roles.plComparative, roles.pl, roles.plPercent, roles.plClass].filter(Boolean));
   const LABEL = '(?:reporting\\s+)?basis(?:\\s+of\\s+(?:preparation|accounting))?\\s*[:\\-]?\\s*';
   const CASH = new RegExp('\\bcash\\s+basis\\b|\\b' + LABEL + 'cash\\b');
   const ACCRUAL = new RegExp('\\baccrual\\s+basis\\b|\\b' + LABEL + 'accrual\\b');
