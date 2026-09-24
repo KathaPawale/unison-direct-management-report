@@ -76,7 +76,13 @@ function _span(sm, openerIdx){
   if (_hasIndent(sm)){
     while (j < sm.lines.length && sm.lines[j].indent > o.indent && sm.lines[j].kind !== 'grandTotal') j++;
   } else {
-    while (j < sm.lines.length && !['section', 'computed', 'grandTotal', 'total'].includes(sm.lines[j].kind)) j++;
+    while (j < sm.lines.length){
+      const l = sm.lines[j];
+      if (l.kind === 'grandTotal') break;
+      if (l.kind === 'total' && /^(total for )?(assets|liabilities|equity|income|expenses|net income|net operating income)$/i.test(l.mkey || l.label)) break;
+      if (l.kind === 'section' && /^(assets|liabilities|equity|income|expenses)$/i.test(l.mkey || l.label)) break;
+      j++;
+    }
   }
   return { from: openerIdx + 1, to: j };
 }
@@ -165,10 +171,13 @@ function expenseBreakdown(sheets, sm, spec, totalExpenses){
   if (!sm || !spec) return { items: [], total: 0 };
   const items = [];
   const hasIndent = _hasIndent(sm);
+  let sectionTotal = null;
   for (const key of ['expenses']){
     const oi = _find(sm, _S(FIN[key].names), ['section', 'account']);
     if (oi < 0) continue;
     const { from, to } = _span(sm, oi);
+    const sectionLeaf = _leafSum(sheets, sm, oi, spec, to);
+    if (sectionLeaf !== null) sectionTotal = sectionLeaf;
     let i = from;
     while (i < to){
       const l = sm.lines[i];
@@ -212,11 +221,15 @@ function expenseBreakdown(sheets, sm, spec, totalExpenses){
     if (merged.has(k)) merged.get(k).value += it.value; else merged.set(k, { ...it });
   }
   const list = [...merged.values()].filter(x => Math.abs(x.value) >= 0.005);
-  const sumItems = list.reduce((s, x) => s + x.value, 0);
-  const total = totalExpenses !== null && totalExpenses !== undefined && Math.abs(totalExpenses) >= 0.005 ? totalExpenses : sumItems;
-  list.forEach(x => { x.pct = total ? x.value / Math.abs(total) * 100 : 0; });
+  const leafSum = list.reduce((s, x) => s + Math.abs(x.value), 0);
+  const denominator = (sectionTotal !== null && Math.abs(sectionTotal) > 0.005) ? Math.abs(sectionTotal) : (leafSum || 0);
+  const total = (totalExpenses !== null && totalExpenses !== undefined && Math.abs(totalExpenses) >= 0.005) ? Math.abs(totalExpenses) : denominator;
+  list.forEach(x => { x.pct = total > 0 ? (x.value / total) * 100 : 0; });
+  if (list.some(x => Math.abs(x.pct) > 100)) {
+    list.forEach(x => { x.pct = denominator > 0 ? (x.value / denominator) * 100 : 0; });
+  }
   list.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
-  return { items: list, total };
+  return { items: list, total: denominator || total };
 }
 
 /* ---------- Balance Sheet ---------- */
@@ -245,6 +258,7 @@ function bsFigures(sheets, sm, spec, basis){
     currentAssets = assets - fixedAssets - (otherAssets || 0);
 
   const pctOf = (x, d) => (x === null || d === null || Math.abs(d) < 0.005) ? null : x / Math.abs(d) * 100;
+  const pctOfSigned = (x, d) => (x === null || d === null || Math.abs(d) < 0.005) ? null : x / d * 100;
   /* Row 36: when the denominator is negative or zero, raw signed percentages can
    * exceed 100 percent, producing a donut that visually breaks. Rescale each slice
    * using the sum of absolute values so no item exceeds 100 percent. Negative values
@@ -262,10 +276,6 @@ function bsFigures(sheets, sm, spec, basis){
     if (currentAssets !== null) assetItems.push({ label: 'Current Assets', value: currentAssets });
     if (fixedAssets !== null) assetItems.push({ label: 'Fixed Assets', value: fixedAssets });
     if (otherAssets !== null) assetItems.push({ label: 'Other Assets', value: otherAssets });
-    /* Only Current Assets and Fixed Assets are shown (plus a genuine "Other Assets" total when the
-     * statement has one). Anything else that sits outside those groups — e.g. Accumulated Depreciation
-     * listed on its own — is part of non-current assets, so it is folded into Fixed Assets and never
-     * shown as a separate slice. Current % + Fixed % (+ Other %) therefore always equals 100%. */
     const resid = assets - assetItems.reduce((s, x) => s + x.value, 0);
     if (assetItems.length && Math.abs(resid) >= 0.5){
       const fx = assetItems.find(x => x.label === 'Fixed Assets');
@@ -276,14 +286,21 @@ function bsFigures(sheets, sm, spec, basis){
     assetItems.forEach(x => { x.pct = pctOf(x.value, assets); });
     rescaleForNegativeTotal(assetItems, assets);
   }
+  const liabilityRows = [];
+  if (currentLiabilities !== null) liabilityRows.push({ label: 'Current Liabilities', value: currentLiabilities });
+  if (longTermLiabilities !== null) liabilityRows.push({ label: 'Long-Term Liabilities', value: longTermLiabilities });
+  const liabResid = liabilities !== null ? liabilities - (currentLiabilities || 0) - (longTermLiabilities || 0) : 0;
+  if (Math.abs(liabResid) >= 0.5) liabilityRows.push({ label: 'Other Liabilities', value: liabResid });
+  const liabilityTotal = liabilityRows.reduce((s, x) => s + x.value, 0);
+  liabilityRows.forEach(x => { x.pct = liabilityTotal !== null && Math.abs(liabilityTotal) > 0.005 ? (x.value / liabilityTotal) * 100 : 0; });
   const leItems = [];
   if (totalLE !== null){
-    if (currentLiabilities !== null) leItems.push({ label: 'Current Liabilities', value: currentLiabilities });
-    if (longTermLiabilities !== null) leItems.push({ label: 'Long-Term Liabilities', value: longTermLiabilities });
-    const liabResid = liabilities !== null ? liabilities - (currentLiabilities || 0) - (longTermLiabilities || 0) : 0;
-    if (Math.abs(liabResid) >= 0.5) leItems.push({ label: 'Other Liabilities', value: liabResid });
-    if (equity !== null) leItems.push({ label: 'Equity', value: equity });
-    leItems.forEach(x => { x.pct = pctOf(x.value, totalLE); });
+    liabilityRows.forEach(x => leItems.push({ ...x, pct: totalLE && Math.abs(totalLE) > 0.005 ? (x.value / totalLE) * 100 : 0 }));
+    if (equity !== null) leItems.push({ label: 'Equity', value: equity, pct: totalLE && Math.abs(totalLE) > 0.005 ? (equity / totalLE) * 100 : 0 });
+    if (totalLE < 0) {
+      const absTotal = leItems.reduce((s, x) => s + Math.abs(x.value), 0);
+      if (absTotal > 0.005) leItems.forEach(x => { x.pct = absTotal ? (x.value / absTotal) * 100 : 0; });
+    }
     rescaleForNegativeTotal(leItems, totalLE);
   }
 
@@ -340,7 +357,7 @@ function bsFigures(sheets, sm, spec, basis){
   const ar = explicit('ar'), ap = explicit('ap');
 
   return { assets, currentAssets, fixedAssets, otherAssets, liabilities, currentLiabilities, longTermLiabilities,
-           equity, totalLE, bank, ar, ap, assetItems, leItems };
+           equity, totalLE, bank, ar, ap, assetItems, leItems, liabilityRows };
 }
 
 /* ---------- aging ---------- */
@@ -404,21 +421,26 @@ function agingSummary(sheets, sm){
 function detectBasis(sheets, roles){
   const score = { 'Cash': 0, 'Accrual': 0, 'Modified Cash': 0 };
   const statements = new Set([roles.bs, roles.plMonthly, roles.plComparative, roles.pl, roles.plPercent].filter(Boolean));
+  const scanBasisText = (text) => {
+    if (typeof text !== 'string' || text.length > 200) return;
+    const s = text.toLowerCase();
+    if (/amounts in us dollars|us dollars|\$\)/i.test(s)) return;
+    if (/modified cash basis/.test(s)) score['Modified Cash'] += 1;
+    else if (/\bcash basis\b|\bbasis\s*[:\-]?\s*cash\b/.test(s)) score['Cash'] += 1;
+    else if (/\baccrual basis\b|\bbasis\s*[:\-]?\s*accrual\b/.test(s)) score['Accrual'] += 1;
+  };
   for (const [name, rows] of Object.entries(sheets)){
-    const w = statements.has(name) ? 3 : 1;
-    const scan = rows.length > 80 ? rows.slice(0, 40).concat(rows.slice(-40)) : rows;
+    const scan = rows.slice(0, 15).concat(rows.slice(-5));
     for (const row of scan){
-      for (const v of row || []){
-        if (typeof v !== 'string' || v.length > 200) continue;
-        const s = v.toLowerCase();
-        if (/modified cash basis/.test(s)) score['Modified Cash'] += w;
-        else if (/\bcash basis\b|\bbasis\s*[:\-]?\s*cash\b/.test(s)) score['Cash'] += w;
-        else if (/\baccrual basis\b|\bbasis\s*[:\-]?\s*accrual\b/.test(s)) score['Accrual'] += w;
+      for (const v of row || []) {
+        const s = cellText(v);
+        if (!s) continue;
+        if (statements.has(name) || /basis/i.test(s)) scanBasisText(s);
       }
     }
   }
   const best = Object.entries(score).sort((a, b) => b[1] - a[1])[0];
-  return best[1] > 0 ? best[0] : null;
+  return best && best[1] > 0 ? best[0] : null;
 }
 
 const STATEMENT_TITLE_RE = /^(profit (and|&) loss|p ?& ?l|income statement|statement of (operations|income|financial (position|condition)|cash flows?)|balance sheet|a\/?r aging|a\/?p aging|accounts (receivable|payable) aging|aged (receivables|payables)|notes? to|comparative|monthly|trial balance|general ledger|summary|detail)/i;
@@ -589,11 +611,10 @@ function analyzeFinancials(model, sheets){
   const bsCur = bsFigures(sheets, bs, bsCurSpec) || {};
   const bsPri = bsPriSpec ? bsFigures(sheets, bs, bsPriSpec) : null;
 
-  const cashBasis = /cash/i.test(basisDetected || '') && !/modified/i.test(basisDetected || '');
-  /* Cash-basis clients have no receivables/payables unless the Balance Sheet itself carries them,
-   * so an aging sheet alone never puts A/R or A/P into the report for a cash-basis client. */
-  const suppressAR = cashBasis && (bsCur.ar === null || bsCur.ar === undefined);
-  const suppressAP = cashBasis && (bsCur.ap === null || bsCur.ap === undefined);
+  const workbookCashBasis = Object.values(sheets).some(rows => (rows || []).some(row => (row || []).some(v => typeof v === 'string' && /cash\s*basis/i.test(v))));
+  const cashBasis = workbookCashBasis || (/cash/i.test(basisDetected || '') && !/modified/i.test(basisDetected || ''));
+  const suppressAR = cashBasis || (bsCur.ar === null || bsCur.ar === undefined);
+  const suppressAP = cashBasis || (bsCur.ap === null || bsCur.ap === undefined);
   const arAging = suppressAR ? null : agingSummary(sheets, S('ar'));
   const apAging = suppressAP ? null : agingSummary(sheets, S('ap'));
 
@@ -607,8 +628,8 @@ function analyzeFinancials(model, sheets){
     otherExpenses: plCur.otherExpenses ?? null,
     net: plCur.net ?? 0,
     bank: bsCur.bank ?? null,
-    ar: pick(bsCur.ar, (!cashBasis && arAging) ? arAging.total : null),
-    ap: pick(bsCur.ap, (!cashBasis && apAging) ? apAging.total : null),
+    ar: suppressAR ? null : pick(bsCur.ar, (!cashBasis && arAging) ? arAging.total : null),
+    ap: suppressAP ? null : pick(bsCur.ap, (!cashBasis && apAging) ? apAging.total : null),
     assets: bsCur.assets ?? 0,
     currentAssets: bsCur.currentAssets ?? null,
     fixedAssets: bsCur.fixedAssets ?? null,
@@ -665,7 +686,7 @@ function analyzeFinancials(model, sheets){
     expenseTotal: exp.total,
     arAging, apAging, suppressAR, suppressAP,
     bsComposition: { assets: bsCur.assetItems || [], liabEquity: bsCur.leItems || [] },
-    liabilityBifurcation: (bsCur.leItems || []),
+    liabilityBifurcation: (bsCur.liabilityRows || []),
     basisDetected,
     client: cp.client,
     period: formatPeriodText(period || 'For the period ended'),

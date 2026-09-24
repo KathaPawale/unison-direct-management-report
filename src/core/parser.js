@@ -263,7 +263,9 @@ function findHeaderRow(rows){
 function isMetaText(s){
   const t = normLabel(s);
   return /^(cash|accrual|modified cash) basis\b/.test(t) || /\bbasis (monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/.test(t) ||
-    /^(monday|tuesday|wednesday|thursday|friday|saturday|sunday) \w+ \d/.test(t) || /gmt ?[+-]?\d/.test(t);
+    /^(monday|tuesday|wednesday|thursday|friday|saturday|sunday) \w+ \d/.test(t) || /gmt ?[+-]?\d/.test(t) ||
+    /^(ml|jacob|seneca|hinton)\b/.test(t) || /^(balance sheet|profit and loss|trial balance|a\/r aging|a\/p aging|accounts receivable|accounts payable|notes to financial statements|management purpose disclaimer)\b/.test(t) ||
+    /^(as of|january|february|march|april|may|june|july|august|september|october|november|december)\b/.test(t) || /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)(?:uary|ruary|ch|il|e|ly|ust|tember|ober|ember)?\b/.test(t);
 }
 
 function classifyColumns(rows, headerRow){
@@ -410,6 +412,11 @@ function buildLines(rows, headerRow, cols){
     else if (code && !label){ label = code; raw = code; }
     const hasValues = valCols.some(c => parseAmount(row[c]) !== null || isPercentText(row[c]));
     if (!label) continue;                        // stray values with no label — not a line
+    const metaLike = (r <= headerRow && isMetaText(label)) || (/^(client|company|ml jones|jacob nursing|seneca real estate|hinton heavy equipment|balance sheet|profit and loss)\b/i.test(label) && r <= headerRow);
+    if (metaLike && !hasValues){
+      lines.push({ r, rawLabel: raw, label, key: normLabel(label), level, leading: 0, kind: 'meta', closes: null, hasValues, openerIdx: null, totalIdx: null, indent: 0 });
+      continue;
+    }
     if (isMetaText(label) && !hasValues) continue;
     const leading = raw.match(/^ */)[0].length;
     if (leading > 0) indentUnit = indentUnit ? Math.min(indentUnit, leading) : leading;

@@ -23,7 +23,10 @@ function reportLogo(){
 
 function reportBasis(){
   const b = state.basisOverride || (state.model && state.model.basisDetected) || 'Accrual';
-  return /basis$/i.test(b) ? b : b + ' Basis';
+  const v = String(b || '').trim();
+  if (!v) return 'Accrual Basis';
+  if (/amounts in us dollars|us dollars|\$\)/i.test(v)) return 'Accrual Basis';
+  return /basis$/i.test(v) ? v : v + ' Basis';
 }
 
 function watermarkHtml(){
@@ -135,6 +138,7 @@ function reportTableParts(sm, { forExport = false, cols = null, compact = false,
 
   const out = [];
   for (const line of sm.lines){
+    if (line.kind === 'meta') continue;
     if (doSkip && isRowZero(line)) continue;
     const row = rows[line.r] || [];
     const kind = line.kind;
@@ -262,20 +266,25 @@ function paginateTableSection(no, title, sm, opts = {}){
 
 /* Pack independent blocks (charts, tables) onto as many portrait pages as needed. */
 function paginateBlocks(no, title, blocks, sub){
+  const padded = blocks.map(b => typeof b === 'string' ? { html: b, orphanGuard: false } : b);
   const shell = _measureShell('portrait');
   shell.innerHTML = `<div class="mh1">${sectionHead(no, title, sub)}</div><div class="mh2">${sectionHead(no, title, sub, true)}</div>` +
-    blocks.map(b => `<div class="rblock">${b}</div>`).join('');
+    padded.map(b => `<div class="rblock">${b.html}</div>`).join('');
   const h1 = _outerHeight(shell.querySelector('.mh1'));
   const h2 = _outerHeight(shell.querySelector('.mh2'));
   const heights = [...shell.querySelectorAll('.rblock')].map(el => _outerHeight(el));
   $('#pdfMeasure').innerHTML = '';
   const avail = _bodyBudget('portrait');
   const pages = [];
-  let cur = [], used = 0, budget = avail - h1;
-  blocks.forEach((b, i) => {
-    const h = heights[i];
+  let cur = [], used = 0, budget = avail - h1 - 72;
+  padded.forEach((b, i) => {
+    const h = heights[i] + (String(b.html).match(/<tr\b/gi)?.length > 20 ? 40 : 0);
+    const breakBefore = b.orphanGuard && cur.length && used + h > budget;
+    if (breakBefore){
+      pages.push(cur); cur = []; used = 0; budget = avail - h2 - 72;
+    }
     if (cur.length && used + h > budget){
-      pages.push(cur); cur = []; used = 0; budget = avail - h2;
+      pages.push(cur); cur = []; used = 0; budget = avail - h2 - 72;
     }
     cur.push(b); used += h;
   });
@@ -283,7 +292,7 @@ function paginateBlocks(no, title, blocks, sub){
   if (!pages.length) pages.push([]);
   return pages.map((p, i) => ({
     orientation: 'portrait',
-    body: sectionHead(no, title, sub, i > 0) + p.map(b => `<div class="rblock">${b}</div>`).join('')
+    body: sectionHead(no, title, sub, i > 0) + p.map(b => `<div class="rblock">${b.html}</div>`).join('')
   }));
 }
 
@@ -365,11 +374,11 @@ function comparisonTableHtml(cls){
 function liabilitiesTableHtml(cls){
   const md = state.model, items = md.liabilityBifurcation || [];
   if (!items.length) return '';
-  const tle = md.metrics.totalLE;
+  const totalLiab = items.reduce((s, x) => s + (x.value || 0), 0);
   const row = (label, v, p, extra = '') => `<tr class="${extra}"><td>${escapeHtml(label)}</td><td class="${v < 0 ? 'neg' : ''}">${money(v)}</td><td class="${p !== null && p < 0 ? 'neg' : ''}">${pctText(p)}</td></tr>`;
-  return `<table class="${cls}"><thead><tr><th>Liabilities &amp; Equity</th><th>Amount</th><th>% of Total Liabilities &amp; Equity</th></tr></thead><tbody>` +
-    items.map(x => row(x.label, x.value, x.pct)).join('') +
-    (tle !== null ? row('Total Liabilities & Equity', tle, 100, 'total') : '') + '</tbody></table>';
+  return `<table class="${cls}"><thead><tr><th>Liability Type</th><th>Amount</th><th>% of Total Liabilities</th></tr></thead><tbody>` +
+    items.map(x => row(x.label, x.value, totalLiab && Math.abs(totalLiab) > 0.005 ? (x.value / totalLiab) * 100 : 0)).join('') +
+    (totalLiab !== null ? row('Total Liabilities', totalLiab, 100, 'total') : '') + '</tbody></table>';
 }
 
 function monthlyLabels(){
@@ -443,7 +452,7 @@ function dashboardBodies(no, title){
       '</div>');
   }
   const lt = liabilitiesTableHtml('report-mini-table');
-  if (lt) blocks.push('<div class="report-section-title">Liabilities Bifurcation</div>' + lt);
+  if (lt) blocks.push({ html: '<div class="report-section-title">Liabilities Bifurcation</div>' + lt, orphanGuard: true });
 
   return paginateBlocks(no, title, blocks);
 }
