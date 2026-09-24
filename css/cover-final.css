@@ -10,7 +10,7 @@
 .cover-page .cover-band h1{font-size:32px;line-height:1.12;margin:8px 0 8px;overflow-wrap:anywhere}
 .cover-page .cover-body{flex:0 0 auto;padding:24px 48px 26px}
 .cover-page .cover-body:before{display:none!important;content:none!important}
-.cover-page .cover-meta{display:grid;grid-template-columns:1.1fr 1fr 0.9fr 0.9fr;gap:26px;align-items:start;margin:0 0 20px}
+.cover-page .cover-meta{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:26px;align-items:start;margin:0 0 20px}
 .cover-page .cover-meta>div{min-width:0}
 .cover-page .cover-meta span{display:block;margin-bottom:10px;color:#7b8797;font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase}
 .cover-page .cover-meta b{display:block;color:#14233b;font-size:13.5px;font-weight:800;border:0!important;text-decoration:none!important;padding:0!important}
