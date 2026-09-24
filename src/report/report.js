@@ -57,10 +57,10 @@ function sectionHead(no, title, sub, continued = false){
     '</div><div class="report-rule"></div>';
 }
 
+/* Rows 48/51: Heading (3) — the period line under each statement title — shows only the period.
+ * The currency is stated once on the cover, so "Amounts in US Dollars ($)" is not repeated here. */
 function tableSectionSub(sm){
-  const p = statementPeriodText(sm);
-  const section = sm && sm.role === 'plComparative' ? 3 : 0;
-  return section !== 3 && !(sm && sm.role === 'plComparative') ? p + '  ·  Amounts in US Dollars ($)' : p;
+  return statementPeriodText(sm);
 }
 
 function pageFooter(pageNo, pageCount){
@@ -82,7 +82,8 @@ function formatReportCell(v, colType, opts = {}){
     if (isPercentText(s)) return escapeHtml(s);
     const n = parseAmount(v);
     if (n === null) return escapeHtml(s);
-    const p = Math.abs(n) < 1 ? n * 100 : n;
+    /* opts.fraction: the whole column is stored as fractions (0.25 = 25%), so a 1.0 total is 100% */
+    const p = opts.fraction || Math.abs(n) < 1 ? n * 100 : n;
     return (p < 0 ? '(' + Math.abs(p).toFixed(1) + '%)' : p.toFixed(1) + '%');
   }
   const n = parseAmount(v);
@@ -124,6 +125,14 @@ function reportTableParts(sm, { forExport = false, cols = null, compact = false,
     return true;
   };
 
+  /* Row 52: a percent column holding fractions (every value within ±1) is scaled as a whole, so the
+   * bottom-line total of 1 prints as 100.0% rather than 1.0%. */
+  const fractionCols = new Set(showCols.filter(c => c.type === 'percent' && sm.lines.every(line => {
+    const v = (rows[line.r] || [])[c.idx];
+    const n = isPercentText(v) ? null : parseAmount(v);
+    return n === null || Math.abs(n) <= 1;
+  })).map(c => c.idx));
+
   const out = [];
   for (const line of sm.lines){
     if (doSkip && isRowZero(line)) continue;
@@ -141,7 +150,7 @@ function reportTableParts(sm, { forExport = false, cols = null, compact = false,
       const edited = !forExport &&
         (state.edited.has(sm.name + ':' + line.r + ':' + c.idx) || state.adjusted.has(sm.name + ':' + line.r + ':' + c.idx));
       const cls = [(n !== null && n < 0) ? 'neg' : '', edited ? 'cell-edited' : ''].filter(Boolean).join(' ');
-      tds += `<td class="val${cls ? ' ' + cls : ''}">${formatReportCell(v, c.type, { compact, zeroDash: kind === 'account' })}</td>`;
+      tds += `<td class="val${cls ? ' ' + cls : ''}">${formatReportCell(v, c.type, { compact, zeroDash: kind === 'account', fraction: fractionCols.has(c.idx) })}</td>`;
     }
     out.push({ html: `<tr${trCls ? ` class="${trCls}"` : ''}>${tds}</tr>`, orphanGuard: kind === 'section' });
   }
@@ -443,10 +452,9 @@ function dashboardBodies(no, title){
 function agingTableHtml(ag){
   const pctOf = v => ag.total ? (v / Math.abs(ag.total) * 100) : null;
   const pc = v => v === null ? '—' : (v < 0 ? '-' : '') + Math.abs(v).toFixed(2) + '%';
-  const totalPct = formatReportCell(1, 'percent');
   const body = ag.buckets.map(b => `<tr><td>${escapeHtml(b.label)}</td><td class="num">${escapeHtml(acctNumber(b.value))}</td><td class="num">${pc(pctOf(b.value))}</td></tr>`).join('');
   return `<table class="report-mini-table aging-summary-table"><thead><tr><th>Aging Bucket</th><th class="num">Open Balance</th><th class="num">% of Total</th></tr></thead>` +
-    `<tbody>${body}<tr class="row-total"><td>Total</td><td class="num">${escapeHtml(acctNumber(ag.total))}</td><td class="num">${totalPct}</td></tr></tbody></table>` +
+    `<tbody>${body}<tr class="row-total"><td>Total</td><td class="num">${escapeHtml(acctNumber(ag.total))}</td><td class="num">${pc(ag.total ? 100 : null)}</td></tr></tbody></table>` +
     '<div class="chart-note">Summarised from the aging detail report in the uploaded workbook.</div>';
 }
 

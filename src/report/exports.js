@@ -206,7 +206,7 @@ function _modelSheetToWs(sm, title){
   /* Centered heading block: company, statement, period */
   _wsSetCell(ws, 0, 0, state.client, { ...XL_STYLES.title, font: { bold: true, sz: 16, color: { rgb: 'FFFFFF' } }, alignment: center }, null, { border: false });
   _wsSetCell(ws, 1, 0, title || ROLE_LABELS[sm.role] || sm.name, { ...XL_STYLES.subtitle, font: { bold: true, sz: 12, color: { rgb: 'FFFFFF' } }, alignment: center }, null, { border: false });
-  _wsSetCell(ws, 2, 0, sm.role === 'plComparative' ? sub : sub + '  ·  Amounts in US Dollars ($)', { ...XL_STYLES.subtitle, alignment: center }, null, { border: false });
+  _wsSetCell(ws, 2, 0, tableSectionSub(sm), { ...XL_STYLES.subtitle, alignment: center }, null, { border: false });
   for (let c = 1; c <= last; c++){
     _wsSetCell(ws, 0, c, '', XL_STYLES.title, null, { border: false });
     _wsSetCell(ws, 1, c, '', XL_STYLES.subtitle, null, { border: false });
@@ -215,6 +215,13 @@ function _modelSheetToWs(sm, title){
   const HEAD_R = 4;
   _wsSetCell(ws, HEAD_R, 0, 'Particulars', { ...XL_STYLES.headL, alignment: { horizontal: 'left', vertical: 'center' } });
   cols.forEach((c, i) => _wsSetCell(ws, HEAD_R, i + 1, _headLabel(c), { ...XL_STYLES.head, alignment: { horizontal: 'center', vertical: 'center', wrapText: true } }));
+
+  /* Percent columns stored as fractions (every value within ±1) keep that scale for the total row too. */
+  const fractionCols = new Set(cols.filter(c => c.type === 'percent' && sm.lines.every(line => {
+    const v = (rows[line.r] || [])[c.idx];
+    const n = isPercentText(v) ? null : parseAmount(v);
+    return n === null || Math.abs(n) <= 1;
+  })).map(c => c.idx));
 
   let out = HEAD_R + 1;
   for (const line of sm.lines){
@@ -234,7 +241,7 @@ function _modelSheetToWs(sm, title){
       const base = isGrand ? XL_STYLES.grandVal : isTotal ? XL_STYLES.totalVal : c.type === 'percent' ? XL_STYLES.pctCell : XL_STYLES.money;
       const style = { ...base, alignment: { horizontal: 'right', vertical: 'center' } };
       if (c.type === 'percent' && (n !== null || isPercentText(v))){
-        const pv = isPercentText(v) ? parseFloat(String(v).replace(/[^\d.\-]/g, '')) / 100 * (/^\(/.test(String(v).trim()) ? -1 : 1) : (Math.abs(n) < 1 ? n : n / 100);
+        const pv = isPercentText(v) ? parseFloat(String(v).replace(/[^\d.\-]/g, '')) / 100 * (/^\(/.test(String(v).trim()) ? -1 : 1) : (fractionCols.has(c.idx) || Math.abs(n) < 1 ? n : n / 100);
         _wsSetCell(ws, out, i + 1, pv, { ...style, numFmt: XL.pctFmt });
       } else if (n !== null) _wsSetCell(ws, out, i + 1, n, { ...style, font: { ...(style.font || {}), ...(n < 0 ? { color: { rgb: 'C93438' } } : {}) } });
       else if (cellText(v) !== '') _wsSetCell(ws, out, i + 1, cellText(v), { ...XL_STYLES.plain, alignment: { horizontal: 'right' } });

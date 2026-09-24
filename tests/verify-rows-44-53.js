@@ -21,8 +21,49 @@ check('Row 45 BS_Comparative regex', /bs.*comparative|bsComparative/i.test(parse
 check('Row 46 TrialBalance role', /trial ?balance|role.*['"]tb['"]/i.test(parser) || /['"]tb['"]/.test(src));
 check('Row 46 tb tabColor', /tb:\s*['"]?[0-9A-F]{6}/i.test(src));
 check('Row 47 freeze row 5', /freezeRow\s*=\s*5|ySplit:\s*5/.test(src));
-check('Row 48/51 no USD in headings', !/Amounts in US Dollars/.test(rep) || /section\s*!==\s*3/.test(rep));
+check('Row 48/51 statement heading has no USD note', !/function tableSectionSub[\s\S]*?US Dollars[\s\S]*?\n}/.test(rep.slice(rep.indexOf('function tableSectionSub'), rep.indexOf('function pageFooter'))));
+check('Row 48/51 Excel heading row 3 uses the shared subtitle', /_wsSetCell\(ws, 2, 0, tableSectionSub\(sm\)/.test(src));
 check('Row 52 A/P total pct format', /numFmt.*'0\.00%/.test(src) && /totalVal/.test(src));
+
+/* Behaviour: parse a Pluto-style workbook with the real parser + report code. */
+const vm = require('vm');
+const ctx = {
+  console: { log() {}, warn() {}, error() {} },
+  document: { querySelector: () => null, querySelectorAll: () => [], createElement: () => ({ style: {} }), getElementById: () => null, addEventListener() {} },
+  localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+  setTimeout, clearTimeout
+};
+ctx.window = ctx;
+vm.createContext(ctx);
+const files = ['src/core/util.js', 'src/core/state.js', 'src/core/parser.js', 'src/core/financials.js', 'src/core/recompute.js',
+  'src/report/charts.js', 'src/report/report.js'];
+vm.runInContext(files.map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n;\n') +
+  '\n;globalThis.__api = { parseWorkbook, state, tableSectionSub, reportSections, reportTableParts, agingTableHtml };', ctx);
+const api = ctx.__api;
+const head = t => [['Pluto Asset Recovery'], [t], ['January-December 2025'], []];
+const sheets = {
+  'PL': [...head('Profit and Loss'), ['', 'Jan-Dec 2025', 'Jan-Dec 2024 (PY)'], ['Income'], ['Sales', 1000, 900], ['Total for Income', 1000, 900],
+    ['Expenses'], ['Rent', 400, 300], ['Total for Expenses', 400, 300], ['Net Income', 600, 600]],
+  'BS_Comparative': [...head('Balance Sheet'), ['', 'As of Dec 31, 2025', 'As of Dec 31, 2024 (PY)'], ['Assets'], ['Checking', 500, 400],
+    ['Total for Assets', 500, 400], ['Liabilities and Equity'], ['Accounts Payable', 100, 50], ['Total for Liabilities and Equity', 500, 400]],
+  'TrialBalance': [...head('Trial Balance'), ['', 'Debit', 'Credit'], ['Checking', 500, ''], ['Accounts Payable', '', 100], ['Sales', '', 1000],
+    ['Rent', 400, ''], ['TOTAL', 900, 1100]],
+  'A/P Aging Summary': [...head('A/P Aging Summary'), ['', 'Current', '1 - 30', 'Total', '% of Total'], ['Vendor A', 60, 15, 75, 0.75],
+    ['Vendor B', 25, 0, 25, 0.25], ['TOTAL', 85, 15, 100, 1]]
+};
+api.state.sheets = sheets;
+const md = api.parseWorkbook(sheets);
+api.state.model = md;
+const ids = api.reportSections().map(x => x.sheet).filter(Boolean);
+check('Row 44/49 "PL" tab captured', [md.roles.pl, md.roles.plMonthly, md.roles.plComparative].includes('PL') && ids.includes('PL'));
+check('Row 45/50 "BS_Comparative" tab captured', [md.roles.bs, md.roles.bsComparative].includes('BS_Comparative') && ids.includes('BS_Comparative'));
+check('Row 46/53 "TrialBalance" tab captured', md.roles.tb === 'TrialBalance' && ids.includes('TrialBalance'));
+check('Row 48/51 statement headings drop the USD note',
+  Object.values(md.sheetModels).every(sm => !/US Dollars/.test(api.tableSectionSub(sm))));
+const apRows = api.reportTableParts(md.sheetModels[md.roles.ap], {}).rows;
+check('Row 52 A/P aging bottom-line % shows 100.0%', /100\.0%<\/td><\/tr>$/.test(apRows[apRows.length - 1].html));
+check('Row 52 A/P aging detail total % shows 100.00%',
+  /<td class="num">100\.00%<\/td><\/tr>/.test(api.agingTableHtml({ total: 100, buckets: [{ label: 'Current', value: 85 }, { label: '1 - 30', value: 15 }] })));
 
 console.log(`${pass + fail} assertions, ${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);
