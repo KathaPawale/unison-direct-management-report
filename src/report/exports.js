@@ -296,6 +296,7 @@ function _modelSheetToWs(sm, title){
     });
     out++;
   }
+  if (out === HEAD_R + 1) _wsSetCell(ws, out, 0, emptySheetText(sm), { ...XL_STYLES.plain, font: { italic: true, sz: 10, color: { rgb: '5B6B7F' } } });
   const widest = Math.max(30, ...sm.lines.map(l => l.label.length + Math.min(l.indent, 10) * 2));
   ws['!cols'] = [{ wch: 34 }, ...cols.map(c => ({ wch: c.type === 'percent' ? 12 : 14 }))];
   ws['!rows'] = [{ hpt: 26 }, { hpt: 20 }, { hpt: 18 }, { hpt: 6 }, { hpt: 30 }];

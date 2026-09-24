@@ -148,11 +148,11 @@ const AGING_BUCKET_RES = [
   /^current$/, /^not due$/, /^(0|1) ?(-|to) ?30( days?)?( past due)?$/, /^31 ?(-|to) ?60( days?)?( past due)?$/,
   /^61 ?(-|to) ?90( days?)?( past due)?$/, /^91 ?(-|to) ?120( days?)?( past due)?$/,
   /^(91|90) ?(\+|and over|or more|plus)( days?)?( past due)?$/, /^(over|more than|>) ?(90|120)( days?)?$/,
-  /^(121|120) ?(\+|and over|or more|plus)( days?)?$/, /^> ?90$/
+  /^(121|120) ?(\+|and over|or more|plus)( days?)?$/, /^> ?90$/, /^older$/, /^(91|90) ?(\+|and over|or more|plus)? ?older$/
 ];
 
 /* Classify one header cell. Returns {kind, …} or null.
- * kinds: month | period | total | change | percent | bucket | comment */
+ * kinds: month | period | total | change | percent | bucket | amount | comment */
 function classifyHeader(v){
   if (v === null || v === undefined || v === '') return null;
   if (typeof v === 'number'){
@@ -167,6 +167,9 @@ function classifyHeader(v){
   const flat = t.replace(/[^a-z0-9%+>]+/g, ' ').trim();
 
   if (/^(grand )?total$/.test(flat)) return { kind: 'total' };
+  /* Trial Balance: Debit / Credit amount columns; "Account Type" is a descriptive column, not part of the account name. */
+  if (/^(debit|credit|dr|cr|debits|credits)$/.test(flat)) return { kind: 'amount' };
+  if (/^(account )?type$/.test(flat)) return { kind: 'comment' };
   if (/%|\bpercent|\bpct\b/.test(t)) return { kind: 'percent' };
   if (/^(\$ ?)?(change|variance|difference|diff|inc dec|increase decrease|movement)$/.test(flat)) return { kind: 'change' };
   const tb = t.replace(/\s+/g, ' ').replace(/\bdays?\b|\bpast due\b/g, '').trim();
@@ -274,6 +277,7 @@ function findHeaderRow(rows){
       if (h.kind === 'comment') continue;
       if (h.kind === 'month' || h.kind === 'bucket'){ score += 3; periodish++; }
       else if (h.kind === 'period'){ score += (h.sub === 'generic' ? 1 : 2); periodish++; }
+      else if (h.kind === 'amount'){ score += 2; periodish++; }
       else score += 1;
     }
     if (firstText !== null && !LABEL_HEADER_WORDS.test(firstText) && periodish < 2) penalty += 2;
@@ -334,7 +338,9 @@ function classifyColumns(rows, headerRow){
     const h = hdr[c];
     const headLabel = cellText(header[c]);
     let col = { idx: c, type: 'value', label: headLabel };
-    if (firstValue < 0 ? c === 0 : c < firstValue){
+    if (c > 0 && h && h.kind === 'comment' && (firstValue < 0 || c < firstValue)){
+      col.type = 'comment'; col.empty = nText[c] === 0;
+    } else if (firstValue < 0 ? c === 0 : c < firstValue){
       col.type = 'label';
       if (nText[c] === 0 && nNum[c] === 0) col.empty = true;
     } else if (!isValue(c)){

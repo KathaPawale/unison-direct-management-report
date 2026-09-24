@@ -82,17 +82,23 @@ function plutoWorkbook(){
     ['Assets'], ['Checking', 8000, 6000], ['Total for Assets', 8000, 6000], ['Liabilities and Equity'], ['Current Liabilities'], ['Accounts Payable', 1000, 800],
     ['Total for Current Liabilities', 1000, 800], ['Total for Liabilities', 1000, 800], ['Equity'], ['Retained Earnings', 7000, 5200], ['Total for Equity', 7000, 5200],
     ['Total for Liabilities and Equity', 8000, 6000]];
-  const tb = [...T(client, 'Trial Balance', 'As of December 31, 2025'), ['', 'Debit', 'Credit'], ['Checking', 8000, ''], ['Accounts Payable', '', 1000],
-    ['Retained Earnings', '', 1394.8], ['Sales', '', 10000], ['Rent', 4000, ''], ['Travel', 268.2, ''], ['Legal & Professional Fees', 126.6, ''], ['TOTAL', 12394.8, 12394.8]];
-  const ap = [...T(client, 'A/P Aging Summary', 'As of December 31, 2025'), ['', 'Current', '1 - 30', 'Total', '% of Total'],
-    ['Vendor A', 600, 150, 750, 0.75], ['Vendor B', 250, 0, 250, 0.25], ['TOTAL', 850, 150, 1000, 1]];
+  /* As in the client's file: an "Account Type" column between the account and Debit / Credit. */
+  const tb = [...T(client, 'Trial Balance', 'As of December 31, 2025'), ['Account', 'Account Type', 'Debit', 'Credit'], ['Checking', 'Bank', 8000, ''],
+    ['Accounts Payable', 'Accounts Payable', '', 1000], ['Retained Earnings', 'Equity', '', 1394.8], ['Sales', 'Revenue', '', 10000], ['Rent', 'Expense', 4000, ''],
+    ['Travel', 'Expense', 268.2, ''], ['Legal & Professional Fees', 'Expense', 126.6, ''], ['TOTAL', '', 12394.8, 12394.8]];
+  const ap = [...T(client, 'A/P Aging Summary', 'As of December 31, 2025'), ['Contact', 'Current', '1 - 30 Days', 'Older', 'Total', '% of Total'],
+    ['Vendor A', 600, 150, 0, 750, 0.75], ['Vendor B', 150, 0, 100, 250, 0.25], ['TOTAL', 750, 150, 100, 1000, 1]];
+  /* An aging report with no open items. */
+  const ar = [['Accounts Receivable Aging Summary'], [client], ['As of December 31, 2025'], ['Aging by due date']];
   return { name: 'Pluto: PL / PL (% Income) / BS_Comparative / TrialBalance / A/P aging', client, period,
-    sheets: { 'PL': pl, 'PL (% Income)': pct, 'BS_Comparative': bsc, 'TrialBalance': tb, 'AP Aging Summary': ap },
-    pctFormatted: { 'AP Aging Summary': [4] },
+    sheets: { 'PL': pl, 'PL (% Income)': pct, 'BS_Comparative': bsc, 'TrialBalance': tb, 'AR_Aging': ar, 'AP Aging Summary': ap },
+    pctFormatted: { 'AP Aging Summary': [5] },
     expect: { roles: { plComparative: 'PL', plPercent: 'PL (% Income)', tb: 'TrialBalance', ap: 'AP Aging Summary' }, income: 10000, net: 5605.2,
       hasPrior: true, priorIncome: 9000, months: 0,
       pctRows: { 'PL (% Income)': { 'Travel': '2.7%', 'Legal & Professional Fees': '1.3%', 'Net Income': '56.1%' } },
       excelSheets: ['Profit and Loss (Comparative)', 'Profit and Loss (% of Income)', 'Trial Balance', 'AP Aging'],
+      tbAccounts: ['Checking', 'Accounts Payable', 'Rent'], apBuckets: ['Current', '1 - 30 Days', 'Older'], emptyAR: true,
+      periods: { tb: 'As of December 31, 2025', plPercent: 'January – December 2025' },
       sections: ['bs', 'tb', 'plComparative', 'plPercent', 'ap'] } };
 }
 
@@ -346,7 +352,9 @@ function checkWorkbook(w, r, excel, pdf, errors){
   /* Rows 9, 12, 19, 28, 36: percentages */
   const eg = r.expenseGroups;
   if (eg.length){
-    check(`${tag} Rows 9/19/36 every expense share within 0-100%`, eg.every(g => g.pct >= -0.001 && g.pct <= 100.001), eg.map(g => g.pct.toFixed(2)).join(','));
+    /* A credit inside expenses (refund, surplus returned) is a negative share; no share passes 100% and all add to 100%. */
+    check(`${tag} Rows 9/19/36 every expense share within ±100% with the sign of its amount`,
+      eg.every(g => Math.abs(g.pct) <= 100.001 && (g.value >= 0 ? g.pct >= -0.001 : g.pct <= 0.001)), eg.map(g => g.pct.toFixed(2)).join(','));
     check(`${tag} Row 12 share = expense ÷ total expenses × 100`, eg.every(g => Math.abs(r.expenseTotal) < 0.01 || near(g.pct, g.value / Math.abs(r.expenseTotal) * 100, 0.02) || /activity/.test(r.expenseChartText)));
     check(`${tag} Row 28 expense % shown on the portal chart`, /\d+(\.\d+)?%/.test(r.expenseChartText));
   }
@@ -367,6 +375,16 @@ function checkWorkbook(w, r, excel, pdf, errors){
   if (e.longLiab !== undefined) check(`${tag} Row 22 Long-Term Liabilities total = ${e.longLiab}`, near((r.liab.find(x => /long/i.test(x.label)) || {}).value ?? 0, e.longLiab));
   const liabTitles = r.pages.reduce((n, p) => n + (p.text.match(/LIABILITIES BIFURCATION/gi) || []).length, 0);
   check(`${tag} Rows 26/31 Liabilities Bifurcation appears at most once in the PDF`, liabTitles <= 1, liabTitles);
+
+  /* Trial Balance: Debit / Credit headings, account type not glued onto the account name */
+  for (const p of page('tb')) check(`${tag} Row 46 Trial Balance shows Debit and Credit columns`, p.headers.includes('Debit') && p.headers.includes('Credit'), p.headers.join(','));
+
+  for (const a of e.tbAccounts || [])
+    check(`${tag} Row 46 Trial Balance account "${a}" without its account type`, page('tb').some(p => p.pctCells[a] !== undefined), Object.keys((page('tb')[0] || {}).pctCells || {}).slice(0, 4).join(' | '));
+  for (const b of e.apBuckets || []) check(`${tag} Row 13 A/P aging bucket "${b}"`, page('ap').some(p => p.headers.includes(b)), page('ap').map(p => p.headers.join(',')).join(' / '));
+  if (e.emptyAR) check(`${tag} Row 13 empty A/R aging says there are no open receivables`, page('ar').some(p => /No open receivables as of/.test(p.text)));
+  for (const [id, want] of Object.entries(e.periods || {}))
+    check(`${tag} Row 23 ${id} heading shows its own period "${want}"`, page(id).length && page(id).every(p => p.text.includes(want)), (page(id)[0] || {}).text && page(id)[0].text.slice(0, 120));
 
   /* Row 13, 27: aging + cash basis */
   if (e.noAR) check(`${tag} Row 27 cash basis: no A/R anywhere in the report`, r.suppressAR && !r.pages.some(p => p.id === 'ar') && !r.pages.some(p => /5,205\.70/.test(p.text)));
@@ -445,7 +463,10 @@ function checkWorkbook(w, r, excel, pdf, errors){
   const server = await serve();
   const base = 'http://127.0.0.1:' + server.address().port + '/index.html';
   const browser = await chromium.launch({ executablePath: exe });
-  const books = [row54Workbook(), plutoWorkbook(), comparativePctWorkbook(), halfYearCashWorkbook(), ...fixtureWorkbooks()]
+  /* TRACKER_XLSX=path/to/client.xlsx runs every check on a real client workbook instead of the built-in set. */
+  const books = (process.env.TRACKER_XLSX
+    ? [{ name: path.basename(process.env.TRACKER_XLSX), file: fs.readFileSync(process.env.TRACKER_XLSX), expect: {} }]
+    : [row54Workbook(), plutoWorkbook(), comparativePctWorkbook(), halfYearCashWorkbook(), ...fixtureWorkbooks()])
     .filter(w => !process.env.TRACKER_ONLY || w.name.includes(process.env.TRACKER_ONLY));   // e.g. TRACKER_ONLY="Row 54"
   if (!books.length) throw new Error('No workbook matches TRACKER_ONLY=' + process.env.TRACKER_ONLY);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'udmr-'));
@@ -459,7 +480,7 @@ function checkWorkbook(w, r, excel, pdf, errors){
       await page.goto(base, { waitUntil: 'networkidle' });
       await page.evaluate(() => { localStorage.clear(); resetState(); });
       await page.evaluate(() => goPage('uploads'));
-      await page.setInputFiles('#fileInput', { name: 'workbook.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: toXlsx(w) });
+      await page.setInputFiles('#fileInput', { name: 'workbook.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: w.file || toXlsx(w) });
       await page.click('#processBtn');
       await page.waitForFunction(() => document.querySelector('#loadedStatus').classList.contains('ok') && state.model, null, { timeout: 20000 });
       const toastText = await page.evaluate(() => document.querySelector('#toast').textContent);
