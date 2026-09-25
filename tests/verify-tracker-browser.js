@@ -280,6 +280,44 @@ function inspectPage(){
   return out;
 }
 
+/* ---------- downloaded Excel file ---------- */
+
+/* Reads what Excel will actually see: every value, style (border, number format, alignment), tab color and
+ * frozen pane comes from the saved .xlsx, not from the app's in-memory workbook. */
+function readXlsxFile(file){
+  const buf = fs.readFileSync(file);
+  const zip = XLSX.CFB.read(buf, { type: 'buffer' });
+  const get = suffix => { const i = zip.FullPaths.findIndex(p => p.endsWith(suffix)); return i < 0 ? '' : Buffer.from(zip.FileIndex[i].content).toString(); };
+  const unxml = t => t.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  const styles = get('/xl/styles.xml');
+  const section = tag => (styles.match(new RegExp('<' + tag + '\\b[^>]*>([\\s\\S]*?)</' + tag + '>')) || ['', ''])[1];
+  const fmts = Object.fromEntries([...section('numFmts').matchAll(/<numFmt numFmtId="(\d+)" formatCode="([^"]*)"/g)].map(m => [m[1], unxml(m[2])]));
+  const borders = [...section('borders').matchAll(/<border\b[^>]*?(?:\/>|>([\s\S]*?)<\/border>)/g)]
+    .map(m => ['left', 'right', 'top', 'bottom'].every(side => new RegExp('<' + side + '\\b[^>]*style="').test(m[1] || '')));
+  const xfs = [...section('cellXfs').matchAll(/<xf\b([^>]*?)(?:\/>|>([\s\S]*?)<\/xf>)/g)].map(m => {
+    const id = (m[1].match(/numFmtId="(\d+)"/) || [])[1] || '0';
+    /* Excel's built-in formats: 9 = 0%, 10 = 0.00%. */
+    return { fmt: fmts[id] || { 0: '', 9: '0%', 10: '0.00%' }[id] || 'builtin ' + id, border: borders[+((m[1].match(/borderId="(\d+)"/) || [])[1] || 0)] || false,
+             horizontal: ((m[2] || '').match(/horizontal="(\w+)"/) || [])[1] || '' };
+  });
+  const back = XLSX.read(buf, { type: 'buffer' });
+  const names = [...get('/xl/workbook.xml').matchAll(/<sheet [^>]*name="([^"]+)"/g)].map(m => unxml(m[1]));
+  return names.map((name, i) => {
+    const xml = get('/xl/worksheets/sheet' + (i + 1) + '.xml');
+    const ws = back.Sheets[name] || {};
+    const cells = [...xml.matchAll(/<c r="([A-Z]+)(\d+)"([^>]*?)(?:\/>|>[\s\S]*?<\/c>)/g)].map(m => {
+      const st = xfs[+((m[3].match(/\bs="(\d+)"/) || [])[1] || 0)] || {};
+      const t = (m[3].match(/\bt="(\w+)"/) || [])[1] || 'n';
+      return { col: m[1], row: +m[2], numeric: t === 'n' && ws[m[1] + m[2]] && typeof ws[m[1] + m[2]].v === 'number', ...st };
+    });
+    const pane = xml.match(/<pane [^>]*\/>/);
+    const val = a => (ws[a] || {}).v ?? '';
+    return { name, xml, cells, val, tabColor: (xml.match(/<sheetPr>[^]*?<tabColor rgb="([0-9A-F]{8})"/) || [])[1] || null,
+      pane: pane && /state="frozen"/.test(pane[0]) ? ((pane[0].match(/topLeftCell="([A-Z]+\d+)"/) || [])[1] || null) : null,
+      xSplit: pane ? +((pane[0].match(/xSplit="(\d+)"/) || [])[1] || 0) : 0, ySplit: pane ? +((pane[0].match(/ySplit="(\d+)"/) || [])[1] || 0) : 0 };
+  });
+}
+
 /* ---------- checks ---------- */
 
 function near(a, b, tol = 0.011){ return a !== null && a !== undefined && Math.abs(a - b) <= tol; }
@@ -411,6 +449,13 @@ function checkWorkbook(w, r, excel, pdf, errors){
     check(`${tag} Row 26 monthly P&L page carries every month and the Total`, monthHeads.length === r.months.length && p.headers.includes('Total'), p.headers.join(','));
   }
 
+  /* Row 43: the monthly P&L never splits its columns across pages and is printed landscape */
+  const mp = page('plMonthly');
+  if (mp.length){
+    check(`${tag} Row 43 monthly P&L pages are landscape`, mp.every(p => p.orientation === 'landscape'), mp.map(p => p.orientation).join(','));
+    check(`${tag} Row 43 monthly P&L columns not split across pages`, mp.every(p => p.headers.join('|') === mp[0].headers.join('|')), mp.map(p => p.headers.length).join(','));
+  }
+
   /* Rows 29, 30, 33 */
   if (e.basis) check(`${tag} Row 29 basis is ${e.basis}`, r.basis === e.basis);
   check(`${tag} Row 29 cover basis is Cash or Accrual, never currency text`, /Basis\s*(Cash|Accrual) Basis/i.test(cover.text.replace(/\n/g, ' ')), cover.text.slice(0, 300));
@@ -453,7 +498,19 @@ function checkWorkbook(w, r, excel, pdf, errors){
   check(`${tag} Rows 42/47 statement sheets freeze rows 1-5 and column A in the file`, stmts.every(s => s.pane === 'B6'), stmts.map(s => s.name + ':' + s.pane).join(','));
   check(`${tag} Row 47 row 5 is "Particulars" on the model statement sheets`, stmts.filter(s => !s.aging).every(s => s.a5 === 'Particulars'), stmts.map(s => s.name + ':' + s.a5).join(','));
   check(`${tag} Rows 48/51 no "Amounts in US Dollars" under the heading`, stmts.every(s => !/US Dollars/.test(s.a3)));
-  check(`${tag} Row 23 Excel heading rows centred`, stmts.filter(s => !s.aging).every(s => s.centered));
+  check(`${tag} Row 23 Excel heading rows centred`, stmts.filter(s => !s.aging).every(s => s.centered), stmts.filter(s => !s.aging && !s.centered).map(s => s.name).join(','));
+  check(`${tag} Rows 44/45 every Excel amount uses the accounting format ($ negatives in parentheses)`, stmts.every(s => !s.nonAccounting.length),
+    stmts.filter(s => s.nonAccounting.length).map(s => s.name + ': ' + s.nonAccounting.slice(0, 3).join(', ')).join(' | '));
+  check(`${tag} Row 41 tab colours differ by statement type`, new Set(excel.sheets.map(s => s.tabColor)).size >= Math.min(3, excel.sheets.length));
+  /* Row 40: Notes sheet formatted as a table (title, Line Item / Category | Note headings) */
+  const notesWs = excel.sheets.find(s => s.name === 'Notes');
+  check(`${tag} Row 40 Notes sheet has its title and "Line Item / Category" / "Note" headings`, notesWs && /Notes to Financial Statements/.test(String(notesWs.val('A1'))) &&
+    notesWs.val('A4') === 'Line Item / Category' && notesWs.val('B4') === 'Note', notesWs && [notesWs.val('A1'), notesWs.val('A4'), notesWs.val('B4')].join(' | '));
+  for (const n of e.notes || []) check(`${tag} Row 40 note "${n}" in the Excel Notes sheet`, notesWs && /<v>[^<]*/.test(notesWs.xml) && notesWs.xml.includes(n));
+  /* Data workbook (as uploaded): every sheet has a tab colour; every sheet with columns freezes its heading rows and column A */
+  const data = excel.data || [];
+  check(`${tag} Row 41 every data-workbook sheet has a tab colour`, data.length && data.every(s => s.tabColor), data.filter(s => !s.tabColor).map(s => s.name).join(','));
+  check(`${tag} Rows 42/47 every data-workbook sheet freezes its heading rows`, data.length && data.every(s => s.ySplit >= 1), data.filter(s => s.ySplit < 1).map(s => s.name).join(','));
 }
 
 /* ---------- run ---------- */
@@ -499,29 +556,21 @@ function checkWorkbook(w, r, excel, pdf, errors){
         const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 20000 }), page.evaluate(() => downloadReportExcel())]);
         const file = path.join(tmp, 'report.xlsx');
         await dl.saveAs(file);
-        const info = await page.evaluate(() => window.__lastWb.SheetNames.map(name => {
-          const ws = window.__lastWb.Sheets[name];
-          let unbordered = 0, unformatted = 0;
-          const range = XLSX.utils.decode_range(ws['!ref']);
-          for (let rr = 4; rr <= range.e.r; rr++) for (let cc = 0; cc <= range.e.c; cc++){
-            const cell = ws[XLSX.utils.encode_cell({ r: rr, c: cc })];
-            if (!cell) continue;
-            const b = (cell.s || {}).border || {};
-            if (!(b.top && b.bottom && b.left && b.right)) unbordered++;
-            if (cell.t === 'n' && (!cell.z || ((cell.s || {}).alignment || {}).horizontal !== 'right')) unformatted++;
-          }
-          const a1 = ws.A1 || {};
-          return { name, tab: !!ws['!tabColor'], unbordered, unformatted, a3: (ws.A3 || {}).v || '', a5: (ws.A5 || {}).v || '',
-            aging: /Aging Bucket/.test(String((ws.A5 || {}).v || '')), centered: ((a1.s || {}).alignment || {}).horizontal === 'center' };
-        }));
-        const zip = XLSX.CFB.read(fs.readFileSync(file), { type: 'buffer' });
-        info.forEach((s, i) => {
-          const at = zip.FullPaths.findIndex(p => p.endsWith('/xl/worksheets/sheet' + (i + 1) + '.xml'));
-          const xml = at >= 0 ? Buffer.from(zip.FileIndex[at].content).toString() : '';
-          const m = xml.match(/<pane [^>]*topLeftCell="([A-Z]+\d+)"[^>]*state="frozen"/);
-          s.pane = m ? m[1] : null;
+        excel.sheets = readXlsxFile(file).map(sh => {
+          const body = sh.cells.filter(c => c.row >= 5);
+          const a5 = String(sh.val('A5'));
+          return { ...sh, tab: !!sh.tabColor, a3: String(sh.val('A3')), a5, aging: /Aging Bucket/.test(a5),
+            unbordered: body.filter(c => !c.border).length,
+            unformatted: body.filter(c => c.numeric && (!c.fmt || c.horizontal !== 'right')).length,
+            nonAccounting: body.filter(c => c.numeric && c.fmt && !/%/.test(c.fmt) && !/\(#,##0\.00\)/.test(c.fmt)).map(c => c.col + c.row + ' ' + c.fmt),
+            centered: (sh.cells.find(c => c.col === 'A' && c.row === 1) || {}).horizontal === 'center' };
         });
-        excel.sheets = info; excel.ok = true;
+        excel.ok = true;
+        /* Data workbook: every uploaded sheet colored and frozen at its heading row */
+        const [dd] = await Promise.all([page.waitForEvent('download', { timeout: 20000 }), page.evaluate(() => downloadDataExcel())]);
+        const dfile = path.join(tmp, 'data.xlsx');
+        await dd.saveAs(dfile);
+        excel.data = readXlsxFile(dfile);
       } catch (err){ excel.error = String(err.message || err); }
 
       /* PDF: save through the app's own savePdf and read the file back */
