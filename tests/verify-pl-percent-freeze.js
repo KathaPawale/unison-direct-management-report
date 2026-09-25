@@ -47,6 +47,7 @@ const body = pct => [['Income'], ['Sales', 1000, ...(pct ? ['100.00%'] : [])], [
   ['Expenses'], ['Rent', 400, ...(pct ? ['40.00%'] : [])], ['Total for Expenses', 400, ...(pct ? ['40.00%'] : [])],
   ['Net Income', 600, ...(pct ? ['60.00%'] : [])]];
 const pctSheet = (amountHead, pctHead = '% of Income') => [...head('Profit and Loss % of Total Income'), ['', amountHead, pctHead], ...body(true)];
+const fracBody = () => body(true).map(r => r.length > 2 ? [r[0], r[1], parseFloat(r[2]) / 100] : r);
 const bs = [...head('Balance Sheet'), ['', 'Total'], ['Assets'], ['Checking', 500], ['Total for Assets', 500],
   ['Liabilities and Equity'], ['Accounts Payable', 100], ['Total for Liabilities and Equity', 500]];
 
@@ -56,6 +57,24 @@ const layouts = {
   'period column (Jan - Dec 2025)': { 'PL': [...head('Profit and Loss'), ['', 'Jan - Dec 2025'], ...body(false)], 'PL (% Income)': pctSheet('Jan - Dec 2025'), 'BS': bs },
   'comparative P&L + % sheet': { 'PL': [...head('Profit and Loss'), ['', 'Jan-Dec 2025', 'Jan-Dec 2024 (PY)'], ['Income'], ['Sales', 1000, 900],
     ['Total for Income', 1000, 900], ['Net Income', 600, 500]], 'PL (% Income)': pctSheet('Jan - Dec 2025'), 'BS': bs },
+  /* QuickBooks stacked heading: the period over "Amount | % of Income". */
+  'two-row heading': { 'PL': [...head('Profit and Loss'), ['', 'Total'], ...body(false)], 'BS': bs,
+    'PL (% Income)': [...head('Profit and Loss % of Total Income'), ['', 'Jan - Dec, 2025', ''], ['', 'Amount', '% of Income'], ...fracBody()] },
+  /* The % column has no heading: its figures are each line's share of income. */
+  'unlabelled % column': { 'PL': [...head('Profit and Loss'), ['', 'Total'], ...body(false)], 'BS': bs,
+    'PL (% Income)': [...head('Profit and Loss % of Total Income'), ['', 'Total', ''], ...fracBody()] },
+  /* Month-by-month % sheet next to the monthly P&L: the % sheet must not take the monthly P&L's place. */
+  'monthly % sheet': { 'PL (% Income)': [...head('Profit and Loss % of Total Income'), ['', 'Jan 2025', 'Feb 2025', 'Total', '% of Income'],
+    ...fracBody().map(r => r.length > 1 ? [r[0], r[1] / 2, r[1] / 2, r[1], r[2]] : r)], 'PL': [...head('Profit and Loss'), ['', 'Jan 2025', 'Feb 2025', 'Total'],
+    ...body(false).map(r => r.length > 1 ? [r[0], r[1] / 2, r[1] / 2, r[1]] : r)], 'BS': bs },
+  /* The client's full set: PL, PL (% Income), PL_MoM, PL_Comparative, BS, BS_Comparative, TrialBalance. */
+  'full Pluto set': { 'PL': [...head('Profit and Loss'), ['', 'Total'], ...body(false)], 'PL (% Income)': pctSheet('Total'),
+    'PL_MoM': [...head('Profit and Loss'), ['', 'Jan 2025', 'Feb 2025', 'Total'], ...body(false).map(r => r.length > 1 ? [r[0], r[1] / 2, r[1] / 2, r[1]] : r)],
+    'PL_Comparative': [...head('Profit and Loss'), ['', 'Jan - Dec 2025', 'Jan - Dec 2024 (PY)'], ...body(false).map(r => r.length > 1 ? [r[0], r[1], r[1] * 0.9] : r)],
+    'BS': bs, 'BS_Comparative': [...head('Balance Sheet'), ['', 'As of Dec 31, 2025', 'As of Dec 31, 2024 (PY)'], ['Assets'], ['Checking', 500, 400],
+      ['Total for Assets', 500, 400], ['Liabilities and Equity'], ['Accounts Payable', 100, 80], ['Total for Liabilities and Equity', 500, 400]],
+    'TrialBalance': [...head('Trial Balance'), ['Account', 'Account Type', 'Debit', 'Credit'], ['Checking', 'Bank', 500, ''],
+      ['Accounts Payable', 'Accounts Payable', '', 100], ['Sales', 'Revenue', '', 400], ['TOTAL', '', 500, 500]] },
   '"% of Total Income" header': { 'Profit and Loss': [...head('Profit and Loss'), ['', 'Total'], ...body(false)], 'P&L % of Income': pctSheet('Total', '% of Total Income'), 'BS': bs }
 };
 
@@ -75,7 +94,7 @@ for (const [name, sheets] of Object.entries(layouts)){
   const md = api.parseWorkbook(sheets);
   api.state.model = md;
   const pctName = Object.keys(sheets).find(n => /%/.test(n));
-  const mainName = Object.keys(sheets).find(n => n !== pctName && n !== 'BS');
+  const mainName = Object.keys(sheets).find(n => n !== pctName && !/^(BS|TrialBalance)/.test(n) && !/_(MoM|Comparative)$/.test(n));
   check(`${name}: % of Income sheet detected`, md.roles.plPercent === pctName);
   check(`${name}: main P&L stays the amount sheet`, [md.roles.pl, md.roles.plComparative, md.roles.plMonthly].includes(mainName));
   check(`${name}: dashboard income from the main P&L`, md.metrics.income === 1000);
@@ -101,9 +120,16 @@ for (const [name, sheets] of Object.entries(layouts)){
       /xSplit="1"/.test(pane(xml)) && /ySplit="5"/.test(pane(xml)) && /topLeftCell="B6"/.test(pane(xml)) && /state="frozen"/.test(pane(xml)));
     check(`${name}: "${tab}" row 5 is Particulars`, /<c r="A5"[^>]*><v>Particulars<\/v><\/c>/.test(xml));
   }
+  for (const [tab, xml] of Object.entries(xmls))
+    check(`${name}: "${tab}" has a tab color`, /^<\?xml[^>]*>\s*<worksheet\b[^>]*><sheetPr><tabColor rgb="FF[0-9A-F]{6}"\/><\/sheetPr>/.test(xml));
+  if (sheets.TrialBalance){
+    check(`${name}: every uploaded sheet is captured`, Object.keys(sheets).every(n => Object.values(md.roles).includes(n)));
+    for (const t of ['Trial Balance', 'Profit and Loss', 'Profit and Loss (Monthly)', 'Profit and Loss (Comparative)', 'Balance Sheet — Comparative'])
+      check(`${name}: Excel has "${t}"`, t in xmls);
+  }
   check(`${name}: Cover and Disclaimer are not frozen`, !pane(xmls.Cover) && !pane(xmls.Disclaimer));
   const back = XLSX.read(downloads[0].bytes, { type: 'array' });
-  check(`${name}: workbook re-opens with all sheets`, back.SheetNames.length === Object.keys(xmls).length && back.Sheets[pctTab]['A5'].v === 'Particulars');
+  check(`${name}: workbook re-opens with all sheets`, back.SheetNames.length === Object.keys(xmls).length && !!pctTab && back.Sheets[pctTab]['A5'].v === 'Particulars');
 }
 
 /* Data workbook: header row frozen too. */
@@ -112,6 +138,8 @@ api.downloadDataExcel();
 const dataXml = sheetXml(downloads[0].bytes);
 for (const tab of ['Profit and Loss', 'P&L % of Income', 'BS'])
   check(`Data workbook: "${tab}" freezes rows 1-5 (its column-heading row)`, /ySplit="5"/.test(pane(dataXml[tab])) && /topLeftCell="B6"/.test(pane(dataXml[tab])));
+for (const [tab, xml] of Object.entries(dataXml))
+  check(`Data workbook: "${tab}" has a tab color`, /<sheetPr><tabColor rgb="FF[0-9A-F]{6}"\/><\/sheetPr>/.test(xml));
 check('No "could not be frozen" warnings', !toasts.some(t => /could not be frozen/.test(t)));
 
 console.log(`${pass + fail} assertions, ${pass} pass, ${fail} fail`);

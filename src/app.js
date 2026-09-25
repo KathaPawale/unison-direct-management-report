@@ -181,7 +181,7 @@ function renderStatements(){
   $('#plCompView').innerHTML = md && md.roles.plComparative && md.roles.plMonthly
     ? head('Profit and Loss — Comparative', get('plComparative')) + statementViewHtml(get('plComparative')) : '';
   /* Row 54: every captured statement is on this page, in report order. */
-  const extra = [['bsComparative', 'Balance Sheet — Comparative'], ['tb', 'Trial Balance'],
+  const extra = [['bsComparative', 'Balance Sheet — Comparative'], ['tb', 'Trial Balance'], ...(pl && pl.role !== 'pl' && get('pl') ? [['pl', 'Profit and Loss']] : []),
                  ['plPercent', 'Profit and Loss (% of Income)'], ['plClass', 'Profit and Loss — by Class']];
   const extraBox = $('#extraViews');
   if (extraBox) extraBox.innerHTML = extra.filter(([role]) => get(role)).map(([role, title]) =>

@@ -148,11 +148,11 @@ const AGING_BUCKET_RES = [
   /^current$/, /^not due$/, /^(0|1) ?(-|to) ?30( days?)?( past due)?$/, /^31 ?(-|to) ?60( days?)?( past due)?$/,
   /^61 ?(-|to) ?90( days?)?( past due)?$/, /^91 ?(-|to) ?120( days?)?( past due)?$/,
   /^(91|90) ?(\+|and over|or more|plus)( days?)?( past due)?$/, /^(over|more than|>) ?(90|120)( days?)?$/,
-  /^(121|120) ?(\+|and over|or more|plus)( days?)?$/, /^> ?90$/
+  /^(121|120) ?(\+|and over|or more|plus)( days?)?$/, /^> ?90$/, /^older$/, /^(91|90) ?(\+|and over|or more|plus)? ?older$/
 ];
 
 /* Classify one header cell. Returns {kind, …} or null.
- * kinds: month | period | total | change | percent | bucket | comment */
+ * kinds: month | period | total | change | percent | bucket | amount | comment */
 function classifyHeader(v){
   if (v === null || v === undefined || v === '') return null;
   if (typeof v === 'number'){
@@ -167,6 +167,9 @@ function classifyHeader(v){
   const flat = t.replace(/[^a-z0-9%+>]+/g, ' ').trim();
 
   if (/^(grand )?total$/.test(flat)) return { kind: 'total' };
+  /* Trial Balance: Debit / Credit amount columns; "Account Type" is a descriptive column, not part of the account name. */
+  if (/^(debit|credit|dr|cr|debits|credits)$/.test(flat)) return { kind: 'amount' };
+  if (/^(account )?type$/.test(flat)) return { kind: 'comment' };
   if (/%|\bpercent|\bpct\b/.test(t)) return { kind: 'percent' };
   if (/^(\$ ?)?(change|variance|difference|diff|inc dec|increase decrease|movement)$/.test(flat)) return { kind: 'change' };
   const tb = t.replace(/\s+/g, ' ').replace(/\bdays?\b|\bpast due\b/g, '').trim();
@@ -274,13 +277,45 @@ function findHeaderRow(rows){
       if (h.kind === 'comment') continue;
       if (h.kind === 'month' || h.kind === 'bucket'){ score += 3; periodish++; }
       else if (h.kind === 'period'){ score += (h.sub === 'generic' ? 1 : 2); periodish++; }
+      else if (h.kind === 'amount'){ score += 2; periodish++; }
       else score += 1;
     }
     if (firstText !== null && !LABEL_HEADER_WORDS.test(firstText) && periodish < 2) penalty += 2;
     score -= penalty;
     if (score > bestScore){ bestScore = score; best = r; }
   }
-  return bestScore >= 1 ? best : -1;
+  if (bestScore < 1) return -1;
+  /* A stacked QuickBooks heading ("Jan - Jul, 2026" over "Amount | % of Income"): the lower row names the columns. */
+  const next = rows[best + 1] || [];
+  if (!cellText(next[0]) && next.every(v => cellText(v) === '' || parseAmount(v) === null) &&
+      next.some((v, c) => c > 0 && (classifyHeader(v) || {}).kind === 'percent' && _numericBelow(rows, best + 1, c))) return best + 1;
+  return best;
+}
+
+/* The heading above a generic one ("Amount", blank) in a stacked two-row heading, e.g. "Jan - Jul, 2026". */
+function _stackedHead(rows, headerRow, c){
+  const cur = cellText((rows[headerRow] || [])[c]);
+  if (headerRow < 1 || (cur && !/^(amount|amt|balance|value|\$)$/i.test(cur))) return null;
+  const up = rows[headerRow - 1] || [];
+  if (cellText(up[0])) return null;
+  const h = classifyHeader(up[c]);
+  return h && ['period', 'total', 'month'].includes(h.kind) ? up[c] : null;
+}
+
+/* An unlabelled column that holds each line as a share of income (0.2505 or 25.05 next to 144,320.77 of 576,101.75). */
+function _shareOfIncomeColumn(rows, start, c, amountCol){
+  const incRow = rows.slice(start).find(row => /^total (for )?(income|revenues?|sales)$/.test(labelKey(cellText((row || [])[0]))));
+  const inc = incRow ? parseAmount(incRow[amountCol]) : null;
+  if (!inc) return false;
+  let hits = 0, seen = 0;
+  for (let r = start; r < rows.length; r++){
+    const a = parseAmount((rows[r] || [])[amountCol]), p = parseAmount((rows[r] || [])[c]);
+    if (a === null || p === null) continue;
+    seen++;
+    const share = a / inc;
+    if (Math.abs(p - share) < 0.0006 || Math.abs(p - share * 100) < 0.06) hits++;
+  }
+  return seen >= 3 && hits >= seen * 0.8;
 }
 
 /* Lines that are report metadata rather than statement content. */
@@ -308,7 +343,8 @@ function classifyColumns(rows, headerRow){
   const serial = headerRow >= 0 ? _serialMonthRow(header) : null;
   const serialBy = new Map((serial || []).map(x => [x.c, x]));
   const hdr = [];
-  for (let c = 0; c < width; c++) hdr[c] = serialBy.has(c) ? { kind: 'month', m: serialBy.get(c).m, y: serialBy.get(c).y } : classifyHeader(header[c]);
+  const headAt = c => _stackedHead(rows, headerRow, c) ?? header[c];
+  for (let c = 0; c < width; c++) hdr[c] = serialBy.has(c) ? { kind: 'month', m: serialBy.get(c).m, y: serialBy.get(c).y } : classifyHeader(headAt(c));
 
   const isValue = c => {
     const h = hdr[c];
@@ -332,9 +368,11 @@ function classifyColumns(rows, headerRow){
   const cols = [];
   for (let c = 0; c < width; c++){
     const h = hdr[c];
-    const headLabel = cellText(header[c]);
+    const headLabel = cellText(headAt(c));
     let col = { idx: c, type: 'value', label: headLabel };
-    if (firstValue < 0 ? c === 0 : c < firstValue){
+    if (c > 0 && h && h.kind === 'comment' && (firstValue < 0 || c < firstValue)){
+      col.type = 'comment'; col.empty = nText[c] === 0;
+    } else if (firstValue < 0 ? c === 0 : c < firstValue){
       col.type = 'label';
       if (nText[c] === 0 && nNum[c] === 0) col.empty = true;
     } else if (!isValue(c)){
@@ -352,8 +390,10 @@ function classifyColumns(rows, headerRow){
       else if (h.kind === 'percent') col.type = 'percent';
       else if (h.kind === 'bucket') { col.type = 'bucket'; col.label = /^current$/i.test(headLabel) ? 'Current' : headLabel; }
       else if (h.kind === 'period'){ col.type = 'period'; col.key = h.key; col.year = h.y; col.prior = h.prior; col.sub = h.sub;
-        if (typeof header[c] === 'number') col.label = String(header[c]); }
+        if (typeof headAt(c) === 'number') col.label = String(headAt(c)); }
     } else if (nPct[c] > nNum[c]) col.type = 'percent';
+    else if (!headLabel && cols.length && cols[c - 1].type !== 'label' && cols[c - 1].type !== 'percent' &&
+             _shareOfIncomeColumn(rows, start, c, c - 1)){ col.type = 'percent'; col.label = '% of Income'; }
     cols.push(col);
   }
 
@@ -548,7 +588,7 @@ function detectRoles(sheets, sheetModels){
     const className = /class ?wise|\bby (class|department|location|division|segment|project|site|branch)\b|\bclass(es)?\b|department ?wise|location ?wise/.test(text);
     const cls = !months && periods <= 1 && (className || (segCols >= 2 && sm.cols.some(c => c.type === 'rowTotal')));
     return { n, sm, months, buckets, periods, plName, bsName, bsComparative, tbName, plContent, bsContent, recv, pay, agingName, notes, cls,
-             pct: pctCol && months < 2 && (periods <= 1 || pctName), detail: /detail|by customer|by vendor|transaction/.test(text) };
+             pct: pctCol && ((months < 2 && periods <= 1) || pctName), detail: /detail|by customer|by vendor|transaction/.test(text) };
   });
   const free = x => !Object.values(roles).includes(x.n);
 
@@ -587,6 +627,8 @@ function detectRoles(sheets, sheetModels){
     if (!free(x)) continue;
     if (!roles.pl && !roles.plMonthly && !roles.plComparative){ roles.pl = x.n; continue; }
     if (!roles.pl && x.periods >= 1 && !roles.plComparative){ roles.pl = x.n; continue; }
+    /* A full-period P&L next to the monthly and comparative ones ("PL" beside "PL_MoM" / "PL_Comparative") is captured too. */
+    if (!roles.pl && !x.months && x.periods <= 1){ roles.pl = x.n; continue; }
   }
   for (const x of plAll){
     if (free(x) && x.pct && !roles.plPercent && (roles.pl || roles.plMonthly || roles.plComparative)) roles.plPercent = x.n;

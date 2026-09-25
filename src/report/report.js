@@ -37,6 +37,17 @@ function watermarkHtml(){
 /* Balance Sheet and aging reports are "as of" a date; P&L statements cover a period. */
 function statementPeriodText(sm){
   const md = state.model;
+  /* Each statement shows the period its own worksheet states (a Trial Balance "As of …", a P&L "For the 7 months
+   * ended …"). A month-by-month sheet titled "For the month ended …" but holding several months shows its month range. */
+  const own = sm ? sheetOwnPeriod(state.sheets[sm.name] || [], sm) : '';
+  if (own){
+    const months = sm.cols.filter(c => c.type === 'month' && c.key !== null && c.key !== undefined);
+    if (sm.role === 'plMonthly' && months.length > 1 && /^for the month ended\b/i.test(own)){
+      const a = months.reduce((x, y) => (y.key < x.key ? y : x)), b = months.reduce((x, y) => (y.key > x.key ? y : x));
+      return a.year === b.year ? `${MONTH_FULL[a.m]} – ${MONTH_FULL[b.m]} ${b.year}` : `${MONTH_FULL[a.m]} ${a.year} – ${MONTH_FULL[b.m]} ${b.year}`;
+    }
+    return formatPeriodText(own);
+  }
   if (sm && ['ar', 'ap'].includes(sm.role)){
     const rows = (state.sheets[sm.name] || []).slice(0, Math.max(0, sm.headerRow));
     for (const row of rows) for (const c of (row || [])){
@@ -47,6 +58,14 @@ function statementPeriodText(sm){
   }
   if (sm && (sm.role === 'bs' || sm.role === 'bsComparative') && md && md.bsAsOf) return md.bsAsOf;
   return state.period;
+}
+
+/* An aging report with no open items (e.g. no receivables) says so instead of looking broken. */
+function emptySheetText(sm){
+  const asOf = statementPeriodText(sm);
+  if (sm && sm.role === 'ar') return 'No open receivables' + (asOf ? ' as of ' + asOf.replace(/^as of /i, '') : '') + '.';
+  if (sm && sm.role === 'ap') return 'No open payables' + (asOf ? ' as of ' + asOf.replace(/^as of /i, '') : '') + '.';
+  return 'No statement lines were found in this worksheet.';
 }
 
 function sectionHead(no, title, sub, continued = false){
@@ -189,11 +208,12 @@ function paginateTableSection(no, title, sm, opts = {}){
   const all = displayColumns(sm);
   if (!sm.lines.length || !all.length){
     return [{ orientation: 'portrait', body: sectionHead(no, title) +
-      '<div class="report-empty">No statement lines were found in this worksheet.</div>' }];
+      '<div class="report-empty">' + escapeHtml(emptySheetText(sm)) + '</div>' }];
   }
   const groups = [];
   const forceLandscape = sm.role === 'plMonthly' || all.length >= 12;
-  const tbLandscape = sm.role === 'tb';
+  /* Row 38: a Debit / Credit trial balance fits a portrait page (fewer pages); only a wide one goes landscape. */
+  const tbLandscape = sm.role === 'tb' && all.length > 4;
   /* Row 43: monthly P&L must stay on one landscape page.
    * Landscape budget extended to 20 cols so 12 months + Total + prior period + variance %
    * never split into two sheets. Only extreme (>20 col) sheets fall back to column grouping. */
@@ -538,7 +558,7 @@ function reportSections(){
     if (md.roles.tb) sections.push({ id: 'tb', title: 'Trial Balance', sheet: md.roles.tb });
     if (md.roles.plMonthly)     sections.push({ id: 'plMonthly', title: 'Profit and Loss — Monthly', sheet: md.roles.plMonthly });
     if (md.roles.plComparative) sections.push({ id: 'plComparative', title: 'Profit and Loss — Comparative', sheet: md.roles.plComparative });
-    if (!md.roles.plMonthly && !md.roles.plComparative && md.roles.pl)
+    if (md.roles.pl)
       sections.push({ id: 'pl', title: 'Profit and Loss', sheet: md.roles.pl });
     if (md.roles.plPercent) sections.push({ id: 'plPercent', title: 'Profit and Loss (% of Income)', sheet: md.roles.plPercent });
     if (md.roles.plClass) sections.push({ id: 'plClass', title: 'Profit and Loss — by Class', sheet: md.roles.plClass });

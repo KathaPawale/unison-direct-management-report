@@ -82,17 +82,23 @@ function plutoWorkbook(){
     ['Assets'], ['Checking', 8000, 6000], ['Total for Assets', 8000, 6000], ['Liabilities and Equity'], ['Current Liabilities'], ['Accounts Payable', 1000, 800],
     ['Total for Current Liabilities', 1000, 800], ['Total for Liabilities', 1000, 800], ['Equity'], ['Retained Earnings', 7000, 5200], ['Total for Equity', 7000, 5200],
     ['Total for Liabilities and Equity', 8000, 6000]];
-  const tb = [...T(client, 'Trial Balance', 'As of December 31, 2025'), ['', 'Debit', 'Credit'], ['Checking', 8000, ''], ['Accounts Payable', '', 1000],
-    ['Retained Earnings', '', 1394.8], ['Sales', '', 10000], ['Rent', 4000, ''], ['Travel', 268.2, ''], ['Legal & Professional Fees', 126.6, ''], ['TOTAL', 12394.8, 12394.8]];
-  const ap = [...T(client, 'A/P Aging Summary', 'As of December 31, 2025'), ['', 'Current', '1 - 30', 'Total', '% of Total'],
-    ['Vendor A', 600, 150, 750, 0.75], ['Vendor B', 250, 0, 250, 0.25], ['TOTAL', 850, 150, 1000, 1]];
+  /* As in the client's file: an "Account Type" column between the account and Debit / Credit. */
+  const tb = [...T(client, 'Trial Balance', 'As of December 31, 2025'), ['Account', 'Account Type', 'Debit', 'Credit'], ['Checking', 'Bank', 8000, ''],
+    ['Accounts Payable', 'Accounts Payable', '', 1000], ['Retained Earnings', 'Equity', '', 1394.8], ['Sales', 'Revenue', '', 10000], ['Rent', 'Expense', 4000, ''],
+    ['Travel', 'Expense', 268.2, ''], ['Legal & Professional Fees', 'Expense', 126.6, ''], ['TOTAL', '', 12394.8, 12394.8]];
+  const ap = [...T(client, 'A/P Aging Summary', 'As of December 31, 2025'), ['Contact', 'Current', '1 - 30 Days', 'Older', 'Total', '% of Total'],
+    ['Vendor A', 600, 150, 0, 750, 0.75], ['Vendor B', 150, 0, 100, 250, 0.25], ['TOTAL', 750, 150, 100, 1000, 1]];
+  /* An aging report with no open items. */
+  const ar = [['Accounts Receivable Aging Summary'], [client], ['As of December 31, 2025'], ['Aging by due date']];
   return { name: 'Pluto: PL / PL (% Income) / BS_Comparative / TrialBalance / A/P aging', client, period,
-    sheets: { 'PL': pl, 'PL (% Income)': pct, 'BS_Comparative': bsc, 'TrialBalance': tb, 'AP Aging Summary': ap },
-    pctFormatted: { 'AP Aging Summary': [4] },
+    sheets: { 'PL': pl, 'PL (% Income)': pct, 'BS_Comparative': bsc, 'TrialBalance': tb, 'AR_Aging': ar, 'AP Aging Summary': ap },
+    pctFormatted: { 'AP Aging Summary': [5] },
     expect: { roles: { plComparative: 'PL', plPercent: 'PL (% Income)', tb: 'TrialBalance', ap: 'AP Aging Summary' }, income: 10000, net: 5605.2,
       hasPrior: true, priorIncome: 9000, months: 0,
       pctRows: { 'PL (% Income)': { 'Travel': '2.7%', 'Legal & Professional Fees': '1.3%', 'Net Income': '56.1%' } },
       excelSheets: ['Profit and Loss (Comparative)', 'Profit and Loss (% of Income)', 'Trial Balance', 'AP Aging'],
+      tbAccounts: ['Checking', 'Accounts Payable', 'Rent'], apBuckets: ['Current', '1 - 30 Days', 'Older'], emptyAR: true,
+      periods: { tb: 'As of December 31, 2025', plPercent: 'January – December 2025' },
       sections: ['bs', 'tb', 'plComparative', 'plPercent', 'ap'] } };
 }
 
@@ -274,6 +280,44 @@ function inspectPage(){
   return out;
 }
 
+/* ---------- downloaded Excel file ---------- */
+
+/* Reads what Excel will actually see: every value, style (border, number format, alignment), tab color and
+ * frozen pane comes from the saved .xlsx, not from the app's in-memory workbook. */
+function readXlsxFile(file){
+  const buf = fs.readFileSync(file);
+  const zip = XLSX.CFB.read(buf, { type: 'buffer' });
+  const get = suffix => { const i = zip.FullPaths.findIndex(p => p.endsWith(suffix)); return i < 0 ? '' : Buffer.from(zip.FileIndex[i].content).toString(); };
+  const unxml = t => t.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  const styles = get('/xl/styles.xml');
+  const section = tag => (styles.match(new RegExp('<' + tag + '\\b[^>]*>([\\s\\S]*?)</' + tag + '>')) || ['', ''])[1];
+  const fmts = Object.fromEntries([...section('numFmts').matchAll(/<numFmt numFmtId="(\d+)" formatCode="([^"]*)"/g)].map(m => [m[1], unxml(m[2])]));
+  const borders = [...section('borders').matchAll(/<border\b[^>]*?(?:\/>|>([\s\S]*?)<\/border>)/g)]
+    .map(m => ['left', 'right', 'top', 'bottom'].every(side => new RegExp('<' + side + '\\b[^>]*style="').test(m[1] || '')));
+  const xfs = [...section('cellXfs').matchAll(/<xf\b([^>]*?)(?:\/>|>([\s\S]*?)<\/xf>)/g)].map(m => {
+    const id = (m[1].match(/numFmtId="(\d+)"/) || [])[1] || '0';
+    /* Excel's built-in formats: 9 = 0%, 10 = 0.00%. */
+    return { fmt: fmts[id] || { 0: '', 9: '0%', 10: '0.00%' }[id] || 'builtin ' + id, border: borders[+((m[1].match(/borderId="(\d+)"/) || [])[1] || 0)] || false,
+             horizontal: ((m[2] || '').match(/horizontal="(\w+)"/) || [])[1] || '' };
+  });
+  const back = XLSX.read(buf, { type: 'buffer' });
+  const names = [...get('/xl/workbook.xml').matchAll(/<sheet [^>]*name="([^"]+)"/g)].map(m => unxml(m[1]));
+  return names.map((name, i) => {
+    const xml = get('/xl/worksheets/sheet' + (i + 1) + '.xml');
+    const ws = back.Sheets[name] || {};
+    const cells = [...xml.matchAll(/<c r="([A-Z]+)(\d+)"([^>]*?)(?:\/>|>[\s\S]*?<\/c>)/g)].map(m => {
+      const st = xfs[+((m[3].match(/\bs="(\d+)"/) || [])[1] || 0)] || {};
+      const t = (m[3].match(/\bt="(\w+)"/) || [])[1] || 'n';
+      return { col: m[1], row: +m[2], numeric: t === 'n' && ws[m[1] + m[2]] && typeof ws[m[1] + m[2]].v === 'number', ...st };
+    });
+    const pane = xml.match(/<pane [^>]*\/>/);
+    const val = a => (ws[a] || {}).v ?? '';
+    return { name, xml, cells, val, tabColor: (xml.match(/<sheetPr>[^]*?<tabColor rgb="([0-9A-F]{8})"/) || [])[1] || null,
+      pane: pane && /state="frozen"/.test(pane[0]) ? ((pane[0].match(/topLeftCell="([A-Z]+\d+)"/) || [])[1] || null) : null,
+      xSplit: pane ? +((pane[0].match(/xSplit="(\d+)"/) || [])[1] || 0) : 0, ySplit: pane ? +((pane[0].match(/ySplit="(\d+)"/) || [])[1] || 0) : 0 };
+  });
+}
+
 /* ---------- checks ---------- */
 
 function near(a, b, tol = 0.011){ return a !== null && a !== undefined && Math.abs(a - b) <= tol; }
@@ -294,8 +338,9 @@ function checkWorkbook(w, r, excel, pdf, errors){
   if (e.net !== undefined) check(`${tag} Net income = ${e.net}`, near(r.metrics.net, e.net), r.metrics.net);
   if (e.expenses !== undefined) check(`${tag} Total expenses = ${e.expenses}`, near(r.metrics.expenses, e.expenses), r.metrics.expenses);
   if (w.expected){
-    for (const k of ['income', 'net', 'assets', 'bank']){
-      const want = w.expected[k] ?? (w.expected.metrics || {})[k];
+    check(`${tag} Row 35 fixture has independently computed values`, ['income', 'net'].every(k => typeof (w.expected[k] ?? w.expected['m.' + k]) === 'number'));
+    for (const k of ['income', 'gross', 'expenses', 'net', 'assets', 'equity', 'bank']){
+      const want = w.expected[k] ?? w.expected['m.' + k] ?? (w.expected.metrics || {})[k];
       if (typeof want === 'number') check(`${tag} Row 35 ${k} matches the independently computed fixture value`, near(r.metrics[k], want), r.metrics[k] + ' vs ' + want);
     }
   }
@@ -346,7 +391,9 @@ function checkWorkbook(w, r, excel, pdf, errors){
   /* Rows 9, 12, 19, 28, 36: percentages */
   const eg = r.expenseGroups;
   if (eg.length){
-    check(`${tag} Rows 9/19/36 every expense share within 0-100%`, eg.every(g => g.pct >= -0.001 && g.pct <= 100.001), eg.map(g => g.pct.toFixed(2)).join(','));
+    /* A credit inside expenses (refund, surplus returned) is a negative share; no share passes 100% and all add to 100%. */
+    check(`${tag} Rows 9/19/36 every expense share within ±100% with the sign of its amount`,
+      eg.every(g => Math.abs(g.pct) <= 100.001 && (g.value >= 0 ? g.pct >= -0.001 : g.pct <= 0.001)), eg.map(g => g.pct.toFixed(2)).join(','));
     check(`${tag} Row 12 share = expense ÷ total expenses × 100`, eg.every(g => Math.abs(r.expenseTotal) < 0.01 || near(g.pct, g.value / Math.abs(r.expenseTotal) * 100, 0.02) || /activity/.test(r.expenseChartText)));
     check(`${tag} Row 28 expense % shown on the portal chart`, /\d+(\.\d+)?%/.test(r.expenseChartText));
   }
@@ -367,6 +414,16 @@ function checkWorkbook(w, r, excel, pdf, errors){
   if (e.longLiab !== undefined) check(`${tag} Row 22 Long-Term Liabilities total = ${e.longLiab}`, near((r.liab.find(x => /long/i.test(x.label)) || {}).value ?? 0, e.longLiab));
   const liabTitles = r.pages.reduce((n, p) => n + (p.text.match(/LIABILITIES BIFURCATION/gi) || []).length, 0);
   check(`${tag} Rows 26/31 Liabilities Bifurcation appears at most once in the PDF`, liabTitles <= 1, liabTitles);
+
+  /* Trial Balance: Debit / Credit headings, account type not glued onto the account name */
+  for (const p of page('tb')) check(`${tag} Row 46 Trial Balance shows Debit and Credit columns`, p.headers.includes('Debit') && p.headers.includes('Credit'), p.headers.join(','));
+
+  for (const a of e.tbAccounts || [])
+    check(`${tag} Row 46 Trial Balance account "${a}" without its account type`, page('tb').some(p => p.pctCells[a] !== undefined), Object.keys((page('tb')[0] || {}).pctCells || {}).slice(0, 4).join(' | '));
+  for (const b of e.apBuckets || []) check(`${tag} Row 13 A/P aging bucket "${b}"`, page('ap').some(p => p.headers.includes(b)), page('ap').map(p => p.headers.join(',')).join(' / '));
+  if (e.emptyAR) check(`${tag} Row 13 empty A/R aging says there are no open receivables`, page('ar').some(p => /No open receivables as of/.test(p.text)));
+  for (const [id, want] of Object.entries(e.periods || {}))
+    check(`${tag} Row 23 ${id} heading shows its own period "${want}"`, page(id).length && page(id).every(p => p.text.includes(want)), (page(id)[0] || {}).text && page(id)[0].text.slice(0, 120));
 
   /* Row 13, 27: aging + cash basis */
   if (e.noAR) check(`${tag} Row 27 cash basis: no A/R anywhere in the report`, r.suppressAR && !r.pages.some(p => p.id === 'ar') && !r.pages.some(p => /5,205\.70/.test(p.text)));
@@ -391,6 +448,13 @@ function checkWorkbook(w, r, excel, pdf, errors){
   for (const p of page('plMonthly')){
     const monthHeads = p.headers.filter(h => /^[A-Z][a-z]{2}( \d{4})?$/.test(h));
     check(`${tag} Row 26 monthly P&L page carries every month and the Total`, monthHeads.length === r.months.length && p.headers.includes('Total'), p.headers.join(','));
+  }
+
+  /* Row 43: the monthly P&L never splits its columns across pages and is printed landscape */
+  const mp = page('plMonthly');
+  if (mp.length){
+    check(`${tag} Row 43 monthly P&L pages are landscape`, mp.every(p => p.orientation === 'landscape'), mp.map(p => p.orientation).join(','));
+    check(`${tag} Row 43 monthly P&L columns not split across pages`, mp.every(p => p.headers.join('|') === mp[0].headers.join('|')), mp.map(p => p.headers.length).join(','));
   }
 
   /* Rows 29, 30, 33 */
@@ -435,7 +499,19 @@ function checkWorkbook(w, r, excel, pdf, errors){
   check(`${tag} Rows 42/47 statement sheets freeze rows 1-5 and column A in the file`, stmts.every(s => s.pane === 'B6'), stmts.map(s => s.name + ':' + s.pane).join(','));
   check(`${tag} Row 47 row 5 is "Particulars" on the model statement sheets`, stmts.filter(s => !s.aging).every(s => s.a5 === 'Particulars'), stmts.map(s => s.name + ':' + s.a5).join(','));
   check(`${tag} Rows 48/51 no "Amounts in US Dollars" under the heading`, stmts.every(s => !/US Dollars/.test(s.a3)));
-  check(`${tag} Row 23 Excel heading rows centred`, stmts.filter(s => !s.aging).every(s => s.centered));
+  check(`${tag} Row 23 Excel heading rows centred`, stmts.filter(s => !s.aging).every(s => s.centered), stmts.filter(s => !s.aging && !s.centered).map(s => s.name).join(','));
+  check(`${tag} Rows 44/45 every Excel amount uses the accounting format ($ negatives in parentheses)`, stmts.every(s => !s.nonAccounting.length),
+    stmts.filter(s => s.nonAccounting.length).map(s => s.name + ': ' + s.nonAccounting.slice(0, 3).join(', ')).join(' | '));
+  check(`${tag} Row 41 tab colours differ by statement type`, new Set(excel.sheets.map(s => s.tabColor)).size >= Math.min(3, excel.sheets.length));
+  /* Row 40: Notes sheet formatted as a table (title, Line Item / Category | Note headings) */
+  const notesWs = excel.sheets.find(s => s.name === 'Notes');
+  check(`${tag} Row 40 Notes sheet has its title and "Line Item / Category" / "Note" headings`, notesWs && /Notes to Financial Statements/.test(String(notesWs.val('A1'))) &&
+    notesWs.val('A4') === 'Line Item / Category' && notesWs.val('B4') === 'Note', notesWs && [notesWs.val('A1'), notesWs.val('A4'), notesWs.val('B4')].join(' | '));
+  for (const n of e.notes || []) check(`${tag} Row 40 note "${n}" in the Excel Notes sheet`, notesWs && /<v>[^<]*/.test(notesWs.xml) && notesWs.xml.includes(n));
+  /* Data workbook (as uploaded): every sheet has a tab colour; every sheet with columns freezes its heading rows and column A */
+  const data = excel.data || [];
+  check(`${tag} Row 41 every data-workbook sheet has a tab colour`, data.length && data.every(s => s.tabColor), data.filter(s => !s.tabColor).map(s => s.name).join(','));
+  check(`${tag} Rows 42/47 every data-workbook sheet freezes its heading rows`, data.length && data.every(s => s.ySplit >= 1), data.filter(s => s.ySplit < 1).map(s => s.name).join(','));
 }
 
 /* ---------- run ---------- */
@@ -443,9 +519,15 @@ function checkWorkbook(w, r, excel, pdf, errors){
 (async () => {
   const exe = chromiumPath();
   const server = await serve();
-  const base = 'http://127.0.0.1:' + server.address().port + '/index.html';
+  /* TRACKER_URL=https://… runs the checks against a deployed site instead of this checkout. */
+  const base = process.env.TRACKER_URL || 'http://127.0.0.1:' + server.address().port + '/index.html';
   const browser = await chromium.launch({ executablePath: exe });
-  const books = [row54Workbook(), plutoWorkbook(), comparativePctWorkbook(), halfYearCashWorkbook(), ...fixtureWorkbooks()]
+  /* TRACKER_XLSX=path/to/client.xlsx runs every check on a real client workbook instead of the built-in set. */
+  const books = (process.env.TRACKER_XLSX
+    ? [{ name: path.basename(process.env.TRACKER_XLSX), file: fs.readFileSync(process.env.TRACKER_XLSX),
+         /* TRACKER_EXPECT=expect.json adds the figures to check: { client, expect: { income, net, roles, periods, … } } */
+         ...(process.env.TRACKER_EXPECT ? JSON.parse(fs.readFileSync(process.env.TRACKER_EXPECT, 'utf8')) : { expect: {} }) }]
+    : [row54Workbook(), plutoWorkbook(), comparativePctWorkbook(), halfYearCashWorkbook(), ...fixtureWorkbooks()])
     .filter(w => !process.env.TRACKER_ONLY || w.name.includes(process.env.TRACKER_ONLY));   // e.g. TRACKER_ONLY="Row 54"
   if (!books.length) throw new Error('No workbook matches TRACKER_ONLY=' + process.env.TRACKER_ONLY);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'udmr-'));
@@ -459,7 +541,7 @@ function checkWorkbook(w, r, excel, pdf, errors){
       await page.goto(base, { waitUntil: 'networkidle' });
       await page.evaluate(() => { localStorage.clear(); resetState(); });
       await page.evaluate(() => goPage('uploads'));
-      await page.setInputFiles('#fileInput', { name: 'workbook.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: toXlsx(w) });
+      await page.setInputFiles('#fileInput', { name: 'workbook.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: w.file || toXlsx(w) });
       await page.click('#processBtn');
       await page.waitForFunction(() => document.querySelector('#loadedStatus').classList.contains('ok') && state.model, null, { timeout: 20000 });
       const toastText = await page.evaluate(() => document.querySelector('#toast').textContent);
@@ -477,29 +559,21 @@ function checkWorkbook(w, r, excel, pdf, errors){
         const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 20000 }), page.evaluate(() => downloadReportExcel())]);
         const file = path.join(tmp, 'report.xlsx');
         await dl.saveAs(file);
-        const info = await page.evaluate(() => window.__lastWb.SheetNames.map(name => {
-          const ws = window.__lastWb.Sheets[name];
-          let unbordered = 0, unformatted = 0;
-          const range = XLSX.utils.decode_range(ws['!ref']);
-          for (let rr = 4; rr <= range.e.r; rr++) for (let cc = 0; cc <= range.e.c; cc++){
-            const cell = ws[XLSX.utils.encode_cell({ r: rr, c: cc })];
-            if (!cell) continue;
-            const b = (cell.s || {}).border || {};
-            if (!(b.top && b.bottom && b.left && b.right)) unbordered++;
-            if (cell.t === 'n' && (!cell.z || ((cell.s || {}).alignment || {}).horizontal !== 'right')) unformatted++;
-          }
-          const a1 = ws.A1 || {};
-          return { name, tab: !!ws['!tabColor'], unbordered, unformatted, a3: (ws.A3 || {}).v || '', a5: (ws.A5 || {}).v || '',
-            aging: /Aging Bucket/.test(String((ws.A5 || {}).v || '')), centered: ((a1.s || {}).alignment || {}).horizontal === 'center' };
-        }));
-        const zip = XLSX.CFB.read(fs.readFileSync(file), { type: 'buffer' });
-        info.forEach((s, i) => {
-          const at = zip.FullPaths.findIndex(p => p.endsWith('/xl/worksheets/sheet' + (i + 1) + '.xml'));
-          const xml = at >= 0 ? Buffer.from(zip.FileIndex[at].content).toString() : '';
-          const m = xml.match(/<pane [^>]*topLeftCell="([A-Z]+\d+)"[^>]*state="frozen"/);
-          s.pane = m ? m[1] : null;
+        excel.sheets = readXlsxFile(file).map(sh => {
+          const body = sh.cells.filter(c => c.row >= 5);
+          const a5 = String(sh.val('A5'));
+          return { ...sh, tab: !!sh.tabColor, a3: String(sh.val('A3')), a5, aging: /Aging Bucket/.test(a5),
+            unbordered: body.filter(c => !c.border).length,
+            unformatted: body.filter(c => c.numeric && (!c.fmt || c.horizontal !== 'right')).length,
+            nonAccounting: body.filter(c => c.numeric && c.fmt && !/%/.test(c.fmt) && !/\(#,##0\.00\)/.test(c.fmt)).map(c => c.col + c.row + ' ' + c.fmt),
+            centered: (sh.cells.find(c => c.col === 'A' && c.row === 1) || {}).horizontal === 'center' };
         });
-        excel.sheets = info; excel.ok = true;
+        excel.ok = true;
+        /* Data workbook: every uploaded sheet colored and frozen at its heading row */
+        const [dd] = await Promise.all([page.waitForEvent('download', { timeout: 20000 }), page.evaluate(() => downloadDataExcel())]);
+        const dfile = path.join(tmp, 'data.xlsx');
+        await dd.saveAs(dfile);
+        excel.data = readXlsxFile(dfile);
       } catch (err){ excel.error = String(err.message || err); }
 
       /* PDF: save through the app's own savePdf and read the file back */
