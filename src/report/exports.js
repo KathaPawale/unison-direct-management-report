@@ -196,9 +196,9 @@ function _decorateSheet(ws, sheetKind, freezeRow = 5, freezeCol = 1){
   }
 }
 
-/* xlsx-js-style (SheetJS 0.18.5) writes every sheet as a bare <sheetView/> and ignores '!views' / '!freeze',
- * so the frozen heading rows never reached the file. Write the workbook, then add each sheet's frozen pane
- * to its XML before the download. */
+/* xlsx-js-style (SheetJS 0.18.5) writes every sheet as a bare <sheetView/> and ignores '!views' / '!freeze' /
+ * '!tabColor', so the frozen heading rows and the tab colors never reached the file. Write the workbook, then add
+ * each sheet's frozen pane and tab color to its XML before the download. */
 function _paneXml(fz){
   const x = fz.xSplit || 0, y = fz.ySplit || 0;
   const pane = x && y ? 'bottomRight' : y ? 'bottomLeft' : 'topRight';
@@ -211,21 +211,34 @@ function _paneXml(fz){
 function _workbookBytes(wb){
   const bytes = new Uint8Array(XLSX.write(wb, { type: 'array', bookType: 'xlsx' }));
   const zip = XLSX.CFB.read(bytes, { type: 'array' });
-  let frozen = 0;
+  let changed = 0;
   wb.SheetNames.forEach((name, i) => {
-    const fz = wb.Sheets[name]['!freeze'];
-    if (!fz || !(fz.xSplit || fz.ySplit)) return;
+    const fz = wb.Sheets[name]['!freeze'], tab = wb.Sheets[name]['!tabColor'];
+    const freeze = fz && (fz.xSplit || fz.ySplit);
+    if (!freeze && !(tab && tab.rgb)) return;
     const at = zip.FullPaths.findIndex(p => p.endsWith('/xl/worksheets/sheet' + (i + 1) + '.xml'));
     if (at < 0) throw new Error('Worksheet XML not found for ' + name);
     const entry = zip.FileIndex[at];
-    const xml = new TextDecoder().decode(entry.content);
-    const next = xml.replace(/<sheetView\b([^>]*?)\/>/, (m, attrs) => '<sheetView' + attrs + '>' + _paneXml(fz) + '</sheetView>');
-    if (next === xml) throw new Error('Could not freeze the heading rows of ' + name);
-    entry.content = new TextEncoder().encode(next);
+    let xml = new TextDecoder().decode(entry.content);
+    if (freeze){
+      const next = xml.replace(/<sheetView\b([^>]*?)\/>/, (m, attrs) => '<sheetView' + attrs + '>' + _paneXml(fz) + '</sheetView>');
+      if (next === xml) throw new Error('Could not freeze the heading rows of ' + name);
+      xml = next;
+    }
+    if (tab && tab.rgb){
+      /* <sheetPr> must be the worksheet's first child. */
+      const color = '<tabColor rgb="FF' + String(tab.rgb).replace(/^#/, '').slice(-6).toUpperCase() + '"/>';
+      const next = /<sheetPr\b/.test(xml)
+        ? xml.replace(/<sheetPr\b([^>]*?)(\/>|>)/, (m, attrs, end) => '<sheetPr' + attrs + '>' + color + (end === '/>' ? '</sheetPr>' : ''))
+        : xml.replace(/(<worksheet\b[^>]*>)/, '$1<sheetPr>' + color + '</sheetPr>');
+      if (next === xml) throw new Error('Could not color the tab of ' + name);
+      xml = next;
+    }
+    entry.content = new TextEncoder().encode(xml);
     entry.size = entry.content.length;
-    frozen++;
+    changed++;
   });
-  return frozen ? XLSX.CFB.write(zip, { type: 'array', fileType: 'zip' }) : bytes;
+  return changed ? XLSX.CFB.write(zip, { type: 'array', fileType: 'zip' }) : bytes;
 }
 
 function _saveWorkbook(wb, filename){
@@ -234,7 +247,7 @@ function _saveWorkbook(wb, filename){
   catch (e){
     console.error('Frozen panes could not be written:', e);
     XLSX.writeFile(wb, filename);
-    toast('Excel downloaded, but the heading rows could not be frozen.');
+    toast('Excel downloaded, but the heading rows could not be frozen or the tabs colored.');
     return false;
   }
   const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
@@ -305,7 +318,7 @@ function _modelSheetToWs(sm, title){
   return ws;
 }
 
-function _rawSheetToWs(rows, modelHeaderRow = -1){
+function _rawSheetToWs(rows, modelHeaderRow = -1, role = null){
   const ws = {};
   const data = rows || [];
   const width = Math.max(1, ...data.map(row => (row || []).length));
@@ -328,7 +341,7 @@ function _rawSheetToWs(rows, modelHeaderRow = -1){
   ws['!cols'] = Array.from({ length: width }, (_, c) => ({
     wch: Math.min(48, Math.max(14, ...data.map(row => String((row || [])[c] ?? '').length + 2)))
   }));
-  _decorateSheet(ws, 'uploaded', freezeRow, width > 1 ? 1 : 0);
+  _decorateSheet(ws, role || 'uploaded', freezeRow, width > 1 ? 1 : 0);
   return ws;
 }
 
@@ -421,7 +434,7 @@ function downloadReportExcel(){
                  ['pl', 'Profit and Loss'], ['plPercent', 'Profit and Loss (% of Income)'], ['plClass', 'Profit and Loss — by Class'], ['ar', 'A/R Aging Summary'], ['ap', 'A/P Aging Summary']];
   for (const [role, title] of order){
     const name = md.roles[role];
-    if (!name || (role === 'pl' && (md.roles.plMonthly || md.roles.plComparative))) continue;
+    if (!name) continue;
     if ((role === 'ar' && md.suppressAR) || (role === 'ap' && md.suppressAP)) continue;
     const ag = role === 'ar' ? md.arAging : role === 'ap' ? md.apAging : null;
     if (ag && ag.fromDetail){
@@ -514,10 +527,11 @@ function downloadDataExcel(){
   const wb = XLSX.utils.book_new();
   Object.entries(state.sheets).forEach(([n, r]) => {
     const sm = state.model && state.model.sheetModels[n];
-    XLSX.utils.book_append_sheet(wb, _rawSheetToWs(r, sm ? sm.headerRow : -1), _sheetNameSafe(wb, n));
+    XLSX.utils.book_append_sheet(wb, _rawSheetToWs(r, sm ? sm.headerRow : -1, sm ? sm.role : null), _sheetNameSafe(wb, n));
   });
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(
-    [['Notes to Financial Statements'], [state.notes || '']]), _sheetNameSafe(wb, 'Management Notes'));
+  const mgmtNotes = XLSX.utils.aoa_to_sheet([['Notes to Financial Statements'], [state.notes || '']]);
+  _decorateSheet(mgmtNotes, 'notes', 1, 0);
+  XLSX.utils.book_append_sheet(wb, mgmtNotes, _sheetNameSafe(wb, 'Management Notes'));
   if (_saveWorkbook(wb, _reportFileBase() + '-Management-Data.xlsx')) toast('Data workbook downloaded');
 }
 

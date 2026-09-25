@@ -558,7 +558,7 @@ function reportSections(){
     if (md.roles.tb) sections.push({ id: 'tb', title: 'Trial Balance', sheet: md.roles.tb });
     if (md.roles.plMonthly)     sections.push({ id: 'plMonthly', title: 'Profit and Loss — Monthly', sheet: md.roles.plMonthly });
     if (md.roles.plComparative) sections.push({ id: 'plComparative', title: 'Profit and Loss — Comparative', sheet: md.roles.plComparative });
-    if (!md.roles.plMonthly && !md.roles.plComparative && md.roles.pl)
+    if (md.roles.pl)
       sections.push({ id: 'pl', title: 'Profit and Loss', sheet: md.roles.pl });
     if (md.roles.plPercent) sections.push({ id: 'plPercent', title: 'Profit and Loss (% of Income)', sheet: md.roles.plPercent });
     if (md.roles.plClass) sections.push({ id: 'plClass', title: 'Profit and Loss — by Class', sheet: md.roles.plClass });
