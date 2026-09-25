@@ -295,9 +295,15 @@ function _modelSheetToWs(sm, title){
     const lblStyle = isGrand ? XL_STYLES.grandLbl : isTotal ? XL_STYLES.totalLbl :
                      kind === 'section' ? XL_STYLES.section : XL_STYLES.plain;
     _wsSetCell(ws, out, 0, line.label, { ...lblStyle, alignment: { horizontal: 'left', vertical: 'center', indent: Math.min(line.indent, 10) } });
+    const pctRow = isPercentRowLabel(line.label), pctRowFrac = pctRow && percentRowIsFraction(row, cols.map(c => c.idx));
     cols.forEach((c, i) => {
       const v = row[c.idx];
       const n = parseAmount(v);
+      if (pctRow && (n !== null || isPercentText(v))){
+        const pv = isPercentText(v) ? parsePercentText(v) / 100 : (pctRowFrac ? n : n / 100);
+        _wsSetCell(ws, out, i + 1, pv, { ...(isTotal ? XL_STYLES.totalVal : XL_STYLES.pctCell), numFmt: XL.pctFmt, alignment: { horizontal: 'right', vertical: 'center' } });
+        return;
+      }
       const base = isGrand ? XL_STYLES.grandVal : isTotal ? XL_STYLES.totalVal : c.type === 'percent' ? XL_STYLES.pctCell : XL_STYLES.money;
       const style = { ...base, alignment: { horizontal: 'right', vertical: 'center' } };
       if (c.type === 'percent' && (n !== null || isPercentText(v))){
@@ -318,9 +324,13 @@ function _modelSheetToWs(sm, title){
   return ws;
 }
 
-function _rawSheetToWs(rows, modelHeaderRow = -1, role = null){
+function _rawSheetToWs(rows, modelHeaderRow = -1, role = null, sm = null){
   const ws = {};
   const data = rows || [];
+  /* Values stay exactly as uploaded; fraction-scale percent columns and "Percentage of total" rows get a % format. */
+  const pctCols = new Set(sm ? sm.cols.filter(c => c.type === 'percent' && percentColumnIsFraction(sm, data, c.idx)).map(c => c.idx) : []);
+  const valueIdx = sm ? displayColumns(sm).map(c => c.idx) : [];
+  const pctRows = new Set(sm ? sm.lines.filter(l => isPercentRowLabel(l.label) && percentRowIsFraction(data[l.r] || [], valueIdx)).map(l => l.r) : []);
   const width = Math.max(1, ...data.map(row => (row || []).length));
   /* The parser's column-heading row (a "", "Total" row counts); otherwise the first row with two filled cells. */
   const headerRow = modelHeaderRow >= 0 && modelHeaderRow < data.length ? modelHeaderRow :
@@ -332,8 +342,9 @@ function _rawSheetToWs(rows, modelHeaderRow = -1, role = null){
       const text = cellText(value);
       const isHeader = r === headerRow;
       const n = parseAmount(value);
+      const asPct = n !== null && (pctCols.has(c) || (pctRows.has(r) && valueIdx.includes(c)));
       const style = isHeader ? (c === 0 ? XL_STYLES.headL : XL_STYLES.head) :
-        n !== null ? XL_STYLES.money : XL_STYLES.wrap;
+        asPct ? XL_STYLES.pctCell : n !== null ? XL_STYLES.money : XL_STYLES.wrap;
       if (n !== null && !isHeader) _wsSetCell(ws, r, c, n, style);
       else _wsSetCell(ws, r, c, text, style);
     }
@@ -527,7 +538,7 @@ function downloadDataExcel(){
   const wb = XLSX.utils.book_new();
   Object.entries(state.sheets).forEach(([n, r]) => {
     const sm = state.model && state.model.sheetModels[n];
-    XLSX.utils.book_append_sheet(wb, _rawSheetToWs(r, sm ? sm.headerRow : -1, sm ? sm.role : null), _sheetNameSafe(wb, n));
+    XLSX.utils.book_append_sheet(wb, _rawSheetToWs(r, sm ? sm.headerRow : -1, sm ? sm.role : null, sm), _sheetNameSafe(wb, n));
   });
   const mgmtNotes = XLSX.utils.aoa_to_sheet([['Notes to Financial Statements'], [state.notes || '']]);
   _decorateSheet(mgmtNotes, 'notes', 1, 0);
@@ -542,13 +553,14 @@ function downloadCurrentSheetCsv(){
   if (sm){
     const cols = displayColumns(sm);
     const fractionCols = new Set(cols.filter(c => c.type === 'percent' && percentColumnIsFraction(sm, state.sheets[state.active], c.idx)).map(c => c.idx));
+    const pctRows = new Map(sm.lines.filter(l => isPercentRowLabel(l.label)).map(l => [l.r, percentRowIsFraction(rows[l.r] || [], cols.map(c => c.idx))]));
     rows.forEach((row, ri) => {
       if (ri === sm.headerRow) return;
       cols.forEach(c => {
         const n = parseAmount(row[c.idx]);
         if (n === null) return;
-        if (c.type === 'percent'){
-          const p = fractionCols.has(c.idx) ? n * 100 : n;
+        if (c.type === 'percent' || pctRows.has(ri)){
+          const p = (pctRows.has(ri) ? pctRows.get(ri) : fractionCols.has(c.idx)) ? n * 100 : n;
           row[c.idx] = p < 0 ? `(${Math.abs(p).toFixed(2)}%)` : `${p.toFixed(2)}%`;
         } else row[c.idx] = accounting(n);
       });

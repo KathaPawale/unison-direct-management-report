@@ -144,7 +144,9 @@ function renderDashboard(){
     const bal = m.assets - m.totalLE;
     if (Math.abs(bal) >= 0.01) alerts.push(['High', `Balance Sheet difference of ${money(bal)} between Assets and Liabilities + Equity.`]);
   }
-  if (m.equity < 0) alerts.push(['Review', `Equity is negative: ${money(m.equity)}, which is ${pctText(m.totalLE ? m.equity / Math.abs(m.totalLE) * 100 : null)} of total liabilities & equity.`]);
+  /* Same equity share as the Balance Sheet Composition chart, so the dashboard never shows two figures for it. */
+  const eqShare = ((md.bsComposition && md.bsComposition.liabEquity) || []).find(x => /equity/i.test(x.label));
+  if (m.equity < 0) alerts.push(['Review', `Equity is negative: ${money(m.equity)}, which is ${pctText(eqShare ? eqShare.pct : null)} of total liabilities & equity.`]);
   if (md.arAging){
     const over90 = md.arAging.buckets.find(b => /91|over|>|\+/.test(b.label));
     if (over90 && over90.value > 0 && md.arAging.total) alerts.push(['Review', `${pct(over90.value / md.arAging.total * 100)} of A/R (${money(over90.value)}) is aged over 90 days.`]);
@@ -166,6 +168,7 @@ function renderDashboard(){
 
 function statementViewHtml(sm){
   if (!sm) return '<div class="empty">No matching worksheet was included in the uploaded workbook.</div>';
+  if (!sm.lines.length) return '<div class="empty">' + escapeHtml(emptySheetText(sm)) + '</div>';
   const { theadHtml, rows } = reportTableParts(sm, { forExport: false });
   return `<div class="table-wrap"><table class="fin-table stmt-table"><thead>${theadHtml}</thead><tbody>` + rows.map(r => r.html).join('') + '</tbody></table></div>';
 }
@@ -209,8 +212,13 @@ function editorTableHtml(sheetName){
   const shown = rows.slice(0, 600);
   const sm = state.model && state.model.sheetModels[sheetName];
   const headerRow = sm ? sm.headerRow : -1;
+  const pctCols = new Map(sm ? sm.cols.filter(c => c.type === 'percent').map(c => [c.idx, percentColumnIsFraction(sm, rows, c.idx)]) : []);
+  const valueIdx = sm ? displayColumns(sm).map(c => c.idx) : [];
   let html = '<div class="table-wrap"><table class="fin-table edit-table"><tbody>';
   shown.forEach((row, ri) => {
+    const labelCell = sm ? (sm.labelCols || [0]).map(i => cellText((row || [])[i])).find(Boolean) : cellText((row || [])[0]);
+    const pctRow = ri !== headerRow && isPercentRowLabel(labelCell || '');
+    const pctRowFrac = pctRow && percentRowIsFraction(row || [], valueIdx);
     const isTotal = (row || []).slice(0, 6).some(v => /^\s*total\b/i.test(String(v ?? '')));
     html += `<tr${isTotal ? ' class="row-total"' : ri === headerRow ? ' class="row-header"' : ''}>`;
     for (let ci = 0; ci < width; ci++){
@@ -223,6 +231,12 @@ function editorTableHtml(sheetName){
         numeric && num(v) < 0 ? 'neg' : '',
         numeric ? 'num' : ''
       ].filter(Boolean).join(' ');
+      const asPct = ri !== headerRow && (isNumericCell(v) || isPercentText(v)) && (pctRow ? valueIdx.includes(ci) : pctCols.has(ci));
+      if (asPct){
+        const shown = formatReportCell(v, 'percent', { fraction: pctRow ? pctRowFrac : pctCols.get(ci) });
+        html += `<td class="${cls} pct" title="Percentage (calculated in the workbook)"><input data-r="${ri}" data-c="${ci}" value="${escapeAttr(shown)}" readonly></td>`;
+        continue;
+      }
       const display = numeric ? editorAccountingValue(v) : v;
       html += `<td class="${cls}"><input data-r="${ri}" data-c="${ci}" value="${escapeAttr(display)}"></td>`;
     }
@@ -245,7 +259,7 @@ function renderEditor(){
   tabs.innerHTML = names.map(n => `<button data-s="${escapeAttr(n)}" class="${n === state.active ? 'active' : ''}">${escapeHtml(n)}</button>`).join('');
   tabs.querySelectorAll('button').forEach(b => b.onclick = () => { state.active = b.dataset.s; renderEditor(); });
   tableBox.innerHTML = editorTableHtml(state.active);
-  tableBox.querySelectorAll('input').forEach(inp => {
+  tableBox.querySelectorAll('input:not([readonly])').forEach(inp => {
     inp.dataset.old = inp.value;
     inp.onchange = () => onCellEdit(inp);
   });
