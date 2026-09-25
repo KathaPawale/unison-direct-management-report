@@ -166,6 +166,7 @@ function reportTableParts(sm, { forExport = false, cols = null, compact = false,
       (sm.role !== 'bs' && /^net (income|profit|loss|income loss)$/.test(line.mkey || labelKey(line.label)));
     const trCls = [isTotal ? 'row-total' : '', grand ? 'row-grand' : '', kind === 'section' ? 'row-section' : ''].filter(Boolean).join(' ');
     let tds = `<td class="lbl" style="padding-left:${6 + Math.min(line.indent, 6) * 11}px">${escapeHtml(line.label)}</td>`;
+    const pctRow = isPercentRowLabel(line.label), pctRowFrac = pctRow && percentRowIsFraction(row, showCols.map(c => c.idx));
     for (const c of showCols){
       const v = row[c.idx];
       const n = parseAmount(v);
@@ -173,7 +174,9 @@ function reportTableParts(sm, { forExport = false, cols = null, compact = false,
         (state.edited.has(sm.name + ':' + line.r + ':' + c.idx) || state.adjusted.has(sm.name + ':' + line.r + ':' + c.idx));
       const negPct = parsePercentText(v);
       const cls = [(n !== null && n < 0) ? 'neg' : (negPct !== null && negPct < 0) ? 'neg' : '', edited ? 'cell-edited' : ''].filter(Boolean).join(' ');
-      tds += `<td class="val${cls ? ' ' + cls : ''}">${formatReportCell(v, c.type, { compact, zeroDash: kind === 'account', fraction: c.type === 'percent' ? fractionCols.has(c.idx) : undefined })}</td>`;
+      tds += `<td class="val${cls ? ' ' + cls : ''}">${pctRow
+        ? formatReportCell(v, 'percent', { fraction: pctRowFrac })
+        : formatReportCell(v, c.type, { compact, zeroDash: kind === 'account', fraction: c.type === 'percent' ? fractionCols.has(c.idx) : undefined })}</td>`;
     }
     out.push({ html: `<tr${trCls ? ` class="${trCls}"` : ''}>${tds}</tr>`, orphanGuard: kind === 'section' });
   }

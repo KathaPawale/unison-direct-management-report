@@ -107,6 +107,16 @@ function percentColumnIsFraction(sm, rows, idx){
   });
 }
 
+/* A row of shares inside an amounts table ("Percentage of total" under an A/P aging summary). */
+function isPercentRowLabel(label){
+  return /^(percentage|percent|pct|%)\s*(of\s*)?(the\s*)?(grand\s*)?total$/i.test(cellText(label));
+}
+
+/* That row's scale: every value within ±1 → fractions (1 = 100%); otherwise whole percents. */
+function percentRowIsFraction(row, idxs){
+  return idxs.every(i => { const n = isPercentText(row[i]) ? null : parseAmount(row[i]); return n === null || Math.abs(n) <= 1; });
+}
+
 function isPercentText(v){
   return /^\(?-?\d[\d,]*(\.\d+)?\s*%\)?$/.test(cellText(v));
 }

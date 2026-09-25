@@ -102,6 +102,94 @@ function plutoWorkbook(){
       sections: ['bs', 'tb', 'plComparative', 'plPercent', 'ap'] } };
 }
 
+/* The client's Pluto Asset Recovery workbook layout (Pluto_summary.txt): PL is the % of Income statement, the title sits
+ * above the company name, PL_MoM runs newest month first, Balance Sheet labels span three columns, empty A/R aging, A/P
+ * aging with a "Percentage of total" row, Account Type column in the Trial Balance, a General Ledger, negative equity.
+ * Figures reconcile to the file: income 576,101.75, operating expenses 144,320.77, net income 12,580.40. */
+function plutoClientWorkbook(){
+  const C = 'Pluto Asset Recovery, Inc';
+  const T = (t, p, w) => [[t, ...Array(w - 1).fill('')], [C, ...Array(w - 1).fill('')], [p, ...Array(w - 1).fill('')], Array(w).fill('')];
+  const inc = [['Commission Income', 46541.12, 14781.95], ['Settlement Revenue', 529560.63, 0]];
+  const cogs = [['Cost to Settlements', 418716.16, 0], ['Filing Fees', 484.42, 0]];
+  /* Visible operating expenses from the summary + TrialBalance; the rest of the 144,320.77 is in the (truncated) remaining lines. */
+  const opex = [['Advertising', 3569.07, 2722.7], ['ASK MY ACCOUNTANT', 80, 0], ['Automobile Expense', 2558.68, 201.27], ['Bank Service Charges', 107.75, 284.99],
+    ['Charity', 5317.5, 1000], ['Claimant Surplus funds', -13556.8, 0], ['Mobile Notary', 2105, 0], ['Rent Expenses', 38200, 0], ['Utilities', 2807.37, 0]];
+  const known = opex.reduce((s, r) => s + r[1], 0);
+  opex.push(['Contract Labor', +(144320.77 - known).toFixed(2), 1200]);
+  opex.sort((a, b) => a[0].localeCompare(b[0]));
+  const sum = (rows, i) => +rows.reduce((s, r) => s + r[i], 0).toFixed(2);
+  const I = sum(inc, 1), CG = sum(cogs, 1), GP = +(I - CG).toFixed(2), OX = sum(opex, 1), NI = +(GP - OX).toFixed(2);
+  const Ip = sum(inc, 2), CGp = sum(cogs, 2), GPp = +(Ip - CGp).toFixed(2), OXp = sum(opex, 2), NIp = +(GPp - OXp).toFixed(2);
+  const blank = w => Array(w).fill('');
+  function plRows(val){
+    const L = (label, row) => [label, ...val(row)];
+    return [['Income'], ...inc.map(r => L(r[0], r)), L('Total Income', ['', I, Ip]), [], ['Cost of Goods Sold'], ...cogs.map(r => L(r[0], r)),
+      L('Total Cost of Goods Sold', ['', CG, CGp]), [], L('Gross Profit', ['', GP, GPp]), [], ['Operating Expenses'], ...opex.map(r => L(r[0], r)),
+      L('Total Operating Expenses', ['', OX, OXp]), [], L('Operating Income', ['', NI, NIp]), [], L('Net Income', ['', NI, NIp])];
+  }
+  const pl = [...T('Income Statement (Profit and Loss)', 'For the 7 months ended July 31, 2026', 3), ['Account', 'Jan-Jul 2026', 'Jan-Jul 2026 % of Income'], blank(3),
+    ...plRows(r => [r[1], r[1] / I])];
+  const plc = [...T('Income Statement (Profit and Loss)', 'For the 7 months ended July 31, 2026', 3), ['Account', 'Jan-Jul 2026', 'Jan-Jul 2025'], blank(3),
+    ...plRows(r => [r[1], r[2]])];
+  /* Month-by-month, newest month first; a line's months add to its total. */
+  const W = [0.01, 0.08, 0.09, 0.01, 0.11, 0.69, 0.01];
+  const split = v => { const m = W.map(w => +(v * w).toFixed(2)); m[6] = +(v - m.slice(0, 6).reduce((s, x) => s + x, 0)).toFixed(2); return [...m, v]; };
+  const mom = [...T('Income Statement (Profit and Loss)', 'For the month ended July 31, 2026', 9),
+    ['Account', 'Jul 2026', 'Jun 2026', 'May 2026', 'Apr 2026', 'Mar 2026', 'Feb 2026', 'Jan 2026', 'Total'], blank(9), ...plRows(r => split(r[1]))];
+  const bsBody = (cur, pri) => {
+    const v = (a, b) => pri ? [a, b] : [a];
+    return [['Assets'], ['', 'Current Assets'], ['', '', 'Cash and Cash Equivalents'], ['', '', 'Chase Bus Complete Chk #1861', ...v(105200.58, 9307.81)],
+      ['', '', 'Chase Bus Total Sav #3175', ...v(4.97, 4.97)], ['', '', 'Total Cash and Cash Equivalent', ...v(105205.55, 9312.78)],
+      ...(pri ? [['', '', 'Customer Advances - Other', 0, 100]] : []),
+      ['', 'Total Current Assets', '', ...v(105205.55, 9412.78)], ['', 'Fixed Assets'], ['', '', 'Computer & Office Equipment', ...v(500, 0)], ['', '', 'Vehicles', ...v(12045.7, 0)],
+      ['', 'Total Fixed Assets', '', ...v(12545.7, 0)], ['Total Assets', '', '', ...v(117751.25, 9412.78)], [], ['Liabilities and Equity'], ['', 'Liabilities'],
+      ['', '', 'Current Liabilities'], ['', '', 'Accounts Payable', ...v(166060.06, 0)], ['', '', 'Refund from County', ...v(75916.37, 66080.53)],
+      ['', '', 'Total Current Liabilities', ...v(241976.43, 66080.53)], ['', 'Total Liabilities', '', ...v(241976.43, 66080.53)], ['', 'Equity'],
+      ['', '', "Owner's Capital", ...v(-16557.56, 0)], ['', '', "Owner's Capital: Owner's Investment", ...v(94542, 50000)], ['', '', "Owner's Capital: Owner's Draw", ...v(-12250.93, -4000)],
+      ['', '', 'Retained Earnings', ...v(-202539.09, -104548.2)], ['', '', 'Current Year Earnings', ...v(NI, 1880.45)],
+      ['', 'Total Equity', '', ...v(-124225.18, -56667.75)], ['Total Liabilities and Equity', '', '', ...v(117751.25, 9412.78)]];
+  };
+  const bs = [...T('Balance Sheet', 'As of July 31, 2026', 4), ['', '', 'Account', 'Jul 31, 2026'], blank(4), ...bsBody(true, false)];
+  const bsc = [...T('Balance Sheet', 'As of July 31, 2026', 5), ['', '', 'Account', 'Jul 31, 2026', 'Jul 31, 2025'], blank(5), ...bsBody(true, true)];
+  const ar = [['Accounts Receivable Aging Summary'], [C], ['As of July 31, 2026'], ['Aging by due date']];
+  const vendors = [['Ahmed Bamaga', 3737.87], ['Connie LaCroix', 3560.67], ['Delfin Ramirez', 1200.89], ['Donald Small', 6165.86], ['Glorell Marie-Bannister', 6302.2],
+    ['James Wright', 9844.92], ['Jeffrey Hall', 6037.81], ['Joe Lazaro Niz', 7341.4], ['Maria Giblin', 399.99], ['Maria Henao', 5609.2], ['Neil Gribb', 33026.98],
+    ['RAH Signing Service', 120], ['Sidney June', 78818.45], ['Thomas Boland', 3893.82]];
+  const ap = [['Accounts Payable Aging Summary', '', '', '', '', '', ''], [C], ['As of July 31, 2026'], ['Aging by due date'], blank(7),
+    ['Contact', 'Current', '1 - 30 Days', '31 - 60 Days', '61 - 90 Days', 'Older', 'Total'], blank(7), ['Aged Payables'],
+    ...vendors.map(([n, x]) => [n, x, 0, 0, 0, 0, x]), ['Total Aged Payables', 166060.06, 0, 0, 0, 0, 166060.06], blank(7), ['Total', 166060.06, 0, 0, 0, 0, 166060.06],
+    blank(7), ['Percentage of total', 1, 0, 0, 0, 0, 1]];
+  const tbLines = [['Chase Bus Complete Chk #1861', 'Bank', 105200.58, ''], ['Chase Bus Total Sav #3175', 'Bank', 4.97, ''], ['Computer & Office Equipment', 'Fixed Asset', 500, ''],
+    ['Vehicles', 'Fixed Asset', 12045.7, ''], ['Accounts Payable', 'Current Liability', '', 166060.06], ['Refund from County', 'Current Liability', '', 75916.37],
+    ["Owner's Capital", 'Equity', 16557.56, ''], ["Owner's Capital: Owner's Investment", 'Equity', '', 94542], ["Owner's Capital: Owner's Draw", 'Equity', 12250.93, ''],
+    ['Retained Earnings', 'Equity', 202539.09, ''], ...inc.map(r => [r[0], r[0] === 'Settlement Revenue' ? 'Sales' : 'Revenue', '', r[1]]),
+    ...cogs.map(r => [r[0], 'Direct Costs', r[1], '']), ...opex.map(r => [r[0], 'Expense', r[1] >= 0 ? r[1] : '', r[1] < 0 ? -r[1] : ''])];
+  const dr = +tbLines.reduce((s, r) => s + (+r[2] || 0), 0).toFixed(2), cr = +tbLines.reduce((s, r) => s + (+r[3] || 0), 0).toFixed(2);
+  const tb = [...T('Trial Balance', 'As of July 31, 2026', 4), ['Account', 'Account Type', 'Debit', 'Credit'], ...tbLines, ['Total', '', dr, cr]];
+  const gl = [...T('General Ledger Detail', 'For the period January 1, 2026 to July 31, 2026', 8),
+    ['Date', 'Source', 'Description', 'Reference', 'Debit', 'Credit', 'Running Balance', 'Related account'], blank(8)];
+  let n = 0;
+  for (const [acct] of [...cogs, ...opex, ...inc]){
+    gl.push([acct.replace(/^/, (10 + n) + ' - ')], ['Opening Balance', '', '', '', 0, 0, 0, '']);
+    let run = 0;
+    for (let i = 0; i < 230 && gl.length < 300; i++){
+      const d = new Date(Date.UTC(2026, i % 7, 1 + (i % 27))), amt = +(5 + (i * 37 % 400) + 0.5).toFixed(2); run = +(run + amt).toFixed(2);
+      gl.push([d, 'Spend Money', 'Vendor ' + (i % 13), '', amt, 0, run, '10100 - Chase Bus Complete Chk']);
+    }
+    gl.push(['Total ' + (10 + n) + ' - ' + acct, '', '', '', run, 0, run, ''], ['Net movement', '', '', '', run, 0, 0, ''], ['Closing Balance', '', '', '', run, 0, run, '']);
+    n++;
+  }
+  return { name: 'Pluto client layout (PL % of Income, PL_MoM, BS, comparatives, aging, TrialBalance, GeneralLedger)', client: C, period: 'For the 7 months ended July 31, 2026',
+    sheets: { 'PL': pl, 'PL_MoM': mom, 'BS': bs, 'PL_Comparative': plc, 'BS_Comparative': bsc, 'AR_Aging': ar, 'AP_Aging': ap, 'TrialBalance': tb, 'GeneralLedger': gl },
+    expect: { roles: { plPercent: 'PL', plMonthly: 'PL_MoM', bs: 'BS', plComparative: 'PL_Comparative', bsComparative: 'BS_Comparative', ar: 'AR_Aging', ap: 'AP_Aging', tb: 'TrialBalance' },
+      income: 576101.75, expenses: 144320.77, net: 12580.4, bank: 105205.55, hasPrior: true, priorIncome: 14781.95, months: 7, currentLiab: 241976.43, longLiab: 0,
+      tbAccounts: ['Chase Bus Complete Chk #1861', 'Accounts Payable', 'Rent Expenses'], apBuckets: ['Current', '1 - 30 Days', '31 - 60 Days', '61 - 90 Days', 'Older'], emptyAR: true,
+      periods: { tb: 'As of July 31, 2026', ap: 'As of July 31, 2026', bs: 'As of July 31, 2026', plMonthly: 'January – July 2026' },
+      pctRows: { 'PL': { 'Total Income': '100.0%', 'Gross Profit': '27.2%', 'Net Income': '2.2%', 'Claimant Surplus funds': '(2.4%)' } }, editorPct: 20,
+      excelSheets: ['Balance Sheet', 'Balance Sheet — Comparative', 'Trial Balance', 'Profit and Loss (Monthly)', 'Profit and Loss (Comparative)', 'Profit and Loss (% of Income)', 'AR Aging', 'AP Aging'],
+      sections: ['bs', 'bsComparative', 'tb', 'plMonthly', 'plComparative', 'plPercent', 'ar', 'ap'] } };
+}
+
 /* Row 34: comparative P&L whose % of Income columns are whole percents (2.48 = 2.48%). */
 function comparativePctWorkbook(){
   const client = 'Harbor Front Desk Services', period = 'January-December 2025';
@@ -198,6 +286,9 @@ function chromiumPath(){
 /* Runs in the page after a workbook is processed. Returns plain data for the Node-side checks. */
 function inspectPage(){
   const md = state.model;
+  /* The app's own helper when it has one (older deployments do not). */
+  const isPercentRowLabel = typeof window.isPercentRowLabel === 'function' ? window.isPercentRowLabel
+    : t => /^(percentage|percent|pct|%)\s*(of\s*)?(the\s*)?(grand\s*)?total$/i.test(String(t || '').trim());
   const out = { roles: md.roles, metrics: md.metrics, prior: md.prior, hasPrior: !!md.hasPrior, months: md.months.map(m => m.short),
     periodSeries: md.periodSeries.map(p => p.label), suppressAR: !!md.suppressAR, basis: reportBasis(), client: state.client, period: state.period,
     expenseGroups: md.expenseGroups.map(g => ({ label: g.label, value: g.value, pct: g.pct })), expenseTotal: md.expenseTotal,
@@ -214,12 +305,39 @@ function inspectPage(){
   out.expenseChartText = (document.querySelector('#chartExpenses') || {}).textContent || '';
   out.liabDash = (document.querySelector('#chartLiab') || {}).innerText || '';
   out.money = { income: money(md.metrics.income), bank: md.metrics.bank === null ? null : money(md.metrics.bank) };
+  out.attention = (document.querySelector('#attention') || {}).innerText || '';
+  out.equityPctText = out.equityPct === null ? null : pctText(out.equityPct);
 
   /* Review & Edit */
   goPage('editor');
-  const inputs = [...document.querySelectorAll('#editorTable td.num input')].map(i => i.value);
+  const inputs = [...document.querySelectorAll('#editorTable td.num:not(.pct) input')].map(i => i.value);
   out.editorNumeric = inputs.length;
   out.editorBad = inputs.filter(v => !/^\(?\$\d{1,3}(,\d{3})*\.\d{2}\)?$/.test(v)).slice(0, 5);
+  /* Every sheet's percent columns and "Percentage of total" rows show percentages, never dollars */
+  const keepActive = state.active;
+  out.editorPctCells = 0; out.editorPctBad = [];
+  for (const [name, sm] of Object.entries(md.sheetModels)){
+    const rows = state.sheets[name] || [];
+    const pctCols = new Set(sm.cols.filter(c => c.type === 'percent').map(c => c.idx));
+    const valIdx = displayColumns(sm).map(c => c.idx);
+    const pctRows = new Set(sm.lines.filter(l => isPercentRowLabel(l.label)).map(l => l.r));
+    if (!pctCols.size && !pctRows.size) continue;
+    state.active = name; renderEditor();
+    for (const inp of document.querySelectorAll('#editorTable input')){
+      const r = +inp.dataset.r, c = +inp.dataset.c, v = (rows[r] || [])[c];
+      if (r === sm.headerRow || r >= 600 || !(pctCols.has(c) || (pctRows.has(r) && valIdx.includes(c)))) continue;
+      if (parseAmount(v) === null && !isPercentText(v)) continue;
+      out.editorPctCells++;
+      if (!/^\(?\d[\d,]*\.\d%\)?$/.test(inp.value)) out.editorPctBad.push(name + '!' + (r + 1) + ':' + inp.value);
+    }
+  }
+  state.active = keepActive; renderEditor();
+
+  /* A/R & A/P Aging page */
+  goPage('aging');
+  out.agingAr = (document.querySelector('#arView') || {}).innerText || '';
+  out.agingPctRows = [...document.querySelectorAll('#aging tr')].filter(tr => isPercentRowLabel((tr.cells[0] || {}).textContent || ''))
+    .map(tr => [...tr.cells].slice(1).map(td => td.textContent.trim()).filter(Boolean));
 
   /* Financial Statements page */
   goPage('financials');
@@ -319,6 +437,8 @@ function readXlsxFile(file){
 }
 
 /* ---------- checks ---------- */
+
+const isPctLabel = t => /^(percentage|percent|pct|%)\s*(of\s*)?(the\s*)?(grand\s*)?total$/i.test(String(t || '').trim());
 
 function near(a, b, tol = 0.011){ return a !== null && a !== undefined && Math.abs(a - b) <= tol; }
 
@@ -425,6 +545,17 @@ function checkWorkbook(w, r, excel, pdf, errors){
   for (const [id, want] of Object.entries(e.periods || {}))
     check(`${tag} Row 23 ${id} heading shows its own period "${want}"`, page(id).length && page(id).every(p => p.text.includes(want)), (page(id)[0] || {}).text && page(id)[0].text.slice(0, 120));
 
+  /* Row 13: the A/R & A/P Aging page — an empty A/R says so; "Percentage of total" rows print percentages */
+  if (e.emptyAR) check(`${tag} Row 13 Aging page: empty A/R says there are no open receivables`, /No open receivables as of/.test(r.agingAr), r.agingAr.slice(0, 80));
+  const pctRowCells = [...r.agingPctRows.flat(), ...r.pages.flatMap(p => Object.entries(p.pctCells).filter(([k]) => isPctLabel(k)).flatMap(([, v]) => v.filter(Boolean)))];
+  if (pctRowCells.length) check(`${tag} Row 52 "Percentage of total" rows print %, not $ (Aging page and PDF)`, pctRowCells.every(v => /%\)?$/.test(v) && !/\$/.test(v)), pctRowCells.slice(0, 6).join(' '));
+  /* Row 3/52: Review & Edit shows percent columns / rows as percentages */
+  if (r.editorPctCells) check(`${tag} Row 3 Review & Edit shows % of Income / percentage cells as %, not $`, !r.editorPctBad.length, r.editorPctBad.slice(0, 4).join(' | '));
+  if (e.editorPct) check(`${tag} Row 3 Review & Edit has percentage cells to show`, r.editorPctCells >= e.editorPct, r.editorPctCells);
+  /* Row 36: the dashboard never shows two different equity shares */
+  if (r.metrics.equity !== null && r.metrics.equity < 0)
+    check(`${tag} Row 36 negative-equity alert uses the composition share (${r.equityPctText})`, r.attention.includes('which is ' + r.equityPctText + ' of total'), (r.attention.match(/Equity is negative[^\n]*/) || [''])[0]);
+
   /* Row 13, 27: aging + cash basis */
   if (e.noAR) check(`${tag} Row 27 cash basis: no A/R anywhere in the report`, r.suppressAR && !r.pages.some(p => p.id === 'ar') && !r.pages.some(p => /5,205\.70/.test(p.text)));
   if (r.roles.ar && !r.suppressAR) check(`${tag} Row 13 A/R aging in PDF and Excel`, r.pages.some(p => p.id === 'ar') && excel.sheets.some(s => s.name === 'AR Aging'));
@@ -502,6 +633,8 @@ function checkWorkbook(w, r, excel, pdf, errors){
   check(`${tag} Row 23 Excel heading rows centred`, stmts.filter(s => !s.aging).every(s => s.centered), stmts.filter(s => !s.aging && !s.centered).map(s => s.name).join(','));
   check(`${tag} Rows 44/45 every Excel amount uses the accounting format ($ negatives in parentheses)`, stmts.every(s => !s.nonAccounting.length),
     stmts.filter(s => s.nonAccounting.length).map(s => s.name + ': ' + s.nonAccounting.slice(0, 3).join(', ')).join(' | '));
+  const pctRowXl = stmts.flatMap(s => s.cells.filter(c => c.numeric && c.col !== 'A' && isPctLabel(s.val('A' + c.row))).map(c => s.name + '!' + c.col + c.row + ' ' + c.fmt));
+  if (pctRowXl.length) check(`${tag} Row 52 Excel "Percentage of total" rows use a % format`, pctRowXl.every(x => /%/.test(x)), pctRowXl.slice(0, 4).join(' | '));
   check(`${tag} Row 41 tab colours differ by statement type`, new Set(excel.sheets.map(s => s.tabColor)).size >= Math.min(3, excel.sheets.length));
   /* Row 40: Notes sheet formatted as a table (title, Line Item / Category | Note headings) */
   const notesWs = excel.sheets.find(s => s.name === 'Notes');
@@ -527,7 +660,7 @@ function checkWorkbook(w, r, excel, pdf, errors){
     ? [{ name: path.basename(process.env.TRACKER_XLSX), file: fs.readFileSync(process.env.TRACKER_XLSX),
          /* TRACKER_EXPECT=expect.json adds the figures to check: { client, expect: { income, net, roles, periods, … } } */
          ...(process.env.TRACKER_EXPECT ? JSON.parse(fs.readFileSync(process.env.TRACKER_EXPECT, 'utf8')) : { expect: {} }) }]
-    : [row54Workbook(), plutoWorkbook(), comparativePctWorkbook(), halfYearCashWorkbook(), ...fixtureWorkbooks()])
+    : [row54Workbook(), plutoWorkbook(), plutoClientWorkbook(), comparativePctWorkbook(), halfYearCashWorkbook(), ...fixtureWorkbooks()])
     .filter(w => !process.env.TRACKER_ONLY || w.name.includes(process.env.TRACKER_ONLY));   // e.g. TRACKER_ONLY="Row 54"
   if (!books.length) throw new Error('No workbook matches TRACKER_ONLY=' + process.env.TRACKER_ONLY);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'udmr-'));
