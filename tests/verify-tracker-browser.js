@@ -338,8 +338,9 @@ function checkWorkbook(w, r, excel, pdf, errors){
   if (e.net !== undefined) check(`${tag} Net income = ${e.net}`, near(r.metrics.net, e.net), r.metrics.net);
   if (e.expenses !== undefined) check(`${tag} Total expenses = ${e.expenses}`, near(r.metrics.expenses, e.expenses), r.metrics.expenses);
   if (w.expected){
-    for (const k of ['income', 'net', 'assets', 'bank']){
-      const want = w.expected[k] ?? (w.expected.metrics || {})[k];
+    check(`${tag} Row 35 fixture has independently computed values`, ['income', 'net'].every(k => typeof (w.expected[k] ?? w.expected['m.' + k]) === 'number'));
+    for (const k of ['income', 'gross', 'expenses', 'net', 'assets', 'equity', 'bank']){
+      const want = w.expected[k] ?? w.expected['m.' + k] ?? (w.expected.metrics || {})[k];
       if (typeof want === 'number') check(`${tag} Row 35 ${k} matches the independently computed fixture value`, near(r.metrics[k], want), r.metrics[k] + ' vs ' + want);
     }
   }
