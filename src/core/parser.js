@@ -583,7 +583,10 @@ function detectRoles(sheets, sheetModels){
     const bsTab = /^(bs|b\.?s\.?|balance ?sheet)(_|-|\s)*(comparative|comp)?$/i.test(rawName);
     const bsComparative = bsTab && /(comparative|comp)$/i.test(rawName.trim());
     const bsName = bsTab || /balance sheet|statement of financial (position|condition)|\bbs\b/.test(text);
-    const tbName = /^(tb|t\.?b\.?|trial ?balance)$/i.test(rawName);
+    /* Strict rule: a tab named TB / Trial Balance ("TB_July", "Trial Balance Summary") or a sheet titled "Trial Balance"
+     * is the Trial Balance — whatever its columns. */
+    const tbName = /^(tb|t\.?b\.?|trial ?balance)$/i.test(rawName) || /(^| )(tb|trial ?balance)( |$)/.test(nameT) ||
+      (/(^| )trial balance( |$)/.test(_sheetText(rows, 6)) && !/profit and loss|balance sheet|income statement/.test(_sheetText(rows, 6)));
     const plContent = (has(/^total (for )?(income|revenues?|sales)$/) || has(/^gross profit$/)) && has(/^net (income|profit|loss|ordinary income)/);
     const bsContent = has(/^total (for )?assets$/) && (has(/^total (for )?liabilities/) || has(/equity$/));
     const recv = /receivable|\ba r\b|\bar\b|customer/.test(text), pay = /payable|\ba p\b|\bap\b|vendor|supplier/.test(text);
@@ -592,12 +595,15 @@ function detectRoles(sheets, sheetModels){
     /* "PL (% Income)" / "Profit and Loss % of Total Income": a P&L with a % of income column and one amount column
      * (a Total or a single period such as "Jan - Dec 2025"). A tab/title that says so counts even with more periods. */
     const pctCol = sm.cols.some(c => c.type === 'percent');
-    const pctName = /%|percent|pct/i.test(rawName) || /(%|percent(age)?) (of )?(total )?(income|revenues?|sales)|common size|vertical analysis/.test(normLabel(rawName) + ' ' + title);
+    /* Only the tab name, the title rows and the column headings count — never the statement body (a "12.5%" cell
+     * followed by a "Total Income" line is not a "% of Total Income" title). */
+    const headText = _sheetText(rows, sm.headerRow >= 0 ? sm.headerRow + 1 : 6);
+    const pctName = /%|percent|pct/i.test(rawName) || /(%|percent(age)?) (of )?(total )?(income|revenues?|sales)|common size|vertical analysis/.test(normLabel(rawName) + ' ' + headText);
     /* Row 54: "P&L(Classwise)" / "Profit and Loss by Class" — one column per class / department / location plus Total. */
     const segCols = sm.cols.filter(c => c.type === 'value' && c.label).length;
     const className = /class ?wise|\bby (class|department|location|division|segment|project|site|branch)\b|\bclass(es)?\b|department ?wise|location ?wise/.test(text);
     const cls = !months && periods <= 1 && (className || (segCols >= 2 && sm.cols.some(c => c.type === 'rowTotal')));
-    return { n, sm, months, buckets, periods, plName, bsName, bsComparative, tbName, plContent, bsContent, recv, pay, agingName, notes, cls,
+    return { n, sm, months, buckets, periods, plName, bsName, bsComparative, tbName, plContent, bsContent, recv, pay, agingName, notes, cls, pctName,
              pct: pctCol && ((months < 2 && periods <= 1) || pctName), detail: /detail|by customer|by vendor|transaction/.test(text) };
   });
   const free = x => !Object.values(roles).includes(x.n);
@@ -625,13 +631,16 @@ function detectRoles(sheets, sheetModels){
   /* The main P&L roles go to amount sheets first, whatever the tab order; a % of Income or by-Class sheet is
    * the main P&L only when the workbook has no other P&L. */
   const plMain = plAll.filter(x => !x.pct && !x.cls);
-  const plCands = plMain.length ? plMain : plAll.filter(x => !x.pct).length ? plAll.filter(x => !x.pct) : plAll;
-  for (const x of plCands){
-    if (x.months >= 2 && !roles.plMonthly){ roles.plMonthly = x.n; continue; }
-  }
+  /* Strict rule: a sheet whose tab or title says "% of Income" is always PL (% Income), even when it is the only P&L
+   * (the figures then come from it — see analyzeFinancials). */
+  const pctNamed = x => x.pct && x.pctName && x.periods <= 1 && x.months < 2;   // one amount column + its % of Income
+  const plCands = plMain.length ? plMain : plAll.filter(x => !x.pct).length ? plAll.filter(x => !x.pct) : plAll.filter(x => !pctNamed(x));
   for (const x of plCands){
     if (!free(x)) continue;
     if (x.periods >= 2 && !roles.plComparative){ roles.plComparative = x.n; continue; }
+  }
+  for (const x of plCands){
+    if (x.months >= 2 && !roles.plMonthly){ roles.plMonthly = x.n; continue; }
   }
   for (const x of plCands){
     if (!free(x)) continue;
@@ -641,7 +650,7 @@ function detectRoles(sheets, sheetModels){
     if (!roles.pl && !x.months && x.periods <= 1){ roles.pl = x.n; continue; }
   }
   for (const x of plAll){
-    if (free(x) && x.pct && !roles.plPercent && (roles.pl || roles.plMonthly || roles.plComparative)) roles.plPercent = x.n;
+    if (free(x) && x.pct && !roles.plPercent && (roles.pl || roles.plMonthly || roles.plComparative || x.pctName)) roles.plPercent = x.n;
   }
   for (const x of plAll){
     if (free(x) && x.cls && !roles.plClass && (roles.pl || roles.plMonthly || roles.plComparative)) roles.plClass = x.n;
@@ -667,6 +676,13 @@ function detectRoles(sheets, sheetModels){
   }
   for (const x of info){
     if (free(x) && x.notes && !roles.notes){ roles.notes = x.n; }
+  }
+  /* Strict rule: a tab whose name says Trial Balance / TB or "% of Income" is never dropped — even when its content
+   * did not look like a statement (no amount columns recognised). */
+  for (const x of info){
+    if (!free(x)) continue;
+    if (!roles.tb && x.tbName) roles.tb = x.n;
+    else if (!roles.plPercent && x.pctName && (x.plName || x.plContent)) roles.plPercent = x.n;
   }
   return roles;
 }

@@ -211,7 +211,7 @@ function _cascadeCell(ctx, sm, lineIdx, c){
   const grandIdx = sm.lines.findIndex(l => l.kind === 'grandTotal');
   if (grandIdx >= 0 && sm.lines[lineIdx].r < sm.lines[grandIdx].r)
     _set(ctx, sm, grandIdx, c, _sumGrand(ctx, sm, grandIdx, c));
-  const isPl = ['plMonthly', 'plComparative', 'pl'].includes(sm.role);
+  const isPl = ['plMonthly', 'plComparative', 'pl', 'plPercent'].includes(sm.role);
   if (isPl) _recomputeFormulas(ctx, sm, c);
 }
 
@@ -293,7 +293,9 @@ function computeImpact(sheetName, r, c, oldVal, newVal){
 
   /* 4. Cross-statement propagation (on the year-to-date basis) */
   const bsName = model.roles.bs;
-  const isPl = ['plMonthly', 'plComparative', 'pl'].includes(sm.role);
+  /* The % of Income statement feeds the Balance Sheet only when it is the workbook's only P&L. */
+  const isPl = ['plMonthly', 'plComparative', 'pl'].includes(sm.role) ||
+    (sm.role === 'plPercent' && !model.roles.pl && !model.roles.plMonthly && !model.roles.plComparative);
 
   if (isPl && bsName && sheetName !== bsName){
     /* Δ Net Income measured on the sheet's YTD column: row Total for monthly,
