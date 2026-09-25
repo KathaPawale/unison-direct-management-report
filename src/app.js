@@ -157,6 +157,11 @@ function renderDashboard(){
     if (d < -20) alerts.push(['High', `Revenue is down ${Math.abs(d).toFixed(1)}% vs the prior-year period.`]);
   }
   if (!md.roles.bs) alerts.push(['Info', 'No Balance Sheet worksheet was detected in this workbook.']);
+  /* Data checks: every statement reconciled with itself and the others (see dataChecks in financials.js). */
+  let checks = [];
+  try { checks = dataChecks(md, state.sheets); } catch (e){ console.error('Data checks failed:', e); }
+  for (const c of checks) alerts.push([c.sev, 'Data check — ' + escapeHtml(c.msg)]);
+  if (!checks.length) alerts.push(['Info', 'Data checks passed: monthly totals, P&L arithmetic, P&L sheets agree, Trial Balance debits = credits, aging totals, percentages.']);
   /* Strict rule: a worksheet left out of the report is always named, never dropped silently. */
   const captured = new Set(Object.values(md.roles).filter(Boolean));
   const left = Object.keys(state.sheets).filter(n => !captured.has(n) && (state.sheets[n] || []).some(row => (row || []).some(v => parseAmount(v) !== null)));

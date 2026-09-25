@@ -552,6 +552,8 @@ function checkWorkbook(w, r, excel, pdf, errors){
   /* Row 3/52: Review & Edit shows percent columns / rows as percentages */
   if (r.editorPctCells) check(`${tag} Row 3 Review & Edit shows % of Income / percentage cells as %, not $`, !r.editorPctBad.length, r.editorPctBad.slice(0, 4).join(' | '));
   if (e.editorPct) check(`${tag} Row 3 Review & Edit has percentage cells to show`, r.editorPctCells >= e.editorPct, r.editorPctCells);
+  /* Rows 1-54: every statement reconciles (months = Total, P&L arithmetic, P&L sheets agree, TB balances, aging totals, shares) */
+  check(`${tag} Data checks passed on the dashboard`, /Data checks passed/.test(r.attention), (r.attention.match(/Data check —[^\n]*/g) || []).slice(0, 2).join(' | '));
   /* Row 36: the dashboard never shows two different equity shares */
   if (r.metrics.equity !== null && r.metrics.equity < 0)
     check(`${tag} Row 36 negative-equity alert uses the composition share (${r.equityPctText})`, r.attention.includes('which is ' + r.equityPctText + ' of total'), (r.attention.match(/Equity is negative[^\n]*/) || [''])[0]);

@@ -730,3 +730,82 @@ function analyzeFinancials(model, sheets){
     importedNotes: notesText
   });
 }
+
+/* ---------- data checks ---------- */
+
+/* Reconciles every uploaded statement with itself and with the others, so a figure the tool read wrongly (or a
+ * workbook that does not add up) is reported on the dashboard instead of reaching the report unnoticed.
+ * Returns [{ sev: 'High' | 'Review', msg }]; an empty list means every check passed. */
+function dataChecks(model, sheets){
+  const out = [];
+  if (!model) return out;
+  const roles = model.roles, S = k => roles[k] ? model.sheetModels[roles[k]] : null;
+  const TOL = 0.05;
+  const off = (a, b, tol = TOL) => a !== null && a !== undefined && b !== null && b !== undefined && Math.abs(a - b) > tol;
+  const fmt = n => (n < 0 ? '(' : '') + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + (n < 0 ? ')' : '');
+  const rowsOf = sm => sheets[sm.name] || [];
+  const findLine = (sm, re) => sm.lines.find(l => re.test(l.mkey || labelKey(l.label)));
+
+  /* 1. Monthly P&L: the months add up to the Total column (Total Income, Net Income). */
+  const plM = S('plMonthly');
+  if (plM){
+    const months = plM.cols.filter(c => c.type === 'month'), tot = plM.cols.find(c => c.type === 'rowTotal');
+    if (months.length && tot) for (const [name, re] of [['Total Income', /^total (for )?(income|revenues?|sales)$/], ['Net Income', /^net (income|profit|loss)$/]]){
+      const l = findLine(plM, re); if (!l) continue;
+      const row = rowsOf(plM)[l.r] || [];
+      const sum = months.reduce((s, c) => s + (parseAmount(row[c.idx]) || 0), 0), total = parseAmount(row[tot.idx]);
+      if (off(sum, total)) out.push({ sev: 'High', msg: `${plM.name}: the months of ${name} add up to ${fmt(sum)}, but its Total column shows ${fmt(total)}.` });
+    }
+  }
+
+  /* 2. Each P&L adds up: Net Income = Income − Cost of Goods Sold − Expenses + Other Income − Other Expenses. */
+  const plSheets = ['plComparative', 'pl', 'plMonthly', 'plPercent', 'plClass'].map(k => S(k)).filter(Boolean);
+  const figs = plSheets.map(sm => ({ sm, f: plFigures(sheets, sm, periodSpec(sm, 'current')) })).filter(x => x.f && x.f.income !== null);
+  for (const { sm, f } of figs){
+    if (f.expenses === null || f.net === null) continue;
+    const calc = f.income - (f.cogs || 0) - f.expenses + (f.otherIncome || 0) - (f.otherExpenses || 0);
+    if (off(calc, f.net, 1)) out.push({ sev: 'Review', msg: `${sm.name}: Income − Cost of Goods Sold − Expenses (+ other items) = ${fmt(calc)}, but Net Income shows ${fmt(f.net)}. Check for lines the tool did not recognise.` });
+  }
+
+  /* 3. The P&L sheets agree with each other for the same period (income and net income). */
+  const main = figs[0];
+  for (const x of figs.slice(1)){
+    for (const k of ['income', 'net']){
+      if (off(main.f[k], x.f[k], 0.5)) out.push({ sev: 'Review', msg: `${k === 'income' ? 'Income' : 'Net Income'} differs between ${main.sm.name} (${fmt(main.f[k])}) and ${x.sm.name} (${fmt(x.f[k])}). Check that both cover the same period.` });
+    }
+  }
+
+  /* 4. Trial Balance: total debits = total credits. */
+  const tb = S('tb');
+  if (tb){
+    const dr = tb.cols.find(c => /^(debit|debits|dr)$/i.test(cellText(c.label))), cr = tb.cols.find(c => /^(credit|credits|cr)$/i.test(cellText(c.label)));
+    if (dr && cr){
+      let d = 0, c = 0;
+      for (const l of tb.lines){ if (l.kind !== 'account') continue; const row = rowsOf(tb)[l.r] || []; d += parseAmount(row[dr.idx]) || 0; c += parseAmount(row[cr.idx]) || 0; }
+      if (off(d, c)) out.push({ sev: 'High', msg: `${tb.name}: total debits ${fmt(d)} do not equal total credits ${fmt(c)}.` });
+    }
+  }
+
+  /* 5. Aging: the buckets add up to the total; A/P aging agrees with Accounts Payable on the Balance Sheet. */
+  for (const [k, ag] of [['ar', model.arAging], ['ap', model.apAging]]){
+    if (!ag || !ag.buckets || !ag.buckets.length || ag.fromDetail) continue;
+    const sum = ag.buckets.reduce((s, b) => s + (b.value || 0), 0);
+    if (off(sum, ag.total)) out.push({ sev: 'High', msg: `${roles[k]}: the aging buckets add up to ${fmt(sum)}, but the total shows ${fmt(ag.total)}.` });
+  }
+  const m = model.metrics || {};
+  if (model.apAging && m.ap !== null && m.ap !== undefined && off(model.apAging.total, m.ap, 0.5))
+    out.push({ sev: 'Review', msg: `A/P aging total ${fmt(model.apAging.total)} differs from Accounts Payable on the Balance Sheet ${fmt(m.ap)}. Check that both are as of the same date.` });
+
+  /* 6. Percentages: each share within ±100%, and the shares of one breakdown add up to 100%. */
+  const shareSets = [['Expense Breakdown', model.expenseGroups, true], ['Assets composition', (model.bsComposition || {}).assets, true],
+                     ['Liabilities Bifurcation', model.liabilityBifurcation, true]];
+  for (const [name, items] of shareSets){
+    if (!items || !items.length) continue;
+    const bad = items.filter(x => x.pct !== null && x.pct !== undefined && Math.abs(x.pct) > 100.001);
+    if (bad.length) out.push({ sev: 'High', msg: `${name}: ${bad.map(x => x.label).join(', ')} exceed 100%.` });
+  }
+  const lb = model.liabilityBifurcation || [];
+  if (lb.length && lb.some(x => x.value) && off(lb.reduce((s, x) => s + (x.pct || 0), 0), 100, 0.05))
+    out.push({ sev: 'High', msg: 'Liabilities Bifurcation shares do not add up to 100%.' });
+  return out;
+}
