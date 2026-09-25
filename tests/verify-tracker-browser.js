@@ -524,7 +524,9 @@ function checkWorkbook(w, r, excel, pdf, errors){
   const browser = await chromium.launch({ executablePath: exe });
   /* TRACKER_XLSX=path/to/client.xlsx runs every check on a real client workbook instead of the built-in set. */
   const books = (process.env.TRACKER_XLSX
-    ? [{ name: path.basename(process.env.TRACKER_XLSX), file: fs.readFileSync(process.env.TRACKER_XLSX), expect: {} }]
+    ? [{ name: path.basename(process.env.TRACKER_XLSX), file: fs.readFileSync(process.env.TRACKER_XLSX),
+         /* TRACKER_EXPECT=expect.json adds the figures to check: { client, expect: { income, net, roles, periods, … } } */
+         ...(process.env.TRACKER_EXPECT ? JSON.parse(fs.readFileSync(process.env.TRACKER_EXPECT, 'utf8')) : { expect: {} }) }]
     : [row54Workbook(), plutoWorkbook(), comparativePctWorkbook(), halfYearCashWorkbook(), ...fixtureWorkbooks()])
     .filter(w => !process.env.TRACKER_ONLY || w.name.includes(process.env.TRACKER_ONLY));   // e.g. TRACKER_ONLY="Row 54"
   if (!books.length) throw new Error('No workbook matches TRACKER_ONLY=' + process.env.TRACKER_ONLY);
