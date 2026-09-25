@@ -208,7 +208,39 @@ function _paneXml(fz){
     `<selection pane="${pane}" activeCell="${top}" sqref="${top}"/>`;
 }
 
+/* Strict rules for every downloaded Excel file: every sheet has a tab color, and every sheet except the Cover and
+ * Disclaimer has frozen heading rows and first column. A sheet built without them gets the defaults here. */
+const XL_UNFROZEN = new Set(['Cover', 'Disclaimer']);
+function _enforceSheetRules(wb){
+  for (const name of wb.SheetNames){
+    const ws = wb.Sheets[name];
+    if (!ws['!tabColor'] || !ws['!tabColor'].rgb) ws['!tabColor'] = { rgb: '0B2F59' };
+    const fz = ws['!freeze'];
+    if (!XL_UNFROZEN.has(name) && !(fz && (fz.xSplit || fz.ySplit))){
+      const range = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']) : { e: { c: 0 } };
+      ws['!freeze'] = { xSplit: range.e.c > 0 ? 1 : 0, ySplit: 1 };
+    }
+  }
+}
+
+/* Reads the written file back and refuses it when a sheet lost its tab color or frozen pane. */
+function _verifySheetRules(bytes, wb){
+  const zip = XLSX.CFB.read(bytes, { type: 'array' });
+  const problems = [];
+  wb.SheetNames.forEach((name, i) => {
+    const at = zip.FullPaths.findIndex(p => p.endsWith('/xl/worksheets/sheet' + (i + 1) + '.xml'));
+    const xml = at < 0 ? '' : new TextDecoder().decode(zip.FileIndex[at].content);
+    if (!/<sheetPr>[^]*?<tabColor rgb="[0-9A-F]{8}"/.test(xml)) problems.push(name + ': no tab color');
+    if (!XL_UNFROZEN.has(name) && !/<pane [^>]*state="frozen"/.test(xml)) problems.push(name + ': headings not frozen');
+    const fz = wb.Sheets[name]['!freeze'];
+    if (fz && fz.ySplit === 5 && fz.xSplit === 1 && wb.Sheets[name]['!particulars'] && !/<pane xSplit="1" ySplit="5" topLeftCell="B6"/.test(xml))
+      problems.push(name + ': rows 1-5 and column A not frozen');
+  });
+  if (problems.length) throw new Error('Excel formatting rules failed — ' + problems.join('; '));
+}
+
 function _workbookBytes(wb){
+  _enforceSheetRules(wb);
   const bytes = new Uint8Array(XLSX.write(wb, { type: 'array', bookType: 'xlsx' }));
   const zip = XLSX.CFB.read(bytes, { type: 'array' });
   let changed = 0;
@@ -238,16 +270,18 @@ function _workbookBytes(wb){
     entry.size = entry.content.length;
     changed++;
   });
-  return changed ? XLSX.CFB.write(zip, { type: 'array', fileType: 'zip' }) : bytes;
+  const out = changed ? new Uint8Array(XLSX.CFB.write(zip, { type: 'array', fileType: 'zip' })) : bytes;
+  _verifySheetRules(out, wb);
+  return out;
 }
 
 function _saveWorkbook(wb, filename){
   let bytes;
   try { bytes = _workbookBytes(wb); }
   catch (e){
-    console.error('Frozen panes could not be written:', e);
-    XLSX.writeFile(wb, filename);
-    toast('Excel downloaded, but the heading rows could not be frozen or the tabs colored.');
+    /* Strict rule: never hand over a file without its tab colors and frozen headings. */
+    console.error('Excel formatting rules failed:', e);
+    toast('Excel file not downloaded: ' + e.message);
     return false;
   }
   const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
@@ -321,6 +355,7 @@ function _modelSheetToWs(sm, title){
   ws['!rows'] = [{ hpt: 26 }, { hpt: 20 }, { hpt: 18 }, { hpt: 6 }, { hpt: 30 }];
   ws['!merges'] = [0, 1, 2].map(r => ({ s: { r, c: 0 }, e: { r, c: last } }));
   _decorateSheet(ws, sm.role, HEAD_R + 1, 1);
+  ws['!particulars'] = true;   // strict rule: rows 1-5 (row 5 = "Particulars") and column A frozen
   return ws;
 }
 

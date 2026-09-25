@@ -39,7 +39,7 @@ const files = ['src/core/util.js', 'src/core/state.js', 'src/core/parser.js', 's
   'src/report/charts.js', 'src/report/report.js', 'src/report/exports.js'];
 vm.runInContext(files.map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n;\n') +
   '\n;toast = m => __toasts.push(m);' +
-  '\n;globalThis.__api = { parseWorkbook, state, reportSections, reportTableParts, downloadReportExcel, downloadDataExcel };', Object.assign(ctx, { __toasts: toasts }));
+  '\n;globalThis.__api = { parseWorkbook, state, reportSections, reportTableParts, downloadReportExcel, downloadDataExcel, _workbookBytes, _verifySheetRules };', Object.assign(ctx, { __toasts: toasts }));
 const api = ctx.__api;
 
 const head = t => [['Pluto Asset Recovery'], [t], ['January-December 2025'], []];
@@ -140,7 +140,47 @@ for (const tab of ['Profit and Loss', 'P&L % of Income', 'BS'])
   check(`Data workbook: "${tab}" freezes rows 1-5 (its column-heading row)`, /ySplit="5"/.test(pane(dataXml[tab])) && /topLeftCell="B6"/.test(pane(dataXml[tab])));
 for (const [tab, xml] of Object.entries(dataXml))
   check(`Data workbook: "${tab}" has a tab color`, /<sheetPr><tabColor rgb="FF[0-9A-F]{6}"\/><\/sheetPr>/.test(xml));
-check('No "could not be frozen" warnings', !toasts.some(t => /could not be frozen/.test(t)));
+check('No Excel formatting-rule failures', !toasts.some(t => /could not be frozen|not downloaded/.test(t)));
+
+/* ---------- strict rules ---------- */
+
+/* Trial Balance: captured by tab name (any "TB" / "Trial Balance" name) or by its title, whatever its columns. */
+const tbRows = t => [...head(t), ['Account', 'Debit', 'Credit'], ['Checking', 500, ''], ['Accounts Payable', '', 100], ['Sales', '', 400], ['Total', 500, 500]];
+for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summary', 'Trial Balance'], ['TrialBalance', 'Trial Balance'], ['Sheet3', 'Trial Balance'],
+                            ['TB', 'Report'], ['Adjusted Trial Balance', 'Adjusted Trial Balance']]){
+  const md = api.parseWorkbook({ 'PL': [...head('Profit and Loss'), ['', 'Total'], ...body(false)], 'BS': bs, [tab]: tbRows(title) });
+  check(`Strict rule: tab "${tab}" titled "${title}" is the Trial Balance`, md.roles.tb === tab);
+}
+/* PL (% Income): captured even when it is the workbook's only P&L; the figures then come from it. */
+{
+  const sheets = { 'PL (% Income)': pctSheet('Total'), 'BS': bs };
+  api.state.sheets = sheets; const md = api.parseWorkbook(sheets); api.state.model = md;
+  check('Strict rule: the only P&L titled "% of Income" is captured as PL (% Income)', md.roles.plPercent === 'PL (% Income)');
+  check('Strict rule: its figures reach the dashboard (income 1,000, net 600)', md.metrics.income === 1000 && md.metrics.net === 600);
+  check('Strict rule: the report has the "Profit and Loss (% of Income)" section', api.reportSections().some(x => x.id === 'plPercent'));
+  downloads.length = 0; api.downloadReportExcel();
+  check('Strict rule: the Excel file has the "% of Income" sheet', downloads.length === 1 && Object.keys(sheetXml(downloads[0].bytes)).some(n => /% of Income/.test(n)));
+}
+/* A "% Change" column followed by a "Total Income" line is not a "% of Total Income" title. */
+{
+  const md = api.parseWorkbook({ 'Profit and Loss': [...head('Profit and Loss'), ['', 'Jan - Dec 2025', 'Jan - Dec 2024 (PY)', '% Change'],
+    ['Income'], ['Sales', 1000, 900, '11.1%'], ['Total Income', 1000, 900, '11.1%'], ['Net Income', 600, 500, '20.0%']], 'BS': bs });
+  check('Strict rule: a comparative P&L with a % Change column stays the comparative P&L', md.roles.plComparative === 'Profit and Loss' && !md.roles.plPercent);
+}
+/* Every downloaded sheet gets a tab color and frozen headings, even one built without them; a file missing them is refused. */
+{
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Heading', 'Amount'], ['Line', 1]]), 'Bare');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Cover text']]), 'Cover');
+  const xmls = sheetXml(api._workbookBytes(wb));
+  check('Strict rule: a sheet built without a tab color gets one', /<tabColor rgb="FF0B2F59"\/>/.test(xmls.Bare) && /<tabColor /.test(xmls.Cover));
+  check('Strict rule: a sheet built without frozen headings gets them', /ySplit="1"/.test(pane(xmls.Bare)) && /xSplit="1"/.test(pane(xmls.Bare)) && !pane(xmls.Cover));
+  const plain = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(plain, XLSX.utils.aoa_to_sheet([['Heading', 'Amount']]), 'Plain');
+  let refused = false;
+  try { api._verifySheetRules(new Uint8Array(XLSX.write(plain, { type: 'array', bookType: 'xlsx' })), plain); } catch (e){ refused = /no tab color/.test(e.message) && /not frozen/.test(e.message); }
+  check('Strict rule: a file without tab colors and frozen headings is refused', refused);
+}
 
 console.log(`${pass + fail} assertions, ${pass} pass, ${fail} fail`);
 process.exitCode = fail ? 1 : 0;

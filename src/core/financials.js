@@ -490,7 +490,7 @@ function detectClientPeriod(sheets, model){
   const r = model.roles;
   /* The full-period statements speak for the report period first: a month-by-month sheet is often titled
    * "For the month ended …" even when it holds seven months. */
-  const order = [r.plComparative, r.pl, r.plMonthly, r.bs, r.ar, r.ap].filter(Boolean);
+  const order = [r.plComparative, r.pl, r.plMonthly, r.plPercent, r.bs, r.ar, r.ap].filter(Boolean);
   let client = '', plPeriod = '', bsPeriod = '';
   for (const name of order){
     const rows = sheets[name] || [];
@@ -503,7 +503,7 @@ function detectClientPeriod(sheets, model){
         if (!t || isMetaText(t) || parseAmount(t) !== null) continue;
         if (STATEMENT_TITLE_RE.test(t)) continue;
         if (_periodLike(t)){
-          if ([r.plMonthly, r.plComparative, r.pl].includes(name)){ if (!plPeriod) plPeriod = t; }
+          if ([r.plMonthly, r.plComparative, r.pl, r.plPercent].includes(name)){ if (!plPeriod) plPeriod = t; }
           else if (name === r.bs){ if (!bsPeriod) bsPeriod = t; }
           continue;
         }
@@ -625,7 +625,8 @@ function analyzeFinancials(model, sheets){
   for (const sm of Object.values(model.sheetModels)) _prepLines(sm);
   const S = k => roles[k] ? model.sheetModels[roles[k]] : null;
   const plM = S('plMonthly'), plC = S('plComparative'), plG = S('pl'), bs = S('bs');
-  const plTotals = plC || plG || plM;
+  /* A workbook whose only P&L is the "% of Income" statement takes its figures from it. */
+  const plTotals = plC || plG || plM || S('plPercent');
 
   const basisDetected = detectBasis(sheets, roles);
 
