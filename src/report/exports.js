@@ -476,8 +476,8 @@ function downloadReportExcel(){
   XLSX.utils.book_append_sheet(wb, s, 'Analytical Summary');
 
   /* Financial statement sheets */
-  /* Same order as the PDF (REPORT_STATEMENT_ORDER in report.js). */
-  for (const [role, title] of REPORT_STATEMENT_ORDER){
+  /* Same statements as the PDF (REPORT_STATEMENT_ORDER, REPORT_TRAILING_ORDER); tab order is set by reportTabOrder below. */
+  for (const [role, title] of [...REPORT_STATEMENT_ORDER, ...REPORT_TRAILING_ORDER]){
     const name = md.roles[role];
     if (!name || skipReportSection(md, role)) continue;
     if ((role === 'ar' && md.suppressAR) || (role === 'ap' && md.suppressAP)) continue;
@@ -511,6 +511,11 @@ function downloadReportExcel(){
     } else {
       XLSX.utils.book_append_sheet(wb, modelWs, _sheetNameSafe(wb, ROLE_LABELS[role] || name));
     }
+  }
+  /* Every other worksheet with figures, as in the PDF (reportExtraSheets). */
+  for (const n of reportExtraSheets(md)){
+    const ws = _modelSheetToWs(md.sheetModels[n], n);
+    XLSX.utils.book_append_sheet(wb, ws, _sheetNameSafe(wb, n));
   }
 
   /* Notes + disclaimer */
@@ -562,8 +567,11 @@ function downloadReportExcel(){
   _decorateSheet(disc, 'disc', 0, 0);
   XLSX.utils.book_append_sheet(wb, disc, 'Disclaimer');
 
-  /* Tab order follows the report: Cover, Disclaimer, Analytical Summary, statements, Notes. */
-  wb.SheetNames = ['Cover', 'Disclaimer', ...wb.SheetNames.filter(n => n !== 'Cover' && n !== 'Disclaimer')];
+  const reportTabOrder = ['Cover', 'Disclaimer', 'Analytical Summary', 'Profit and Loss (% of Income)',
+    'Profit and Loss (Monthly)', 'Profit and Loss (Comparative)', 'Balance Sheet', 'Balance Sheet — Comparative',
+    'AR Aging', 'AP Aging', 'Trial Balance', 'Notes', 'Profit and Loss', 'Profit and Loss (by Class)'];
+  wb.SheetNames = [...reportTabOrder.filter(name => wb.SheetNames.includes(name)),
+    ...wb.SheetNames.filter(name => !reportTabOrder.includes(name))];
   if (_saveWorkbook(wb, _reportFileBase() + '-Management-Report.xlsx')) toast('Excel report downloaded');
 }
 

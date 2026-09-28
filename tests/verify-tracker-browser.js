@@ -476,12 +476,11 @@ function checkWorkbook(w, r, excel, pdf, errors){
   const toc = (r.pages.find(p => p.id === 'toc') || {}).tocItems || [];
   check(`${tag} Row 4 TOC is page 2 and numbering starts at 1`, r.pages[1] && r.pages[1].id === 'toc' && toc.length && /^1\. /.test(toc[0].text), toc[0] && toc[0].text);
   check(`${tag} Row 4 TOC numbers are consecutive`, toc.every((t, i) => new RegExp('^' + (i + 1) + '\\. ').test(t.text)));
-  /* Report order (replaces row 15's "Balance Sheet before P&L"): Disclaimer, Dashboard, P&L (% of Income), P&L,
-   * P&L Monthly, P&L Comparative, P&L by Class, Balance Sheet, BS Comparative, A/R, A/P, Trial Balance, Notes. */
-  const ORDER = ['disc', 'dash', 'plPercent', 'pl', 'plMonthly', 'plComparative', 'plClass', 'bs', 'bsComparative', 'ar', 'ap', 'tb', 'notes'];
+  /* Report order: Disclaimer, Dashboard, P&L (% of Income), Monthly, Comparative, Balance Sheets, Aging, Trial Balance, Notes. */
+  const ORDER = ['disc', 'dash', 'plPercent', 'plMonthly', 'plComparative', 'bs', 'bsComparative', 'ar', 'ap', 'tb', 'notes', 'pl', 'plClass'];
   const pageIds = r.pages.map(p => p.id).filter((id, i, a) => !['cover', 'toc'].includes(id) && a.indexOf(id) === i);
   check(`${tag} Report order: PDF sections follow the requested order`, pageIds.join(',') === ORDER.filter(id => pageIds.includes(id)).join(','), pageIds.join(','));
-  check(`${tag} Report order: Disclaimer is section 1, Notes last in the TOC`, toc.length && /^1\. Management Purpose Disclaimer/.test(toc[0].text) && /Notes to Financial Statements/.test(toc[toc.length - 1].text),
+  check(`${tag} Report order: Disclaimer is first and Notes appears in the TOC`, toc.length && /^1\. Management Purpose Disclaimer/.test(toc[0].text) && toc.some(t => /Notes to Financial Statements/.test(t.text)),
     toc.map(t => t.text).join(' | '));
   if (r.finOrder.length >= 2 && r.finOrder.some(t => /Balance Sheet/.test(t)) && r.finOrder.some(t => /Profit and Loss/.test(t)))
     check(`${tag} Row 15 portal shows Balance Sheet before Profit and Loss`, r.finOrder.findIndex(t => /Balance Sheet/.test(t)) < r.finOrder.findIndex(t => /Profit and Loss/.test(t)), r.finOrder.join(', '));
@@ -630,8 +629,8 @@ function checkWorkbook(w, r, excel, pdf, errors){
   if (!excel.ok) return;
   for (const s of e.excelSheets || []) check(`${tag} Rows 44-54 Excel sheet "${s}"`, excel.sheets.some(x => x.name === s), excel.sheets.map(x => x.name).join(', '));
   const stmts = excel.sheets.filter(s => !['Cover', 'Analytical Summary', 'Notes', 'Disclaimer'].includes(s.name));
-  const TAB_ORDER = ['Cover', 'Disclaimer', 'Analytical Summary', 'Profit and Loss (% of Income)', 'Profit and Loss', 'Profit and Loss (Monthly)', 'Profit and Loss (Comparative)',
-    'Profit and Loss (by Class)', 'Balance Sheet', 'Balance Sheet — Comparative', 'AR Aging', 'AP Aging', 'Trial Balance', 'Notes'];
+  const TAB_ORDER = ['Cover', 'Disclaimer', 'Analytical Summary', 'Profit and Loss (% of Income)', 'Profit and Loss (Monthly)', 'Profit and Loss (Comparative)',
+    'Balance Sheet', 'Balance Sheet — Comparative', 'AR Aging', 'AP Aging', 'Trial Balance', 'Notes', 'Profit and Loss', 'Profit and Loss (by Class)'];
   const tabs = excel.sheets.map(x => x.name);
   check(`${tag} Report order: Excel tabs follow the requested order`, tabs.join('|') === TAB_ORDER.filter(t => tabs.includes(t)).join('|'), tabs.join(' | '));
   check(`${tag} Row 7 every statement cell has a border`, stmts.every(s => s.unbordered === 0), stmts.map(s => s.name + ':' + s.unbordered).join(','));

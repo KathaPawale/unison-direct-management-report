@@ -39,7 +39,7 @@ const files = ['src/core/util.js', 'src/core/state.js', 'src/core/parser.js', 's
   'src/report/charts.js', 'src/report/report.js', 'src/report/exports.js'];
 vm.runInContext(files.map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n;\n') +
   '\n;toast = m => __toasts.push(m);' +
-  '\n;globalThis.__api = { parseWorkbook, state, reportSections, reportTableParts, downloadReportExcel, downloadDataExcel, _workbookBytes, _verifySheetRules };', Object.assign(ctx, { __toasts: toasts }));
+  '\n;globalThis.__api = { parseWorkbook, state, reportSections, reportTableParts, downloadReportExcel, downloadDataExcel, _workbookBytes, _verifySheetRules, reportExtraSheets };', Object.assign(ctx, { __toasts: toasts }));
 const api = ctx.__api;
 
 const head = t => [['Pluto Asset Recovery'], [t], ['January-December 2025'], []];
@@ -187,6 +187,22 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
   let refused = false;
   try { api._verifySheetRules(new Uint8Array(XLSX.write(plain, { type: 'array', bookType: 'xlsx' })), plain); } catch (e){ refused = /no tab color/.test(e.message) && /not frozen/.test(e.message); }
   check('Strict rule: a file without tab colors and frozen headings is refused', refused);
+}
+
+/* Strict rule: every worksheet with figures reaches the PDF and Excel; only transaction detail is left out. */
+{
+  const cashFlow = [...head('Statement of Cash Flows'), ['', 'Total'], ['Operating Activities'], ['Net Income', 600], ['Depreciation', 50],
+    ['Net Cash from Operating Activities', 650], ['Net Change in Cash', 650]];
+  const gl = [...head('General Ledger Detail'), ['Date', 'Description', 'Debit', 'Credit'], ['2025-01-02', 'Rent', 400, 0], ['2025-01-05', 'Sales', 0, 1000]];
+  const sheets = { 'PL': [...head('Profit and Loss'), ['', 'Total'], ...body(false)], 'BS': bs, 'Cash Flow': cashFlow, 'GeneralLedger': gl };
+  api.state.sheets = sheets; const md = api.parseWorkbook(sheets); api.state.model = md;
+  const secs = api.reportSections();
+  check('Strict rule: an unrecognised sheet with figures ("Cash Flow") is its own PDF section', secs.some(x => x.sheet === 'Cash Flow' && x.title === 'Cash Flow'));
+  check('Strict rule: transaction detail (General Ledger) is not printed', !secs.some(x => x.sheet === 'GeneralLedger'));
+  downloads.length = 0; api.downloadReportExcel();
+  const xmls = downloads.length ? sheetXml(downloads[0].bytes) : {};
+  check('Strict rule: the Excel report has the "Cash Flow" sheet, frozen at row 5 with a tab color', 'Cash Flow' in xmls && /ySplit="5"/.test(pane(xmls['Cash Flow'])) && /<tabColor /.test(xmls['Cash Flow']));
+  check('Strict rule: its figures are carried over (650)', 'Cash Flow' in xmls && /<v>650<\/v>/.test(xmls['Cash Flow']));
 }
 
 console.log(`${pass + fail} assertions, ${pass} pass, ${fail} fail`);

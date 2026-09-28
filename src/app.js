@@ -164,11 +164,10 @@ function renderDashboard(){
   if (!checks.length) alerts.push(['Info', 'Data checks passed: monthly totals, P&L arithmetic, P&L sheets agree, Trial Balance debits = credits, aging totals, percentages.']);
   /* Strict rule: a worksheet left out of the report is always named, never dropped silently. */
   const captured = new Set(Object.values(md.roles).filter(Boolean));
-  const left = Object.keys(state.sheets).filter(n => !captured.has(n) && (state.sheets[n] || []).some(row => (row || []).some(v => parseAmount(v) !== null)));
-  if (left.length) alerts.push(['Info', 'Not in the report: ' + left.map(n => {
-    const t = normLabel(n + ' ' + ((state.sheets[n] || []).slice(0, 4).flat().filter(v => typeof v === 'string').join(' ')));
-    return escapeHtml(n) + (/ledger|journal|detail|transaction/.test(t) ? ' (transaction detail)' : ' (not recognised as a financial statement — check its title and column headings)');
-  }).join(', ') + '.']);
+  const extra = reportExtraSheets(md);
+  if (extra.length) alerts.push(['Info', 'Included as their own report sections (not a standard statement): ' + extra.map(escapeHtml).join(', ') + '.']);
+  const left = Object.keys(state.sheets).filter(n => !captured.has(n) && !extra.includes(n) && (state.sheets[n] || []).some(row => (row || []).some(v => parseAmount(v) !== null)));
+  if (left.length) alerts.push(['Info', 'Not in the report (transaction detail): ' + left.map(escapeHtml).join(', ') + '.']);
   if (!md.roles.plMonthly && !md.roles.plComparative && !md.roles.pl && !md.roles.plPercent) alerts.push(['Info', 'No Profit and Loss worksheet was detected in this workbook.']);
   if (state.edited.size || state.adjusted.size) alerts.push(['Info', `${state.edited.size} manual edit(s) and ${state.adjusted.size} automatic adjustment(s) are reflected in this report (highlighted in the preview, not in downloads).`]);
   $('#attention').innerHTML = alerts.length
