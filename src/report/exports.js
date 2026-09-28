@@ -520,7 +520,9 @@ function downloadReportExcel(){
 
   /* Financial statement sheets */
   /* Same statements as the PDF (REPORT_STATEMENT_ORDER, REPORT_TRAILING_ORDER); tab order is set by reportTabOrder below. */
-  for (const [role, title] of [...REPORT_STATEMENT_ORDER, ...REPORT_TRAILING_ORDER]){
+  const titles = reportStatementTitles(md);   // each statement keeps its uploaded sheet's heading
+  for (const [role, stdTitle] of [...REPORT_STATEMENT_ORDER, ...REPORT_TRAILING_ORDER]){
+    const title = titles[role] || stdTitle;
     const name = md.roles[role];
     if (!name || skipReportSection(md, role)) continue;
     if ((role === 'ar' && md.suppressAR) || (role === 'ap' && md.suppressAP)) continue;
@@ -558,7 +560,7 @@ function downloadReportExcel(){
   }
   /* Every other worksheet with figures, as in the PDF (reportExtraSheets). */
   for (const n of reportExtraSheets(md)){
-    const ws = _modelSheetToWs(md.sheetModels[n], n);
+    const ws = _modelSheetToWs(md.sheetModels[n], sourceStatementTitle(md.sheetModels[n]) || n);
     XLSX.utils.book_append_sheet(wb, ws, _sheetNameSafe(wb, n));
   }
 

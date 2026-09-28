@@ -584,10 +584,49 @@ const REPORT_STATEMENT_ORDER = [
 ];
 const REPORT_TRAILING_ORDER = [['pl', 'Profit and Loss'], ['plClass', 'Profit and Loss — by Class']];
 
+/* Strict rule: a statement keeps the heading its uploaded sheet gives it ("Statement of Activities" stays "Statement of
+ * Activities", never "Profit and Loss") in the PDF, Table of Contents, Excel and the Financial Statements page. The title is
+ * the line above the column headings that names the statement — never the company name or the period line. */
+const SOURCE_TITLE_WORDS = /statement|profit|loss|\bp ?(&|and) ?l\b|\bpnl\b|income|balance|trial|ag(e)?ing|aged|activities|financial position|operations|earnings|revenue|expenditure|\baccount\b|debtors|creditors|receivable|payable|cash flow|position|condition|net assets|summary|report/i;
+function sourceStatementTitle(sm){
+  if (!sm) return '';
+  const rows = state.sheets[sm.name] || [];
+  const top = Math.min(sm.headerRow >= 0 ? sm.headerRow : 6, 8, rows.length);
+  const client = normLabel(state.client || '');
+  for (let r = 0; r < top; r++){
+    for (const v of rows[r] || []){
+      if (typeof v !== 'string') continue;
+      const t = cellText(v).replace(/\s+/g, ' ');
+      if (!t || t.length > 90 || isMetaText(t) || _periodLike(t) || parseAmount(t) !== null) continue;
+      if (client && normLabel(t) === client) continue;
+      if (SOURCE_TITLE_WORDS.test(t)) return t;
+    }
+  }
+  return '';
+}
+
+/* Section title for each captured statement: the sheet's own heading, else the standard name. When two statements carry
+ * the same heading (three sheets all titled "Income Statement (Profit and Loss)"), the variant is added after it. */
+function reportStatementTitles(md){
+  const out = {};
+  if (!md) return out;
+  const all = [...REPORT_STATEMENT_ORDER, ...REPORT_TRAILING_ORDER];
+  for (const [role, std] of all){
+    const sm = md.roles[role] ? md.sheetModels[md.roles[role]] : null;
+    out[role] = sourceStatementTitle(sm) || std;
+  }
+  const count = {};
+  for (const [role] of all) if (md.roles[role]) count[out[role]] = (count[out[role]] || 0) + 1;
+  const VARIANT = { plPercent: '% of Income', pl: 'Full Period', plMonthly: 'Monthly', plComparative: 'Comparative', plClass: 'by Class', bsComparative: 'Comparative' };
+  for (const [role] of all) if (md.roles[role] && count[out[role]] > 1 && VARIANT[role]) out[role] += ' — ' + VARIANT[role];
+  return out;
+}
+
 function _roleSection(md, role, title){
   if (!md.roles[role] || skipReportSection(md, role)) return null;
   if ((role === 'ar' && md.suppressAR) || (role === 'ap' && md.suppressAP)) return null;
   const ag = role === 'ar' ? md.arAging : role === 'ap' ? md.apAging : null;
+  title = reportStatementTitles(md)[role] || title;
   return { id: role, title, sheet: md.roles[role], ...(role === 'ar' || role === 'ap' ? { aging: ag && ag.fromDetail ? ag : null } : {}) };
 }
 
@@ -628,7 +667,7 @@ function reportSections(){
   sections.push({ id: 'notes', title: 'Notes to Financial Statements' });
   if (md){
     for (const [role, title] of REPORT_TRAILING_ORDER){ const s = _roleSection(md, role, title); if (s) sections.push(s); }
-    reportExtraSheets(md).forEach((n, i) => sections.push({ id: 'extra' + (i + 1), title: n, sheet: n }));
+    reportExtraSheets(md).forEach((n, i) => sections.push({ id: 'extra' + (i + 1), title: sourceStatementTitle(md.sheetModels[n]) || n, sheet: n }));
   }
   return sections;
 }

@@ -482,8 +482,10 @@ function checkWorkbook(w, r, excel, pdf, errors){
   check(`${tag} Report order: PDF sections follow the requested order`, pageIds.join(',') === ORDER.filter(id => pageIds.includes(id)).join(','), pageIds.join(','));
   check(`${tag} Report order: Disclaimer is first and Notes appears in the TOC`, toc.length && /^1\. Management Purpose Disclaimer/.test(toc[0].text) && toc.some(t => /Notes to Financial Statements/.test(t.text)),
     toc.map(t => t.text).join(' | '));
-  if (r.finOrder.length >= 2 && r.finOrder.some(t => /Balance Sheet/.test(t)) && r.finOrder.some(t => /Profit and Loss/.test(t)))
-    check(`${tag} Row 15 portal shows Balance Sheet before Profit and Loss`, r.finOrder.findIndex(t => /Balance Sheet/.test(t)) < r.finOrder.findIndex(t => /Profit and Loss/.test(t)), r.finOrder.join(', '));
+  /* Headings are the uploaded sheets' own ("Profit & Loss", "Statement of Activities"), so match any P&L / BS wording. */
+  const BS_T = /balance sheet|financial position|financial condition|assets and liabilities/i, PL_T = /profit|loss|income statement|activities|operations|earnings/i;
+  if (r.finOrder.length >= 2 && r.finOrder.some(t => BS_T.test(t)) && r.finOrder.some(t => PL_T.test(t) && !BS_T.test(t)))
+    check(`${tag} Row 15 portal shows Balance Sheet before Profit and Loss`, r.finOrder.findIndex(t => BS_T.test(t)) < r.finOrder.findIndex(t => PL_T.test(t) && !BS_T.test(t)), r.finOrder.join(', '));
   const anchors = new Set(r.pages.map(p => p.anchor).filter(Boolean));
   check(`${tag} Row 39 every TOC entry links to its section page`, toc.every(t => anchors.has(t.href.slice(1))));
   check(`${tag} Row 39 TOC page numbers point at the section pages`, toc.every(t => {

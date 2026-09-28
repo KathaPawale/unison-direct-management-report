@@ -225,7 +225,7 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
   const sheets = { 'PL': [...head('Profit and Loss'), ['', 'Total'], ...body(false)], 'BS': bs, 'Cash Flow': cashFlow, 'GeneralLedger': gl };
   api.state.sheets = sheets; const md = api.parseWorkbook(sheets); api.state.model = md;
   const secs = api.reportSections();
-  check('Strict rule: an unrecognised sheet with figures ("Cash Flow") is its own PDF section', secs.some(x => x.sheet === 'Cash Flow' && x.title === 'Cash Flow'));
+  check('Strict rule: an unrecognised sheet with figures ("Cash Flow") is its own PDF section, under its own heading', secs.some(x => x.sheet === 'Cash Flow' && x.title === 'Statement of Cash Flows'));
   check('Strict rule: transaction detail (General Ledger) is not printed', !secs.some(x => x.sheet === 'GeneralLedger'));
   downloads.length = 0; api.downloadReportExcel();
   const xmls = downloads.length ? sheetXml(downloads[0].bytes) : {};
@@ -258,6 +258,36 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
     check(`Non-profit (${label}): Net Assets read as equity (21,026.16)`, Math.abs(md.metrics.equity - 21026.16) < 0.01);
     check(`Non-profit (${label}): the report has the P&L section`, api.reportSections().some(x => x.sheet === tab));
   }
+}
+
+/* Strict rule: every statement keeps its uploaded sheet's own heading in the PDF / TOC and the Excel heading row. */
+{
+  const act = [...head('Statement of Activities'), ['', 'Total'], ['Revenue'], ['Contributions', 1000], ['Total Revenue', 1000], ['Expenses'], ['Programs', 400],
+    ['Total Expenses', 400], ['Change in Net Assets', 600]];
+  const sfp = [...head('Statement of Financial Position'), ['', 'Total'], ['Assets'], ['Checking', 500], ['Total Assets', 500], ['Liabilities and Net Assets'],
+    ['Accounts Payable', 100], ['Total Liabilities', 100], ['Net Assets'], ['Net Assets without Donor Restrictions', 400], ['Total Net Assets', 400], ['Total Liabilities and Net Assets', 500]];
+  const noTitle = [['', 'Total'], ['Assets'], ['Checking', 500], ['Total Assets', 500], ['Liabilities and Equity'], ['Accounts Payable', 100], ['Total Liabilities', 100],
+    ['Equity'], ['Retained Earnings', 400], ['Total Equity', 400], ['Total Liabilities and Equity', 500]];
+  for (const [label, sheets, want] of [['titled statements', { 'PL': act, 'BS': sfp }, { PL: 'Statement of Activities', BS: 'Statement of Financial Position' }],
+                                      ['no title rows', { 'PL': act, 'Sheet2': noTitle }, { PL: 'Statement of Activities', Sheet2: 'Balance Sheet' }]]){
+    api.state.sheets = sheets; api.state.client = 'Pluto Asset Recovery'; const md = api.parseWorkbook(sheets); api.state.model = md;
+    const secs = api.reportSections();
+    downloads.length = 0; api.downloadReportExcel();
+    const zip = XLSX.CFB.read(downloads[0].bytes, { type: 'array' });
+    const back = XLSX.read(downloads[0].bytes, { type: 'array' });
+    for (const [tab, title] of Object.entries(want)){
+      check(`Source heading (${label}): "${tab}" is "${title}" in the PDF / TOC`, secs.some(x => x.sheet === tab && x.title === title));
+      check(`Source heading (${label}): "${tab}" is "${title}" in the Excel heading row`, back.SheetNames.some(n => back.Sheets[n].A2 && back.Sheets[n].A2.v === title));
+    }
+  }
+  /* Three P&L sheets with the same heading keep it, with the variant added so the TOC is not ambiguous. */
+  const same = t => [['Pluto Asset Recovery'], ['Income Statement (Profit and Loss)'], ['For the 7 months ended July 31, 2026'], []];
+  const sheets = { 'PL': [...same(), ['', 'Total', '% of Income'], ...body(true)], 'PL_MoM': [...same(), ['', 'Jan 2026', 'Feb 2026', 'Total'], ...body(false).map(r => r.length > 1 ? [r[0], r[1] / 2, r[1] / 2, r[1]] : r)],
+    'PL_Comparative': [...same(), ['', 'Jan-Jul 2026', 'Jan-Jul 2025'], ...body(false).map(r => r.length > 1 ? [r[0], r[1], r[1]] : r)], 'BS': bs };
+  api.state.sheets = sheets; api.state.model = api.parseWorkbook(sheets);
+  const t = api.reportSections().map(x => x.title);
+  check('Same heading on three P&L sheets: kept, with the variant', ['Income Statement (Profit and Loss) — % of Income', 'Income Statement (Profit and Loss) — Monthly',
+    'Income Statement (Profit and Loss) — Comparative'].every(x => t.includes(x)));
 }
 
 console.log(`${pass + fail} assertions, ${pass} pass, ${fail} fail`);
