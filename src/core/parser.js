@@ -69,18 +69,52 @@ function labelKey(v){
   return normLabel(v).replace(/\b\d{3,}(?: \d+)*\b/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-/* Amount parser: numbers, "$1,234.56", "(1,234.56)", "-1,234", "1,234.56-". Percent → null. */
+/* Amount parser for any uploaded figure: numbers; "$1,234.56"; "(1,234.56)"; "-1,234"; "1,234.56-"; currency symbols
+ * or codes before or after ("€1,234.56", "1,234.56 USD", "Rs. 1,234"); "1,234.56 CR" (credit = negative) / "DR";
+ * Excel's accounting zero "$ -"; a leading apostrophe; "1e6"; European "1.234,56" and Indian "1,23,456" grouping.
+ * Percent text, dates, codes and words → null. */
+const _CURRENCY_TOKEN = /^(us\$|a\$|c\$|s\$|hk\$|nz\$|r\$|usd|eur|gbp|inr|aed|sar|cad|aud|nzd|sgd|chf|jpy|cny|zar|rs\.?|₹|€|£|¥|\$)/i;
 function parseAmount(v){
   if (typeof v === 'number') return isFinite(v) ? v : null;
-  const s = cellText(v);
-  if (!s || /%\)?$/.test(s)) return null;
-  let t = s, neg = false;
-  if (/^\(.*\)$/.test(t)){ neg = true; t = t.slice(1, -1).trim(); }
-  if (/-$/.test(t)){ neg = !neg; t = t.slice(0, -1).trim(); }
-  t = t.replace(/^(usd|us\$)\s*/i, '');
-  if (/^-/.test(t)){ neg = !neg; t = t.slice(1).trim(); }
-  t = t.replace(/^\$/, '').replace(/[\s,]/g, '');
-  if (/^-/.test(t)){ neg = !neg; t = t.slice(1); }
+  let t = cellText(v).replace(/^'/, '').replace(/[\u00a0\u2007\u2009\u202f]/g, ' ').replace(/\u2212/g, '-').trim();
+  if (!t || /%\)?$/.test(t)) return null;
+  /* Excel's accounting zero: a currency sign and a dash ("$ -", "USD -", "- $"). */
+  if (/^((us|a|c|s|hk|nz|r)?\$|usd|eur|gbp|inr|aed|sar|cad|aud|nzd|sgd|chf|jpy|cny|zar|rs\.?|₹|€|£|¥)\s*-+$|^-+\s*((us)?\$|usd|eur|gbp|inr|₹|€|£|¥)$/i.test(t)) return 0;
+  let neg = false;
+  const crdr = t.match(/^(.*\d)\s*(cr|dr)\.?$/i);
+  if (crdr){ t = crdr[1].trim(); if (/^cr/i.test(crdr[2])) neg = !neg; }
+  if (/^\(.*\)$/.test(t)){ neg = !neg; t = t.slice(1, -1).trim(); }
+  for (let i = 0; i < 4; i++){
+    const before = t;
+    if (/-$/.test(t) && t.length > 1){ neg = !neg; t = t.slice(0, -1).trim(); }
+    if (/^-/.test(t) && t.length > 1){ neg = !neg; t = t.slice(1).trim(); }
+    const lead = t.match(_CURRENCY_TOKEN);
+    if (lead) t = t.slice(lead[0].length).trim();
+    const trail = t.match(/\s*(usd|eur|gbp|inr|aed|sar|cad|aud|nzd|sgd|chf|jpy|cny|zar|₹|€|£|¥|\$)$/i);
+    if (trail && t.length > trail[0].length) t = t.slice(0, -trail[0].length).trim();
+    if (/^\(.*\)$/.test(t)){ neg = !neg; t = t.slice(1, -1).trim(); }
+    if (t === before) break;
+  }
+  if (!t) return null;                                       // a lone "$" / "USD" is a heading, not a number
+  t = t.replace(/\s/g, '');
+  if (/^\d+(\.\d+)?e[+-]?\d+$/i.test(t)){ const n = parseFloat(t); return neg ? -n : n; }
+  const commas = (t.match(/,/g) || []).length, dots = (t.match(/\./g) || []).length;
+  if (commas && dots){
+    if (t.lastIndexOf(',') > t.lastIndexOf('.')){             // European 1.234,56
+      if (!/^\d{1,3}(\.\d{3})*,\d+$/.test(t)) return null;
+      t = t.replace(/\./g, '').replace(',', '.');
+    } else {                                                  // US 1,234.56 / Indian 1,23,456.00
+      if (!/^\d{1,3}(,\d{2,3})*\.\d*$/.test(t)) return null;
+      t = t.replace(/,/g, '');
+    }
+  } else if (commas){
+    if (commas === 1 && /^\d+,\d{1,2}$/.test(t)) t = t.replace(',', '.');   // decimal comma 1234,5
+    else if (/^\d{1,3}(,\d{2,3})*$/.test(t)) t = t.replace(/,/g, '');      // 1,234 / 1,23,456
+    else return null;
+  } else if (dots > 1){
+    if (!/^\d{1,3}(\.\d{3})+$/.test(t)) return null;                      // European 1.234.567
+    t = t.replace(/\./g, '');
+  }
   if (!/^(\d+(\.\d*)?|\.\d+)$/.test(t)) return null;
   const n = parseFloat(t);
   return neg ? -n : n;

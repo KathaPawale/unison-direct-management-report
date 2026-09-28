@@ -37,6 +37,8 @@ function pct(n, dp = 2){
 function num(v){
   if (typeof v === 'number') return isFinite(v) ? v : 0;
   if (v === null || v === undefined) return 0;
+  const parsed = typeof parseAmount === 'function' ? parseAmount(v) : null;   // same reading as the figures
+  if (parsed !== null) return parsed;
   let s = String(v).trim();
   if (!s) return 0;
   let neg = false;
@@ -49,10 +51,11 @@ function num(v){
 }
 
 /* Is the raw cell value numeric-ish (so we know to store it back as a number)? */
+/* Same reading as parseAmount (parser.js), so the editor, figures and exports agree on what is a number. */
 function isNumericCell(v){
   if (typeof v === 'number') return true;
   if (v === null || v === undefined || String(v).trim() === '') return false;
-  return /^\(?\s*-?\s*\$?\s*-?[\d,]*\.?\d+\s*\)?-?$/.test(String(v).trim());
+  return typeof parseAmount === 'function' ? parseAmount(v) !== null : /^\(?\s*-?\s*\$?\s*-?[\d,]*\.?\d+\s*\)?-?$/.test(String(v).trim());
 }
 
 function round2(n){ return Math.round((Number(n) || 0) * 100) / 100; }
