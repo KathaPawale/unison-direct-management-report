@@ -35,6 +35,12 @@ const ROLE_LABELS = {
 };
 
 /* Formula rows recomputed by rule rather than by summing a span (recompute.js). */
+/* The bottom line of a P&L, for-profit or non-profit ("Statement of Activities"): Net Income / Profit / Loss, Net Surplus
+ * (Deficit), Change in Net Assets, Increase (Decrease) in Net Assets, Excess (Deficiency) of Revenue over Expenses. */
+const NET_LINE_RE = /^(net (income|profit|loss|income loss|profit loss|loss income|earnings|surplus|deficit|surplus deficit|deficit surplus)|(total )?change in (unrestricted )?net assets|(net )?(increase|decrease)( (increase|decrease))? in (unrestricted )?net assets|excess (deficiency )?of (revenues?|support and revenues?|revenues? and support|income) over expenses?( deficiency)?|surplus deficit|deficit surplus)$/;
+/* The income total of a P&L, for-profit or non-profit ("Total Support and Revenue"). */
+const INCOME_TOTAL_RE = /^total (for )?(income|revenues?|sales|support|support and revenues?|revenues? and support|revenues? support and gains|revenues? gains and other support|public support and revenues?|operating revenues?)$/;
+
 const FORMULA_ROWS = ['gross profit', 'net operating income', 'net other income', 'net income',
   'net ordinary income', 'net profit', 'net loss', 'net income loss'];
 
@@ -505,7 +511,7 @@ function buildLines(rows, headerRow, cols){
     if (/^(grand\s+)?total$/i.test(label) || /^report total$/i.test(label)) kind = 'grandTotal';
     else if (mTotal){ kind = 'total'; closes = mTotal[1].trim(); }
     else if (mTotal2 && !/^(net|gross)\b/i.test(label)){ kind = 'total'; closes = mTotal2[1].trim(); }
-    else if (FORMULA_ROWS.includes(labelKey(label)) || /^net (income|profit|loss|earnings)\b/.test(labelKey(label))) kind = 'computed';
+    else if (FORMULA_ROWS.includes(labelKey(label)) || /^net (income|profit|loss|earnings)\b/.test(labelKey(label)) || NET_LINE_RE.test(labelKey(label))) kind = 'computed';
     else if (!hasValues) kind = 'section';
 
     lines.push({ r, rawLabel: raw, label, key, level, leading, kind, closes,
@@ -577,7 +583,7 @@ function detectRoles(sheets, sheetModels){
     const periods = sm.cols.filter(c => ['current', 'prior', 'history'].includes(c.type)).length;
     const text = nameT + ' ' + title;
     const rawName = cellText(n);
-    const plName = /^(pl|p&l|profit ?(and|&) ?loss|income statement)$/i.test(rawName) || /profit and loss|profit loss|\bp and l\b|\bpl\b|\bp l\b|income statement|statement of (operations|income|comprehensive income)|income and expense|operating statement|revenue and expense/.test(text);
+    const plName = /^(pl|p&l|profit ?(and|&) ?loss|income statement)$/i.test(rawName) || /profit and loss|profit loss|\bp and l\b|\bpl\b|\bp l\b|income statement|statement of (operations|income|comprehensive income|activities|revenues? and expenses?|support revenues? and expenses?|revenues? expenses and changes in net assets)|income and expense|operating statement|revenue and expense|revenues and expenditures?|income and expenditure/.test(text);
     /* "BS" / "Balance Sheet" is the Balance Sheet; only a name that says so ("BS_Comparative", "Balance Sheet Comp")
      * is the comparative one, whatever the tab order. */
     const bsTab = /^(bs|b\.?s\.?|balance ?sheet)(_|-|\s)*(comparative|comp)?$/i.test(rawName);
@@ -587,7 +593,7 @@ function detectRoles(sheets, sheetModels){
      * is the Trial Balance — whatever its columns. */
     const tbName = /^(tb|t\.?b\.?|trial ?balance)$/i.test(rawName) || /(^| )(tb|trial ?balance)( |$)/.test(nameT) ||
       (/(^| )trial balance( |$)/.test(_sheetText(rows, 6)) && !/profit and loss|balance sheet|income statement/.test(_sheetText(rows, 6)));
-    const plContent = (has(/^total (for )?(income|revenues?|sales)$/) || has(/^gross profit$/)) && has(/^net (income|profit|loss|ordinary income)/);
+    const plContent = (has(INCOME_TOTAL_RE) || has(/^gross profit$/)) && (has(/^net (income|profit|loss|ordinary income)/) || has(NET_LINE_RE));
     const bsContent = has(/^total (for )?assets$/) && (has(/^total (for )?liabilities/) || has(/equity$/));
     const recv = /receivable|\ba r\b|\bar\b|customer/.test(text), pay = /payable|\ba p\b|\bap\b|vendor|supplier/.test(text);
     const agingName = /ag(e)?ing|aged/.test(text);

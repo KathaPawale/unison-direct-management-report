@@ -127,7 +127,7 @@ const _RX = {
   oe:       /^total (for )?(other expenses?|non operating expenses?)$/,
   oeSec:    /^(other expenses?|non operating expenses?)$/,
   nother:   /^net other (income|expenses?|income expense)$/,
-  net:      /^net (income|profit|loss|income loss|earnings)$/
+  net:      NET_LINE_RE
 };
 function _findLine(sm, rx, kinds){
   for (let i = 0; i < sm.lines.length; i++){

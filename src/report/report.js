@@ -163,7 +163,7 @@ function reportTableParts(sm, { forExport = false, cols = null, compact = false,
     const isTotal = kind === 'total' || kind === 'grandTotal' || kind === 'computed';
     const grand = kind === 'grandTotal' ||
       /^total (for )?(assets|liabilities and (stockholders |shareholders |owners |members |partners )?(equity|capital)|income|revenues?|expenses?)$/.test(line.mkey || labelKey(line.label)) ||
-      (sm.role !== 'bs' && /^net (income|profit|loss|income loss)$/.test(line.mkey || labelKey(line.label)));
+      (sm.role !== 'bs' && NET_LINE_RE.test(line.mkey || labelKey(line.label)));
     const trCls = [isTotal ? 'row-total' : '', grand ? 'row-grand' : '', kind === 'section' ? 'row-section' : ''].filter(Boolean).join(' ');
     let tds = `<td class="lbl" style="padding-left:${6 + Math.min(line.indent, 6) * 11}px">${escapeHtml(line.label)}</td>`;
     const pctRow = isPercentRowLabel(line.label), pctRowFrac = pctRow && percentRowIsFraction(row, showCols.map(c => c.idx));
