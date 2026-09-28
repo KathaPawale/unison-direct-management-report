@@ -551,19 +551,45 @@ function paginateNotesSection(no, title){
 
 /* ---------- assembly ---------- */
 
-/* Report section order (PDF, Table of Contents and the Excel management report): disclaimer, dashboard, the P&L
- * statements, the Balance Sheets, aging, Trial Balance, notes. One list, so the PDF and Excel never differ. */
+/* Report section order (PDF, Table of Contents and the Excel management report): Disclaimer, Dashboard, P&L (% of Income),
+ * P&L Monthly, P&L Comparative, Balance Sheet, BS Comparative, A/R, A/P, Trial Balance, Notes — then a full-period P&L,
+ * a P&L by Class and any other worksheet with figures. One list, so the PDF and Excel never differ. */
 const REPORT_STATEMENT_ORDER = [
-  ['plPercent', 'Profit and Loss (% of Income)'], ['pl', 'Profit and Loss'], ['plMonthly', 'Profit and Loss — Monthly'],
-  ['plComparative', 'Profit and Loss — Comparative'], ['plClass', 'Profit and Loss — by Class'],
+  ['plPercent', 'Profit and Loss (% of Income)'], ['plMonthly', 'Profit and Loss — Monthly'], ['plComparative', 'Profit and Loss — Comparative'],
   ['bs', 'Balance Sheet'], ['bsComparative', 'Balance Sheet — Comparative'],
   ['ar', 'A/R Aging Summary'], ['ap', 'A/P Aging Summary'], ['tb', 'Trial Balance']
 ];
+const REPORT_TRAILING_ORDER = [['pl', 'Profit and Loss'], ['plClass', 'Profit and Loss — by Class']];
+
+function _roleSection(md, role, title){
+  if (!md.roles[role] || skipReportSection(md, role)) return null;
+  if ((role === 'ar' && md.suppressAR) || (role === 'ap' && md.suppressAP)) return null;
+  const ag = role === 'ar' ? md.arAging : role === 'ap' ? md.apAging : null;
+  return { id: role, title, sheet: md.roles[role], ...(role === 'ar' || role === 'ap' ? { aging: ag && ag.fromDetail ? ag : null } : {}) };
+}
 
 /* A full-period P&L next to the "% of Income" statement repeats its amounts (the data checks confirm they agree),
  * so the report prints the % of Income statement only (row 38: fewer pages). */
 function skipReportSection(md, role){
   return role === 'pl' && !!md.roles.plPercent;
+}
+
+/* Strict rule: every uploaded worksheet with figures reaches the report. A sheet that is not one of the standard
+ * statements (and not transaction detail such as a General Ledger) is printed as its own section, named after its tab,
+ * with its figures exactly as uploaded. */
+function isTransactionDetailSheet(name, rows){
+  const t = normLabel(name + ' ' + (rows || []).slice(0, 4).flat().filter(v => typeof v === 'string').join(' '));
+  return /ledger|journal|detail|transaction|register/.test(t);
+}
+
+function reportExtraSheets(md){
+  if (!md) return [];
+  const captured = new Set(Object.values(md.roles).filter(Boolean));
+  return Object.keys(state.sheets).filter(n => {
+    const sm = md.sheetModels[n], rows = state.sheets[n] || [];
+    if (captured.has(n) || !sm || !sm.lines.length || isTransactionDetailSheet(n, rows)) return false;
+    return displayColumns(sm).length > 0 && rows.some(row => (row || []).some(v => parseAmount(v) !== null));
+  });
 }
 
 function reportSections(){
@@ -572,14 +598,13 @@ function reportSections(){
                     { id: 'disc', title: 'Management Purpose Disclaimer' }];
   if (md){
     sections.push({ id: 'dash', title: 'Analytical Dashboard' });
-    for (const [role, title] of REPORT_STATEMENT_ORDER){
-      if (!md.roles[role] || skipReportSection(md, role)) continue;
-      if ((role === 'ar' && md.suppressAR) || (role === 'ap' && md.suppressAP)) continue;
-      const ag = role === 'ar' ? md.arAging : role === 'ap' ? md.apAging : null;
-      sections.push({ id: role, title, sheet: md.roles[role], ...(role === 'ar' || role === 'ap' ? { aging: ag && ag.fromDetail ? ag : null } : {}) });
-    }
+    for (const [role, title] of REPORT_STATEMENT_ORDER){ const s = _roleSection(md, role, title); if (s) sections.push(s); }
   }
   sections.push({ id: 'notes', title: 'Notes to Financial Statements' });
+  if (md){
+    for (const [role, title] of REPORT_TRAILING_ORDER){ const s = _roleSection(md, role, title); if (s) sections.push(s); }
+    reportExtraSheets(md).forEach((n, i) => sections.push({ id: 'extra' + (i + 1), title: n, sheet: n }));
+  }
   return sections;
 }
 

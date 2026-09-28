@@ -164,11 +164,10 @@ function renderDashboard(){
   if (!checks.length) alerts.push(['Info', 'Data checks passed: monthly totals, P&L arithmetic, P&L sheets agree, Trial Balance debits = credits, aging totals, percentages.']);
   /* Strict rule: a worksheet left out of the report is always named, never dropped silently. */
   const captured = new Set(Object.values(md.roles).filter(Boolean));
-  const left = Object.keys(state.sheets).filter(n => !captured.has(n) && (state.sheets[n] || []).some(row => (row || []).some(v => parseAmount(v) !== null)));
-  if (left.length) alerts.push(['Info', 'Not in the report: ' + left.map(n => {
-    const t = normLabel(n + ' ' + ((state.sheets[n] || []).slice(0, 4).flat().filter(v => typeof v === 'string').join(' ')));
-    return escapeHtml(n) + (/ledger|journal|detail|transaction/.test(t) ? ' (transaction detail)' : ' (not recognised as a financial statement — check its title and column headings)');
-  }).join(', ') + '.']);
+  const extra = reportExtraSheets(md);
+  if (extra.length) alerts.push(['Info', 'Included as their own report sections (not a standard statement): ' + extra.map(escapeHtml).join(', ') + '.']);
+  const left = Object.keys(state.sheets).filter(n => !captured.has(n) && !extra.includes(n) && (state.sheets[n] || []).some(row => (row || []).some(v => parseAmount(v) !== null)));
+  if (left.length) alerts.push(['Info', 'Not in the report (transaction detail): ' + left.map(escapeHtml).join(', ') + '.']);
   if (!md.roles.plMonthly && !md.roles.plComparative && !md.roles.pl && !md.roles.plPercent) alerts.push(['Info', 'No Profit and Loss worksheet was detected in this workbook.']);
   if (state.edited.size || state.adjusted.size) alerts.push(['Info', `${state.edited.size} manual edit(s) and ${state.adjusted.size} automatic adjustment(s) are reflected in this report (highlighted in the preview, not in downloads).`]);
   $('#attention').innerHTML = alerts.length
@@ -413,6 +412,7 @@ function wireSettings(){
     }
   };
   $('#clearSessionBtn').onclick = () => {
+    _lastFile = null;
     resetState();
     analyze();
     $('#fileName').textContent = 'No new file selected';
@@ -423,31 +423,43 @@ function wireSettings(){
 
 /* ---------- upload / reset ---------- */
 
+/* Reads the chosen workbook into the session and rebuilds every figure, page and export from it. */
+let _lastFile = null;
+
+async function processFile(f){
+  f = f || _lastFile;
+  if (!f){ toast('Choose an XLSX or CSV file first.'); return; }
+  try {
+    const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
+    resetState();
+    state.fileName = f.name;
+    wb.SheetNames.forEach(n => {
+      state.sheets[n] = keepPercentCells(wb.Sheets[n], XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' }));
+    });
+    ['s1', 's2', 's3'].forEach(id => $('#' + id).classList.add('done'));
+    analyze();
+    goPage('dashboard');
+    _lastFile = f;
+    /* Cleared so choosing the same file again (e.g. an updated copy) processes it again. */
+    $('#fileInput').value = '';
+    toast(`Processed ${wb.SheetNames.length} worksheet(s) from ${f.name}`);
+  } catch (e) {
+    console.error(e);
+    toast('Could not read the workbook: ' + (e.message || e));
+  }
+}
+
 function wireUpload(){
+  /* Choosing a file processes it at once: the dashboard, PDF and Excel can never be built from the previous
+   * session's workbook while a new file sits unprocessed (row 54: "only the Balance Sheet" was the old workbook). */
   $('#fileInput').onchange = () => {
     const f = $('#fileInput').files[0];
     $('#fileName').textContent = f ? f.name : 'No new file selected';
+    if (f) processFile(f);
   };
-  $('#processBtn').onclick = async () => {
-    const f = $('#fileInput').files[0];
-    if (!f){ toast('Choose an XLSX or CSV file first.'); return; }
-    try {
-      const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
-      resetState();
-      state.fileName = f.name;
-      wb.SheetNames.forEach(n => {
-        state.sheets[n] = keepPercentCells(wb.Sheets[n], XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' }));
-      });
-      ['s1', 's2', 's3'].forEach(id => $('#' + id).classList.add('done'));
-      analyze();
-      goPage('dashboard');
-      toast(`Processed ${wb.SheetNames.length} worksheet(s) from ${f.name}`);
-    } catch (e) {
-      console.error(e);
-      toast('Could not read the workbook: ' + (e.message || e));
-    }
-  };
+  $('#processBtn').onclick = () => processFile($('#fileInput').files[0]);
   $('#resetData').onclick = () => {
+    _lastFile = null;
     resetState();
     $('#fileName').textContent = 'No new file selected';
     $$('.step').forEach(s => s.classList.remove('done'));
