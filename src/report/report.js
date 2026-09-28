@@ -37,17 +37,10 @@ function watermarkHtml(){
 /* Balance Sheet and aging reports are "as of" a date; P&L statements cover a period. */
 function statementPeriodText(sm){
   const md = state.model;
-  /* Each statement shows the period its own worksheet states (a Trial Balance "As of …", a P&L "For the 7 months
-   * ended …"). A month-by-month sheet titled "For the month ended …" but holding several months shows its month range. */
+  /* Each statement shows the period line its own worksheet states, as uploaded ("As of July 31, 2026", "For the month
+   * ended July 31, 2026"); only the dash spacing is normalised (row 5). */
   const own = sm ? sheetOwnPeriod(state.sheets[sm.name] || [], sm) : '';
-  if (own){
-    const months = sm.cols.filter(c => c.type === 'month' && c.key !== null && c.key !== undefined);
-    if (sm.role === 'plMonthly' && months.length > 1 && /^for the month ended\b/i.test(own)){
-      const a = months.reduce((x, y) => (y.key < x.key ? y : x)), b = months.reduce((x, y) => (y.key > x.key ? y : x));
-      return a.year === b.year ? `${MONTH_FULL[a.m]} – ${MONTH_FULL[b.m]} ${b.year}` : `${MONTH_FULL[a.m]} ${a.year} – ${MONTH_FULL[b.m]} ${b.year}`;
-    }
-    return formatPeriodText(own);
-  }
+  if (own) return formatPeriodText(own);
   if (sm && ['ar', 'ap'].includes(sm.role)){
     const rows = (state.sheets[sm.name] || []).slice(0, Math.max(0, sm.headerRow));
     for (const row of rows) for (const c of (row || [])){
@@ -80,6 +73,13 @@ function sectionHead(no, title, sub, continued = false){
 
 /* Rows 48/51: Heading (3) — the period line under each statement title — shows only the period.
  * The currency is stated once on the cover, so it is not repeated here. */
+/* The uploaded first-column heading ("Account", "Particulars", "Description"), or "Particulars" when it is blank. */
+function firstColumnHeading(sm){
+  const row = sm && sm.headerRow >= 0 ? (state.sheets[sm.name] || [])[sm.headerRow] || [] : [];
+  const t = (sm ? sm.cols.filter(c => c.type === 'label').map(c => cellText(row[c.idx])).filter(Boolean) : []).join(' ');
+  return t || 'Particulars';
+}
+
 function tableSectionSub(sm){
   return statementPeriodText(sm);
 }
@@ -117,7 +117,9 @@ function formatReportCell(v, colType, opts = {}){
   return escapeHtml(s);
 }
 
+/* Column headings are shown exactly as uploaded; a generated label is used only for a column with no heading. */
 function _headLabel(c){
+  if (c.rawLabel) return c.rawLabel;
   if (c.label) return c.label;
   if (c.type === 'current') return state.model && state.model.currentLabel !== 'Current Period' ? state.model.currentLabel : 'Amount';
   if (c.type === 'prior') return 'Prior Period';
@@ -134,7 +136,7 @@ function reportTableParts(sm, { forExport = false, cols = null, compact = false,
   let valPct = showCols.length ? (100 - labelPct) / showCols.length : 0;
   if (valPct > 22){ valPct = 22; labelPct = 100 - valPct * showCols.length; }
   const colgroup = `<colgroup><col style="width:${labelPct}%">` + showCols.map(() => `<col style="width:${valPct.toFixed(3)}%">`).join('') + '</colgroup>';
-  const thead = '<tr><th class="lbl">Particulars</th>' + showCols.map(c =>
+  const thead = '<tr><th class="lbl">' + escapeHtml(firstColumnHeading(sm)) + '</th>' + showCols.map(c =>
     `<th>${escapeHtml(_headLabel(c))}</th>`).join('') + '</tr>';
 
   const doSkip = skipZeros === null ? forExport : !!skipZeros;
@@ -605,8 +607,7 @@ function sourceStatementTitle(sm){
   return '';
 }
 
-/* Section title for each captured statement: the sheet's own heading, else the standard name. When two statements carry
- * the same heading (three sheets all titled "Income Statement (Profit and Loss)"), the variant is added after it. */
+/* Section title for each captured statement: the sheet's own heading exactly as uploaded, else the standard name. */
 function reportStatementTitles(md){
   const out = {};
   if (!md) return out;
@@ -615,10 +616,6 @@ function reportStatementTitles(md){
     const sm = md.roles[role] ? md.sheetModels[md.roles[role]] : null;
     out[role] = sourceStatementTitle(sm) || std;
   }
-  const count = {};
-  for (const [role] of all) if (md.roles[role]) count[out[role]] = (count[out[role]] || 0) + 1;
-  const VARIANT = { plPercent: '% of Income', pl: 'Full Period', plMonthly: 'Monthly', plComparative: 'Comparative', plClass: 'by Class', bsComparative: 'Comparative' };
-  for (const [role] of all) if (md.roles[role] && count[out[role]] > 1 && VARIANT[role]) out[role] += ' — ' + VARIANT[role];
   return out;
 }
 

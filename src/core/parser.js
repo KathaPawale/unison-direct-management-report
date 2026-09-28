@@ -420,7 +420,9 @@ function classifyColumns(rows, headerRow){
   for (let c = 0; c < width; c++){
     const h = hdr[c];
     const headLabel = cellText(headAt(c));
-    let col = { idx: c, type: 'value', label: headLabel };
+    /* The heading exactly as uploaded (an Excel date serial has no text of its own). */
+    const rawLabel = typeof headAt(c) === 'number' && serialBy.has(c) ? '' : headLabel;
+    let col = { idx: c, type: 'value', label: headLabel, rawLabel };
     if (c > 0 && h && h.kind === 'comment' && (firstValue < 0 || c < firstValue)){
       col.type = 'comment'; col.empty = nText[c] === 0;
     } else if (firstValue < 0 ? c === 0 : c < firstValue){

@@ -82,7 +82,7 @@ for (const [name, f] of Object.entries(styles)){
   const pdfCells = api.reportTableParts(md.sheetModels.PL, {}).rows.map(r => [...r.html.matchAll(/<td class="val[^"]*">([^<]*)<\/td>/g)].map(m => m[1])).flat();
   const pdfOk = pdfCells.filter(Boolean).every(t => /^\(?\$\d{1,3}(,\d{3})*\.\d{2}\)?$|^&ndash;$/.test(t));
   downloads.length = 0; api.downloadReportExcel();
-  const xml = sheetXml(downloads[0].bytes)['Balance Sheet'] || '';
+  const xml = sheetXml(downloads[0].bytes)['BS'] || '';   // tabs keep the uploaded names
   const xlOk = /<v>1500000<\/v>/.test(xml) && !/t="str"><v>[^<]*(€|₹|CR|DR|USD|,\d{2}<)/.test(xml);
   check(`${name}: figures read (income 1,234,567.50, net 1,001,000.25, assets 1,500,000)`, figs);
   check(`${name}: every PDF amount in accounting format`, pdfOk);
