@@ -35,9 +35,10 @@ const ROLE_LABELS = {
 };
 
 /* Formula rows recomputed by rule rather than by summing a span (recompute.js). */
-/* The bottom line of a P&L, for-profit or non-profit ("Statement of Activities"): Net Income / Profit / Loss, Net Surplus
- * (Deficit), Change in Net Assets, Increase (Decrease) in Net Assets, Excess (Deficiency) of Revenue over Expenses. */
-const NET_LINE_RE = /^(net (income|profit|loss|income loss|profit loss|loss income|earnings|surplus|deficit|surplus deficit|deficit surplus)|(total )?change in (unrestricted )?net assets|(net )?(increase|decrease)( (increase|decrease))? in (unrestricted )?net assets|excess (deficiency )?of (revenues?|support and revenues?|revenues? and support|income) over expenses?( deficiency)?|surplus deficit|deficit surplus)$/;
+/* The bottom line of a P&L, for-profit, IFRS or non-profit ("Statement of Activities"): Net Income / Profit / Loss, Profit for
+ * the period / year, Profit after tax, Net Surplus (Deficit), Change in Net Assets, Increase (Decrease) in Net Assets,
+ * Excess (Deficiency) of Revenue over Expenses. */
+const NET_LINE_RE = /^(net (income|profit|loss|income loss|profit loss|loss income|earnings|surplus|deficit|surplus deficit|deficit surplus)|(net )?(profit|loss|profit loss|loss profit|income|earnings) (for|of) the (period|year|month|quarter|financial year)|(net )?(profit|income|earnings|loss) after (tax|taxes|taxation|income tax)|(total )?change in (unrestricted )?net assets|(net )?(increase|decrease)( (increase|decrease))? in (unrestricted )?net assets|excess (deficiency )?of (revenues?|support and revenues?|revenues? and support|income) over expenses?( deficiency)?|surplus deficit|deficit surplus)$/;
 /* The income total of a P&L, for-profit or non-profit ("Total Support and Revenue"). */
 const INCOME_TOTAL_RE = /^total (for )?(income|revenues?|sales|support|support and revenues?|revenues? and support|revenues? support and gains|revenues? gains and other support|public support and revenues?|operating revenues?)$/;
 
@@ -569,6 +570,32 @@ function _allLabelKeys(rows){
   return set;
 }
 
+/* ---------- statement fingerprints ---------- */
+
+/* What an accountant looks for to tell the statements apart, whatever the tab or title says. Each term counts once;
+ * anchor lines (a statement's own totals / bottom line) are required before content alone decides the type. */
+const PL_TERMS = [/^(income|revenues?|sales|turnover|support|support and revenues?|revenues? and support|operating revenues?|trading income)$/,
+  /(sales|revenues?|fees|commissions?|contributions|grants|donations|service income|consulting income|interest income|rental income)$/,
+  /^(cost of (goods sold|sales|revenues?|services)|cogs|direct costs?)$/, /^gross (profit|margin)/, /^(operating )?expenses?$|^expenditures?$/,
+  /(salaries|wages|payroll)/, /^rent( expense)?$|^rent or lease/, /utilities/, /(advertising|marketing)/, /(professional|legal|accounting) fees/,
+  /^depreciation( expense| and amortization)?$/, /^interest expense$/, /income tax( expense)?$/, /^(net )?operating (income|profit|loss)$|^ebitda$/,
+  /^other (income|expenses?)$/, /^net other income$/, /(insurance|office|travel|meals|bank (service )?charges|dues and subscriptions|repairs)/];
+const PL_ANCHORS = [INCOME_TOTAL_RE, /^total (for )?(expenses?|expenditures?|operating expenses?)$/, /^gross (profit|margin)$/, NET_LINE_RE];
+const BS_TERMS = [/^(current )?assets$/, /(checking|savings|cash|bank)/, /accounts receivable|^receivables?$|debtors/, /inventory|stock on hand/, /prepaid/,
+  /^(fixed|non current|long term) assets$|property and equipment|equipment|vehicles|furniture|buildings?|^land$/, /accumulated depreciation/,
+  /^(current )?liabilities$/, /accounts payable|^payables?$|creditors/, /accrued|payroll liabilities|sales tax payable/, /credit cards?|loan|notes? payable|mortgage|line of credit/,
+  /^(long term|non current) liabilities$/, /^(equity|capital|net assets)$|stockholders|shareholders|owners? (equity|capital|draw|investment)|members equity|partners capital/,
+  /retained earnings|opening balance equity|accumulated (surplus|deficit)/];
+const BS_ANCHORS = [/^total (for )?assets$/, /^total (for )?liabilities( and (stockholders |shareholders |owners |members |partners )?(equity|capital|net assets))?$/,
+  /^total (for )?(equity|net assets|capital|stockholders equity|shareholders equity)$/, /retained earnings/];
+const CASH_FLOW_RE = /operating activities|investing activities|financing activities|^net (change|increase|decrease|increase decrease) in cash|^cash (at|at the) (beginning|end) of/;
+
+function statementFingerprint(keys){
+  const list = [...keys];
+  const count = res => res.filter(re => list.some(k => re.test(k))).length;
+  return { pl: count(PL_TERMS), plAnchors: count(PL_ANCHORS), bs: count(BS_TERMS), bsAnchors: count(BS_ANCHORS), cashFlow: list.some(k => CASH_FLOW_RE.test(k)) };
+}
+
 function detectRoles(sheets, sheetModels){
   const roles = { plMonthly: null, plComparative: null, plPercent: null, plClass: null, pl: null, bs: null, bsComparative: null, tb: null, ar: null, ap: null, notes: null, summary: null };
   const names = Object.keys(sheets);
@@ -583,19 +610,27 @@ function detectRoles(sheets, sheetModels){
     const periods = sm.cols.filter(c => ['current', 'prior', 'history'].includes(c.type)).length;
     const text = nameT + ' ' + title;
     const rawName = cellText(n);
-    const plName = /^(pl|p&l|profit ?(and|&) ?loss|income statement)$/i.test(rawName) || /profit and loss|profit loss|\bp and l\b|\bpl\b|\bp l\b|income statement|statement of (operations|income|comprehensive income|activities|revenues? and expenses?|support revenues? and expenses?|revenues? expenses and changes in net assets)|income and expense|operating statement|revenue and expense|revenues and expenditures?|income and expenditure/.test(text);
+    const plName = /^(pl|p&l|pnl|p\/l|profit ?(and|&) ?loss|income statement|is)$/i.test(rawName) || /profit and loss|profit loss|\bp and l\b|\bpl\b|\bp l\b|\bpnl\b|income statement|earnings statement|statement of (operations|income|earnings|comprehensive income|activities|revenues? and expenses?|support revenues? and expenses?|revenues? expenses and changes in net assets)|results of operations|trading (and profit and loss )?account|income and expense|operating statement|revenue and expense|revenues and expenditures?|income and expenditure|income summary/.test(text);
     /* "BS" / "Balance Sheet" is the Balance Sheet; only a name that says so ("BS_Comparative", "Balance Sheet Comp")
      * is the comparative one, whatever the tab order. */
     const bsTab = /^(bs|b\.?s\.?|balance ?sheet)(_|-|\s)*(comparative|comp)?$/i.test(rawName);
     const bsComparative = bsTab && /(comparative|comp)$/i.test(rawName.trim());
-    const bsName = bsTab || /balance sheet|statement of financial (position|condition)|\bbs\b/.test(text);
+    const bsName = bsTab || /balance sheet|statement of financial (position|condition)|statement of (assets and liabilities|net assets|condition)|position statement|net worth statement|\bbs\b|\bb s\b/.test(text);
     /* Strict rule: a tab named TB / Trial Balance ("TB_July", "Trial Balance Summary") or a sheet titled "Trial Balance"
      * is the Trial Balance — whatever its columns. */
     const tbName = /^(tb|t\.?b\.?|trial ?balance)$/i.test(rawName) || /(^| )(tb|trial ?balance)( |$)/.test(nameT) ||
       (/(^| )trial balance( |$)/.test(_sheetText(rows, 6)) && !/profit and loss|balance sheet|income statement/.test(_sheetText(rows, 6)));
-    const plContent = (has(INCOME_TOTAL_RE) || has(/^gross profit$/)) && (has(/^net (income|profit|loss|ordinary income)/) || has(NET_LINE_RE));
-    const bsContent = has(/^total (for )?assets$/) && (has(/^total (for )?liabilities/) || has(/equity$/));
-    const recv = /receivable|\ba r\b|\bar\b|customer/.test(text), pay = /payable|\ba p\b|\bap\b|vendor|supplier/.test(text);
+    /* Content decides whatever the tab or title says: the statement's own lines, the way an accountant reads it. */
+    const fp = statementFingerprint(keys);
+    const plContent = !fp.cashFlow && (((has(INCOME_TOTAL_RE) || has(/^gross profit$/)) && (has(/^net (income|profit|loss|ordinary income)/) || has(NET_LINE_RE))) ||
+      (fp.plAnchors >= 1 && fp.pl >= 4 && fp.pl + fp.plAnchors >= 1.5 * (fp.bs + fp.bsAnchors)));
+    const bsContent = !fp.cashFlow && ((has(/^total (for )?assets$/) && (has(/^total (for )?liabilities/) || has(/equity$/))) ||
+      (fp.bsAnchors >= 1 && fp.bs >= 4 && fp.bs + fp.bsAnchors >= 1.5 * (fp.pl + fp.plAnchors)));
+    /* A Trial Balance: Debit and Credit columns holding accounts of both statements (not a dated ledger). */
+    const drCr = sm.cols.filter(c => /^(debit|credit|debits|credits|dr|cr)$/i.test(cellText(c.label))).length >= 2;
+    const dated = sm.cols.some(c => /^(date|txn date|transaction date|posting date)$/i.test(cellText(c.label)));
+    const tbContent = drCr && !dated && fp.pl >= 2 && fp.bs >= 2;
+    const recv = /receivable|\ba r\b|\bar\b|customer|debtors?/.test(text), pay = /payable|\ba p\b|\bap\b|vendor|supplier|creditors?/.test(text);
     const agingName = /ag(e)?ing|aged/.test(text);
     const notes = /\bnotes?\b|comments?/.test(nameT) || /notes? to (the )?(financial statements?|accounts)/.test(title);
     /* "PL (% Income)" / "Profit and Loss % of Total Income": a P&L with a % of income column and one amount column
@@ -609,8 +644,9 @@ function detectRoles(sheets, sheetModels){
     const segCols = sm.cols.filter(c => c.type === 'value' && c.label).length;
     const className = /class ?wise|\bby (class|department|location|division|segment|project|site|branch)\b|\bclass(es)?\b|department ?wise|location ?wise/.test(text);
     const cls = !months && periods <= 1 && (className || (segCols >= 2 && sm.cols.some(c => c.type === 'rowTotal')));
-    return { n, sm, months, buckets, periods, plName, bsName, bsComparative, tbName, plContent, bsContent, recv, pay, agingName, notes, cls, pctName,
-             pct: pctCol && ((months < 2 && periods <= 1) || pctName), detail: /detail|by customer|by vendor|transaction/.test(text) };
+    return { n, sm, months, buckets, periods, plName, bsName, bsComparative, tbName: tbName || tbContent, plContent, bsContent, recv, pay, agingName, notes, cls, pctName,
+             pct: pctCol && ((months < 2 && periods <= 1) || pctName),
+             detail: /detail|by customer|by vendor|transaction|ledger|journal|register/.test(text) || fp.cashFlow || dated };
   });
   const free = x => !Object.values(roles).includes(x.n);
 
@@ -627,7 +663,8 @@ function detectRoles(sheets, sheetModels){
     if (!free(x) || !x.tbName) continue;
     roles.tb = x.n;
   }
-  const bsCands = info.filter(x => free(x) && ((x.bsName && !x.plName) || (x.bsContent && !x.plContent)));
+  /* A name that says Balance Sheet does not outweigh content that is plainly a P&L (and the other way round). */
+  const bsCands = info.filter(x => free(x) && ((x.bsName && !x.plName && !(x.plContent && !x.bsContent)) || (x.bsContent && !x.plContent)));
   const primaryBs = bsCands.find(x => !x.bsComparative && x.periods < 2) || bsCands.find(x => !x.bsComparative) || bsCands[0];
   if (primaryBs) roles.bs = primaryBs.n;
   for (const x of bsCands){

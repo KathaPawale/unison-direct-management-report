@@ -588,6 +588,8 @@ function reportExtraSheets(md){
   return Object.keys(state.sheets).filter(n => {
     const sm = md.sheetModels[n], rows = state.sheets[n] || [];
     if (captured.has(n) || !sm || !sm.lines.length || isTransactionDetailSheet(n, rows)) return false;
+    /* A dated listing (Date column) is transaction detail too, whatever its name. */
+    if (sm.cols.some(c => /^(date|txn date|transaction date|posting date)$/i.test(cellText(c.label)))) return false;
     return displayColumns(sm).length > 0 && rows.some(row => (row || []).some(v => parseAmount(v) !== null));
   });
 }

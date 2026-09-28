@@ -763,6 +763,11 @@ function dataChecks(model, sheets){
   const figs = plSheets.map(sm => ({ sm, f: plFigures(sheets, sm, periodSpec(sm, 'current')) })).filter(x => x.f && x.f.income !== null);
   for (const { sm, f } of figs){
     if (f.expenses === null || f.net === null) continue;
+    /* Interest, tax or other lines between the expenses total and the bottom line: their signs are the workbook's own. */
+    const expIdx = sm.lines.findIndex(l => /^total (for )?(expenses?|expenditures?|operating expenses?)$/.test(l.mkey || labelKey(l.label)));
+    const netIdx = sm.lines.findIndex(l => NET_LINE_RE.test(l.mkey || labelKey(l.label)));
+    if (expIdx >= 0 && netIdx > expIdx && sm.lines.slice(expIdx + 1, netIdx).some(l => l.kind === 'account' && l.hasValues &&
+        !/^(other (income|expenses?)|net other income)/.test(l.mkey || labelKey(l.label)))) continue;
     const calc = f.income - (f.cogs || 0) - f.expenses + (f.otherIncome || 0) - (f.otherExpenses || 0);
     if (off(calc, f.net, 1)) out.push({ sev: 'Review', msg: `${sm.name}: Income − Cost of Goods Sold − Expenses (+ other items) = ${fmt(calc)}, but Net Income shows ${fmt(f.net)}. Check for lines the tool did not recognise.` });
   }
