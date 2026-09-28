@@ -489,7 +489,8 @@ function checkWorkbook(w, r, excel, pdf, errors){
   check(`${tag} Report order: Disclaimer is first and Notes last in the TOC`, toc.length && /^1\. Management Purpose Disclaimer/.test(toc[0].text) && /Notes/i.test(toc[toc.length - 1].text) ,
     toc.map(t => t.text).join(' | '));
   /* Headings are the uploaded sheets' own ("Profit & Loss", "Statement of Activities"), so match any P&L / BS wording. */
-  const BS_T = /balance sheet|financial position|financial condition|assets and liabilities/i, PL_T = /profit|loss|income statement|activities|operations|earnings/i;
+  const BS_T = /balance sheet|financial position|financial condition|assets and liabilities|^b ?s\b|^bs[_ ]/i,
+        PL_T = /profit|loss|income statement|activit|operations|earnings|^p ?& ?l|^pl\b|^pl[_ (]|soa\b/i;
   if (r.finOrder.length >= 2 && r.finOrder.some(t => BS_T.test(t)) && r.finOrder.some(t => PL_T.test(t) && !BS_T.test(t)))
     check(`${tag} Row 15 portal shows Balance Sheet before Profit and Loss`, r.finOrder.findIndex(t => BS_T.test(t)) < r.finOrder.findIndex(t => PL_T.test(t) && !BS_T.test(t)), r.finOrder.join(', '));
   const anchors = new Set(r.pages.map(p => p.anchor).filter(Boolean));

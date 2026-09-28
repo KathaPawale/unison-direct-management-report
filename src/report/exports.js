@@ -562,7 +562,7 @@ function downloadReportExcel(){
   }
   /* Every other worksheet with figures, as in the PDF (reportExtraSheets). */
   for (const n of reportExtraSheets(md)){
-    const ws = _modelSheetToWs(md.sheetModels[n], sheetHeading(md.sheetModels[n], n));
+    const ws = _modelSheetToWs(md.sheetModels[n], titles['sheet:' + n] || sheetHeading(md.sheetModels[n], n));
     const tab = _sheetNameSafe(wb, n);
     XLSX.utils.book_append_sheet(wb, ws, tab);
     trailingTabs.push(tab);

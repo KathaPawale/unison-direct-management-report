@@ -645,6 +645,14 @@ function reportStatementTitles(md){
     const sm = md.roles[role] ? md.sheetModels[md.roles[role]] : null;
     out[role] = sheetHeading(sm, std);
   }
+  for (const n of reportExtraSheets(md)) out['sheet:' + n] = sheetHeading(md.sheetModels[n], n);
+  /* Two or more sheets with the same heading ("Statement Activity" on both "Statement of Activity" and "Class wise SOA"):
+   * each takes its tab name instead, so every statement is told apart by the name the user gave it. */
+  const sheetOf = k => k.startsWith('sheet:') ? k.slice(6) : md.roles[k];
+  const keys = Object.keys(out).filter(k => sheetOf(k));
+  const count = {};
+  for (const k of keys) count[normLabel(out[k])] = (count[normLabel(out[k])] || 0) + 1;
+  for (const k of keys) if (count[normLabel(out[k])] > 1 && !isGenericTabName(sheetOf(k))) out[k] = cellText(sheetOf(k));
   return out;
 }
 
@@ -692,7 +700,8 @@ function reportSections(){
   }
   if (md){
     for (const [role, title] of REPORT_TRAILING_ORDER){ const s = _roleSection(md, role, title); if (s) sections.push(s); }
-    reportExtraSheets(md).forEach((n, i) => sections.push({ id: 'extra' + (i + 1), title: sheetHeading(md.sheetModels[n], n), sheet: n }));
+    const titles = reportStatementTitles(md);
+    reportExtraSheets(md).forEach((n, i) => sections.push({ id: 'extra' + (i + 1), title: titles['sheet:' + n] || sheetHeading(md.sheetModels[n], n), sheet: n }));
   }
   /* Notes are always the last section. */
   sections.push({ id: 'notes', title: notesHeading(md) });
