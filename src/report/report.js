@@ -129,8 +129,10 @@ function _headLabel(c){
 function reportTableParts(sm, { forExport = false, cols = null, compact = false, skipZeros = null } = {}){
   const rows = state.sheets[sm.name] || [];
   const showCols = cols || displayColumns(sm);
-  const labelPct = showCols.length > 10 ? 20 : showCols.length > 6 ? 24 : showCols.length > 3 ? 34 : 46;
-  const valPct = showCols.length ? (100 - labelPct) / showCols.length : 0;
+  /* Amount columns are at most 22% wide, so a one- or two-column statement keeps its figures near their labels. */
+  let labelPct = showCols.length > 10 ? 20 : showCols.length > 6 ? 24 : showCols.length > 3 ? 34 : 46;
+  let valPct = showCols.length ? (100 - labelPct) / showCols.length : 0;
+  if (valPct > 22){ valPct = 22; labelPct = 100 - valPct * showCols.length; }
   const colgroup = `<colgroup><col style="width:${labelPct}%">` + showCols.map(() => `<col style="width:${valPct.toFixed(3)}%">`).join('') + '</colgroup>';
   const thead = '<tr><th class="lbl">Particulars</th>' + showCols.map(c =>
     `<th>${escapeHtml(_headLabel(c))}</th>`).join('') + '</tr>';
@@ -207,6 +209,27 @@ function _outerHeight(el){
 
 /* Split a statement into page bodies that fit. Wide statements go on landscape pages; very wide
  * ones are split into column groups (each group keeps the account labels). */
+/* Splits table rows into page-sized chunks; a section heading row is never left alone at the foot of a page. */
+function _chunkRows(rows, heights, budgetFirst, budgetCont){
+  const chunks = [];
+  let cur = [], curH = [], used = 0, budget = budgetFirst;
+  for (let i = 0; i < rows.length; i++){
+    const h = heights[i];
+    if (used + h > budget && cur.length){
+      const carry = [], carryH = [];
+      while (cur.length > 1 && cur[cur.length - 1].orphanGuard){ carry.unshift(cur.pop()); carryH.unshift(curH.pop()); }
+      chunks.push(cur);
+      cur = carry; curH = carryH;
+      used = carryH.reduce((s, x) => s + x, 0);
+      budget = budgetCont;
+    }
+    cur.push(rows[i]); curH.push(h);
+    used += h;
+  }
+  if (cur.length) chunks.push(cur);
+  return chunks;
+}
+
 function paginateTableSection(no, title, sm, opts = {}){
   const all = displayColumns(sm);
   if (!sm.lines.length || !all.length){
@@ -255,30 +278,30 @@ function paginateTableSection(no, title, sm, opts = {}){
       tableCls += ' fit';
       fitAttr = ` style="--fit-fs:${fs}px"`;
     }
-    const h1 = _outerHeight(shell.querySelector('.mh1'));
-    const h2 = _outerHeight(shell.querySelector('.mh2'));
-    const theadH = shell.querySelector('thead').getBoundingClientRect().height;
-    const trs = shell.querySelectorAll('tbody tr');
     const avail = _bodyBudget(orientation);
-    const budgetFirst = avail - h1 - theadH - 6;
-    const budgetCont = avail - h2 - theadH - 6;
-
-    const chunks = [];
-    let cur = [], curH = [], used = 0, budget = budgetFirst;
-    for (let i = 0; i < parts.rows.length; i++){
-      const h = trs[i].getBoundingClientRect().height || 18;
-      if (used + h > budget && cur.length){
-        const carry = [], carryH = [];
-        while (cur.length > 1 && cur[cur.length - 1].orphanGuard){ carry.unshift(cur.pop()); carryH.unshift(curH.pop()); }
-        chunks.push(cur);
-        cur = carry; curH = carryH;
-        used = carryH.reduce((s, x) => s + x, 0);
-        budget = budgetCont;
+    const layout = () => {
+      const h1 = _outerHeight(shell.querySelector('.mh1'));
+      const h2 = _outerHeight(shell.querySelector('.mh2'));
+      const theadH = shell.querySelector('thead').getBoundingClientRect().height;
+      const heights = [...shell.querySelectorAll('tbody tr')].map(tr => tr.getBoundingClientRect().height || 18);
+      return _chunkRows(parts.rows, heights, avail - h1 - theadH - 6, avail - h2 - theadH - 6);
+    };
+    let chunks = layout();
+    /* Readable size: when nothing is cut off, the table grows to the largest font (portrait 12px, landscape 11px)
+     * that still fits every figure and needs no more pages than the standard size — no half-empty pages of tiny print. */
+    if (!fitAttr){
+      const pages = chunks.length;
+      tbl.classList.add('grow');
+      let best = null;
+      for (let fs = orientation === 'landscape' ? 11 : 12; fs >= 9; fs -= 0.5){
+        tbl.style.setProperty('--grow-fs', fs + 'px');
+        if (overflowing()) continue;
+        const c = layout();
+        if (c.length <= pages){ best = fs; chunks = c; break; }
       }
-      cur.push(parts.rows[i]); curH.push(h);
-      used += h;
+      if (best){ tableCls += ' grow'; fitAttr = ` style="--grow-fs:${best}px"`; }
+      else { tbl.classList.remove('grow'); chunks = layout(); }
     }
-    if (cur.length) chunks.push(cur);
     /* Rows 26/28/43: a monthly P&L (or trial balance) keeps ALL its columns — every month and the
      * Total — on each landscape page; only a statement too long for one page continues by rows onto
      * the next page, with the column header repeated. */
