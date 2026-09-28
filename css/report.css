@@ -68,3 +68,7 @@
 .cover-header-name{line-height:1.15;overflow:visible;white-space:normal;word-break:break-word}
 /* Row 21: statement tables whose figures would not fit are shrunk to --fit-fs (set per table by paginateTableSection). */
 .report-page .report-table.fit td,.report-page .report-table.fit td.val,.report-page .report-table.fit thead th{font-size:var(--fit-fs)!important;padding-left:3px!important;padding-right:3px!important}
+/* Readable statement tables: paginateTableSection sets --grow-fs to the largest size that fits the page. */
+.report-page .report-table.grow td,.report-page .report-table.grow td.val,.report-page .report-table.grow thead th{font-size:var(--grow-fs)!important}
+.report-page .report-table.grow td{padding-top:calc(var(--grow-fs) * .38)!important;padding-bottom:calc(var(--grow-fs) * .38)!important;padding-left:6px;padding-right:6px}
+.report-page .report-table.grow thead th{padding-top:calc(var(--grow-fs) * .55)!important;padding-bottom:calc(var(--grow-fs) * .55)!important}

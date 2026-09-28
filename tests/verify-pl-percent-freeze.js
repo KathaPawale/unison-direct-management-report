@@ -123,10 +123,12 @@ for (const [name, sheets] of Object.entries(layouts)){
     if (['Cover', 'Disclaimer', 'Analytical Summary', 'Notes'].includes(tab)) continue;
     check(`${name}: "${tab}" freezes rows 1-5 and column A`,
       /xSplit="1"/.test(pane(xml)) && /ySplit="5"/.test(pane(xml)) && /topLeftCell="B6"/.test(pane(xml)) && /state="frozen"/.test(pane(xml)));
+    check(`${name}: "${tab}" prints one page wide, centred`, /<pageSetUpPr fitToPage="1"\/>/.test(xml) && /<pageSetup [^>]*fitToWidth="1" fitToHeight="0"/.test(xml) && /<printOptions horizontalCentered="1"\/>/.test(xml));
+    check(`${name}: "${tab}" first column fits its longest account name`, (() => { const m = xml.match(/<col min="1" max="1" width="([\d.]+)"/); return m && +m[1] >= 32; })());
     check(`${name}: "${tab}" row 5 is Particulars`, /<c r="A5"[^>]*><v>Particulars<\/v><\/c>/.test(xml));
   }
   for (const [tab, xml] of Object.entries(xmls))
-    check(`${name}: "${tab}" has a tab color`, /^<\?xml[^>]*>\s*<worksheet\b[^>]*><sheetPr><tabColor rgb="FF[0-9A-F]{6}"\/><\/sheetPr>/.test(xml));
+    check(`${name}: "${tab}" has a tab color`, /^<\?xml[^>]*>\s*<worksheet\b[^>]*><sheetPr><tabColor rgb="FF[0-9A-F]{6}"\/>(<pageSetUpPr [^>]*\/>)?<\/sheetPr>/.test(xml));
   if (sheets.TrialBalance){
     check(`${name}: every uploaded sheet is captured`, Object.keys(sheets).every(n => Object.values(md.roles).includes(n)));
     /* The full-period "Profit and Loss" repeats the % of Income statement's amounts, so only the latter is printed. */
@@ -134,6 +136,9 @@ for (const [name, sheets] of Object.entries(layouts)){
     for (const t of ['Trial Balance', 'Profit and Loss (% of Income)', 'Profit and Loss (Monthly)', 'Profit and Loss (Comparative)', 'Balance Sheet — Comparative'])
       check(`${name}: Excel has "${t}"`, t in xmls);
   }
+  { const zip = XLSX.CFB.read(downloads[0].bytes, { type: 'array' });
+    const wbx = new TextDecoder().decode(zip.FileIndex[zip.FullPaths.findIndex(p => p.endsWith('/xl/workbook.xml'))].content);
+    check(`${name}: statement headings (rows 1-5) repeat on every printed page`, /_xlnm\.Print_Titles[^<]*<\/definedName>/.test(wbx) && /!\$1:\$5</.test(wbx)); }
   check(`${name}: Cover and Disclaimer are not frozen`, !pane(xmls.Cover) && !pane(xmls.Disclaimer));
   const back = XLSX.read(downloads[0].bytes, { type: 'array' });
   check(`${name}: workbook re-opens with all sheets`, back.SheetNames.length === Object.keys(xmls).length && !!pctTab && back.Sheets[pctTab]['A5'].v === 'Particulars');
@@ -146,7 +151,7 @@ const dataXml = sheetXml(downloads[0].bytes);
 for (const tab of ['Profit and Loss', 'P&L % of Income', 'BS'])
   check(`Data workbook: "${tab}" freezes rows 1-5 (its column-heading row)`, /ySplit="5"/.test(pane(dataXml[tab])) && /topLeftCell="B6"/.test(pane(dataXml[tab])));
 for (const [tab, xml] of Object.entries(dataXml))
-  check(`Data workbook: "${tab}" has a tab color`, /<sheetPr><tabColor rgb="FF[0-9A-F]{6}"\/><\/sheetPr>/.test(xml));
+  check(`Data workbook: "${tab}" has a tab color`, /<sheetPr><tabColor rgb="FF[0-9A-F]{6}"\/>(<pageSetUpPr [^>]*\/>)?<\/sheetPr>/.test(xml));
 check('No Excel formatting-rule failures', !toasts.some(t => /could not be frozen|not downloaded/.test(t)));
 
 /* ---------- strict rules ---------- */

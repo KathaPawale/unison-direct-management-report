@@ -241,13 +241,19 @@ function _verifySheetRules(bytes, wb){
 
 function _workbookBytes(wb){
   _enforceSheetRules(wb);
+  /* Headings repeated at the top of every printed page (rows 1-5 of a statement sheet). */
+  const names = wb.SheetNames.map((name, i) => {
+    const ps = wb.Sheets[name]['!pageSetup'];
+    return ps && ps.titleRows ? { Name: '_xlnm.Print_Titles', Sheet: i, Ref: `'${name.replace(/'/g, "''")}'!$1:$${ps.titleRows}` } : null;
+  }).filter(Boolean);
+  if (names.length) wb.Workbook = { ...(wb.Workbook || {}), Names: [...((wb.Workbook || {}).Names || []).filter(n => n.Name !== '_xlnm.Print_Titles'), ...names] };
   const bytes = new Uint8Array(XLSX.write(wb, { type: 'array', bookType: 'xlsx' }));
   const zip = XLSX.CFB.read(bytes, { type: 'array' });
   let changed = 0;
   wb.SheetNames.forEach((name, i) => {
     const fz = wb.Sheets[name]['!freeze'], tab = wb.Sheets[name]['!tabColor'];
     const freeze = fz && (fz.xSplit || fz.ySplit);
-    if (!freeze && !(tab && tab.rgb)) return;
+    if (!freeze && !(tab && tab.rgb) && !wb.Sheets[name]['!pageSetup']) return;
     const at = zip.FullPaths.findIndex(p => p.endsWith('/xl/worksheets/sheet' + (i + 1) + '.xml'));
     if (at < 0) throw new Error('Worksheet XML not found for ' + name);
     const entry = zip.FileIndex[at];
@@ -257,12 +263,21 @@ function _workbookBytes(wb){
       if (next === xml) throw new Error('Could not freeze the heading rows of ' + name);
       xml = next;
     }
+    const ps = wb.Sheets[name]['!pageSetup'];
+    if (ps){
+      /* Fit to one page wide (any height), orientation, centred horizontally. */
+      const next = xml.replace(/<pageMargins\b[^>]*\/>/, m => '<printOptions horizontalCentered="1"/>' + m +
+        `<pageSetup paperSize="1" orientation="${ps.landscape ? 'landscape' : 'portrait'}" fitToWidth="1" fitToHeight="0"/>`);
+      if (next === xml) throw new Error('Could not set the print layout of ' + name);
+      xml = next;
+    }
     if (tab && tab.rgb){
       /* <sheetPr> must be the worksheet's first child. */
       const color = '<tabColor rgb="FF' + String(tab.rgb).replace(/^#/, '').slice(-6).toUpperCase() + '"/>';
+      const fit = ps ? '<pageSetUpPr fitToPage="1"/>' : '';
       const next = /<sheetPr\b/.test(xml)
-        ? xml.replace(/<sheetPr\b([^>]*?)(\/>|>)/, (m, attrs, end) => '<sheetPr' + attrs + '>' + color + (end === '/>' ? '</sheetPr>' : ''))
-        : xml.replace(/(<worksheet\b[^>]*>)/, '$1<sheetPr>' + color + '</sheetPr>');
+        ? xml.replace(/<sheetPr\b([^>]*?)(\/>|>)/, (m, attrs, end) => '<sheetPr' + attrs + '>' + color + (end === '/>' ? fit + '</sheetPr>' : ''))
+        : xml.replace(/(<worksheet\b[^>]*>)/, '$1<sheetPr>' + color + fit + '</sheetPr>');
       if (next === xml) throw new Error('Could not color the tab of ' + name);
       xml = next;
     }
@@ -350,8 +365,19 @@ function _modelSheetToWs(sm, title){
     out++;
   }
   if (out === HEAD_R + 1) _wsSetCell(ws, out, 0, emptySheetText(sm), { ...XL_STYLES.plain, font: { italic: true, sz: 10, color: { rgb: '5B6B7F' } } });
-  const widest = Math.max(30, ...sm.lines.map(l => l.label.length + Math.min(l.indent, 10) * 2));
-  ws['!cols'] = [{ wch: 34 }, ...cols.map(c => ({ wch: c.type === 'percent' ? 12 : 14 }))];
+  /* Column widths follow the content: the longest account name (with its indent) and the widest formatted amount or
+   * heading word, so nothing is cut off and nothing is needlessly wide. */
+  const widest = Math.min(60, Math.max(32, ...sm.lines.filter(l => l.kind !== 'meta').map(l => l.label.length + Math.min(l.indent, 10) * 2 + 3)));
+  const valWidth = c => {
+    const texts = sm.lines.filter(l => l.kind !== 'meta').map(l => { const n = parseAmount((rows[l.r] || [])[c.idx]); return n === null ? '' : acctNumber(n); });
+    const headWord = Math.max(0, ...String(_headLabel(c)).split(/\s+/).map(w => w.length));
+    return Math.min(22, Math.max(c.type === 'percent' ? 11 : 14, headWord + 2, ...texts.map(t => t.length + 3)));
+  };
+  ws['!cols'] = [{ wch: widest }, ...cols.map(c => ({ wch: valWidth(c) }))];
+  /* Printing: one page wide (landscape when the statement is wide), centred, headings repeated on every page. */
+  const totalWidth = widest + cols.reduce((s, c) => s + valWidth(c), 0);
+  ws['!pageSetup'] = { landscape: totalWidth > 95 || cols.length > 6, titleRows: HEAD_R + 1 };
+  ws['!margins'] = { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 };
   ws['!rows'] = [{ hpt: 26 }, { hpt: 20 }, { hpt: 18 }, { hpt: 6 }, { hpt: 30 }];
   ws['!merges'] = [0, 1, 2].map(r => ({ s: { r, c: 0 }, e: { r, c: last } }));
   _decorateSheet(ws, sm.role, HEAD_R + 1, 1);

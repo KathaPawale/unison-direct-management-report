@@ -34,7 +34,7 @@ check('Negative report values retain negative class', report.includes("(n !== nu
 check('Excel money format is accounting format', exportsSource.includes("moneyFmt: '_-* #,##0.00_-;[Red]_-* (#,##0.00)_-;_-* \"-\"_-;_-@_-'"));
 check('Excel percentage format colors negatives', exportsSource.includes("pctFmt: '0.00%;[Red](0.00%)'"));
 check('Grand totals have double top and thin bottom borders', exportsSource.includes("border: { top: { style: 'double'") && exportsSource.includes("bottom: { style: 'thin'"));
-check('Statement columns use requested widths', exportsSource.includes("{ wch: 34 }, ...cols.map(c => ({ wch: c.type === 'percent' ? 12 : 14 }))"));
+check('Statement columns sized to their content', exportsSource.includes("ws['!cols'] = [{ wch: widest }, ...cols.map(c => ({ wch: valWidth(c) }))];"));
 
 console.log(`${passed}/${passed + failed} row-39-45 assertions pass, ${failed} fail`);
 if (failed) process.exitCode = 1;
