@@ -163,7 +163,7 @@ function reportTableParts(sm, { forExport = false, cols = null, compact = false,
     const isTotal = kind === 'total' || kind === 'grandTotal' || kind === 'computed';
     const grand = kind === 'grandTotal' ||
       /^total (for )?(assets|liabilities and (stockholders |shareholders |owners |members |partners )?(equity|capital)|income|revenues?|expenses?)$/.test(line.mkey || labelKey(line.label)) ||
-      (sm.role !== 'bs' && /^net (income|profit|loss|income loss)$/.test(line.mkey || labelKey(line.label)));
+      (sm.role !== 'bs' && NET_LINE_RE.test(line.mkey || labelKey(line.label)));
     const trCls = [isTotal ? 'row-total' : '', grand ? 'row-grand' : '', kind === 'section' ? 'row-section' : ''].filter(Boolean).join(' ');
     let tds = `<td class="lbl" style="padding-left:${6 + Math.min(line.indent, 6) * 11}px">${escapeHtml(line.label)}</td>`;
     const pctRow = isPercentRowLabel(line.label), pctRowFrac = pctRow && percentRowIsFraction(row, showCols.map(c => c.idx));
@@ -588,6 +588,8 @@ function reportExtraSheets(md){
   return Object.keys(state.sheets).filter(n => {
     const sm = md.sheetModels[n], rows = state.sheets[n] || [];
     if (captured.has(n) || !sm || !sm.lines.length || isTransactionDetailSheet(n, rows)) return false;
+    /* A dated listing (Date column) is transaction detail too, whatever its name. */
+    if (sm.cols.some(c => /^(date|txn date|transaction date|posting date)$/i.test(cellText(c.label)))) return false;
     return displayColumns(sm).length > 0 && rows.some(row => (row || []).some(v => parseAmount(v) !== null));
   });
 }

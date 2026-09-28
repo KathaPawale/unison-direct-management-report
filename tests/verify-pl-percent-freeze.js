@@ -205,5 +205,32 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
   check('Strict rule: its figures are carried over (650)', 'Cash Flow' in xmls && /<v>650<\/v>/.test(xmls['Cash Flow']));
 }
 
+/* Non-profit statements ("Greenwood Seneca Foundation"): Statement of Activities, Support and Revenue, Expenditures,
+ * Change in Net Assets / Excess of Revenue over Expenses, Net Assets on the Balance Sheet. */
+{
+  const npBs = [...head('Statement of Financial Position'), ['', 'As of Aug 31, 2026', 'As of Dec 31, 2025 (PP)'], ['Assets'], ['Checking', 21550.15, 18193], ['Security deposits', 100, 100],
+    ['Total Assets', 21650.15, 18293], ['Liabilities and Net Assets'], ['AMEX CC #1006', 623.99, 1006.33], ['Total Liabilities', 623.99, 1006.33], ['Net Assets'],
+    ['Net Assets without Donor Restrictions', 21026.16, 17286.67], ['Total Net Assets', 21026.16, 17286.67], ['Total Liabilities and Net Assets', 21650.15, 18293]];
+  const layouts = {
+    'Statement of Activities / Change in Net Assets': ['Statement of Activities', [...head('Statement of Activities'), ['', 'Jan - Aug, 2026', 'Jan - Aug, 2025 (PY)'], ['Revenue'],
+      ['Contributions', 50000, 40000], ['Grants', 20000, 15000], ['Total Revenue', 70000, 55000], ['Expenses'], ['Program Services', 45000, 38000],
+      ['Management & General', 21260.51, 14000], ['Total Expenses', 66260.51, 52000], ['Change in Net Assets', 3739.49, 3000]]],
+    'Support and Revenue / Expenditures / Excess of Revenue over Expenses': ['Activities', [...head('Statement of Revenue and Expenses'), ['', 'Total'], ['Support and Revenue'],
+      ['Donations', 70000], ['Total Support and Revenue', 70000], ['Expenditures'], ['Programs', 66260.51], ['Total Expenditures', 66260.51], ['Excess of Revenue over Expenses', 3739.49]]],
+    'Increase (Decrease) in Net Assets': ['P&L', [...head('Profit and Loss'), ['', 'Total'], ['Income'], ['Contributions', 70000], ['Total for Income', 70000], ['Expenses'],
+      ['Programs', 66260.51], ['Total for Expenses', 66260.51], ['Increase (Decrease) in Net Assets', 3739.49]]]
+  };
+  for (const [label, [tab, rows]] of Object.entries(layouts)){
+    const sheets = { 'BS': npBs, [tab]: rows };
+    api.state.sheets = sheets; const md = api.parseWorkbook(sheets); api.state.model = md;
+    const role = Object.entries(md.roles).find(([, v]) => v === tab);
+    check(`Non-profit (${label}): captured as the P&L`, role && /^pl/.test(role[0]));
+    check(`Non-profit (${label}): income 70,000, expenses 66,260.51, net 3,739.49`,
+      Math.abs(md.metrics.income - 70000) < 0.01 && Math.abs(md.metrics.expenses - 66260.51) < 0.01 && Math.abs(md.metrics.net - 3739.49) < 0.01);
+    check(`Non-profit (${label}): Net Assets read as equity (21,026.16)`, Math.abs(md.metrics.equity - 21026.16) < 0.01);
+    check(`Non-profit (${label}): the report has the P&L section`, api.reportSections().some(x => x.sheet === tab));
+  }
+}
+
 console.log(`${pass + fail} assertions, ${pass} pass, ${fail} fail`);
 process.exitCode = fail ? 1 : 0;

@@ -18,9 +18,9 @@ const _T = names => [new RegExp('^total (for )?(' + names + ')$'), new RegExp('^
 const _S = names => [new RegExp('^(' + names + ')$')];
 
 const FIN = {
-  income:   { names: 'income|revenues?|sales|operating revenues?|net sales|sales revenue|revenue from operations|ordinary income|turnover' },
+  income:   { names: 'income|revenues?|sales|operating revenues?|net sales|sales revenue|revenue from operations|ordinary income|turnover|support|support and revenues?|revenues? and support|revenues? support and gains|revenues? gains and other support|public support and revenues?' },
   cogs:     { names: 'cost of goods sold|cogs|cost of sales|cost of revenues?|costs? of services|direct costs?|cost of goods' },
-  expenses: { names: 'expenses?|operating expenses?|general and administrative expenses?|overhead expenses?|total operating expenses' },
+  expenses: { names: 'expenses?|operating expenses?|general and administrative expenses?|overhead expenses?|total operating expenses|expenditures?|functional expenses|program and supporting services|total functional expenses' },
   otherIncome:   { names: 'other income|other revenues?|non operating income' },
   otherExpenses: { names: 'other expenses?|non operating expenses?' },
   assets:   { names: 'assets' },
@@ -30,8 +30,8 @@ const FIN = {
   liabilities:   { names: 'liabilities' },
   currentLiabilities: { names: 'current liabilities' },
   longTermLiabilities: { names: 'long term liabilities|non current liabilities|noncurrent liabilities|long term debt|long term loans' },
-  equity:   { names: 'equity|stockholders equity|shareholders equity|owners equity|owner equity|members equity|partners equity|partners capital|capital|net worth|shareholders funds' },
-  totalLE:  { names: 'liabilities and (stockholders |shareholders |owners |owner |members |partners )?(equity|capital)|liabilities equity|liabilities and net worth' },
+  equity:   { names: 'equity|stockholders equity|shareholders equity|owners equity|owner equity|members equity|partners equity|partners capital|capital|net worth|shareholders funds|net assets' },
+  totalLE:  { names: 'liabilities and (stockholders |shareholders |owners |owner |members |partners )?(equity|capital)|liabilities equity|liabilities and net worth|liabilities and net assets' },
   bank:     { names: 'bank accounts|bank|banks|cash and cash equivalents|cash and bank|cash at bank|cash in bank|cash' },
   ar:       { names: 'accounts receivable|accounts receivable a r|a r|trade receivables|trade accounts receivable' },
   ap:       { names: 'accounts payable|accounts payable a p|a p|trade payables|trade accounts payable' }
@@ -151,7 +151,7 @@ function plFigures(sheets, sm, spec){
   if (gi >= 0) gross = _amount(sheets, sm, sm.lines[gi].r, spec);
   if (gross === null && income !== null) gross = income - (cogs || 0);
   let net = null;
-  const ni = _find(sm, [/^net (income|profit|loss|income loss|profit loss|earnings|surplus|deficit)$/], null, true);
+  const ni = _find(sm, [/^net (income|profit|loss|income loss|profit loss|earnings|surplus|deficit)$/, NET_LINE_RE], null, true);
   if (ni >= 0) net = _amount(sheets, sm, sm.lines[ni].r, spec);
   if (net === null && income !== null)
     net = income - (cogs || 0) - (expenses || 0) + (otherIncome || 0) - (otherExpenses || 0);
@@ -750,7 +750,7 @@ function dataChecks(model, sheets){
   const plM = S('plMonthly');
   if (plM){
     const months = plM.cols.filter(c => c.type === 'month'), tot = plM.cols.find(c => c.type === 'rowTotal');
-    if (months.length && tot) for (const [name, re] of [['Total Income', /^total (for )?(income|revenues?|sales)$/], ['Net Income', /^net (income|profit|loss)$/]]){
+    if (months.length && tot) for (const [name, re] of [['Total Income', INCOME_TOTAL_RE], ['Net Income', NET_LINE_RE]]){
       const l = findLine(plM, re); if (!l) continue;
       const row = rowsOf(plM)[l.r] || [];
       const sum = months.reduce((s, c) => s + (parseAmount(row[c.idx]) || 0), 0), total = parseAmount(row[tot.idx]);
@@ -763,6 +763,11 @@ function dataChecks(model, sheets){
   const figs = plSheets.map(sm => ({ sm, f: plFigures(sheets, sm, periodSpec(sm, 'current')) })).filter(x => x.f && x.f.income !== null);
   for (const { sm, f } of figs){
     if (f.expenses === null || f.net === null) continue;
+    /* Interest, tax or other lines between the expenses total and the bottom line: their signs are the workbook's own. */
+    const expIdx = sm.lines.findIndex(l => /^total (for )?(expenses?|expenditures?|operating expenses?)$/.test(l.mkey || labelKey(l.label)));
+    const netIdx = sm.lines.findIndex(l => NET_LINE_RE.test(l.mkey || labelKey(l.label)));
+    if (expIdx >= 0 && netIdx > expIdx && sm.lines.slice(expIdx + 1, netIdx).some(l => l.kind === 'account' && l.hasValues &&
+        !/^(other (income|expenses?)|net other income)/.test(l.mkey || labelKey(l.label)))) continue;
     const calc = f.income - (f.cogs || 0) - f.expenses + (f.otherIncome || 0) - (f.otherExpenses || 0);
     if (off(calc, f.net, 1)) out.push({ sev: 'Review', msg: `${sm.name}: Income − Cost of Goods Sold − Expenses (+ other items) = ${fmt(calc)}, but Net Income shows ${fmt(f.net)}. Check for lines the tool did not recognise.` });
   }

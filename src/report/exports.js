@@ -324,7 +324,7 @@ function _modelSheetToWs(sm, title){
     const key = line.mkey || labelKey(line.label);
     const isGrand = kind === 'grandTotal' ||
       /^total (for )?(assets|liabilities and (stockholders |shareholders |owners |members |partners )?(equity|capital)|income|revenues?|expenses?)$/.test(key) ||
-      (sm.role !== 'bs' && /^net (income|profit|loss|income loss)$/.test(key));
+      (sm.role !== 'bs' && NET_LINE_RE.test(key));
     const isTotal = kind === 'total' || kind === 'computed' || isGrand;
     const lblStyle = isGrand ? XL_STYLES.grandLbl : isTotal ? XL_STYLES.totalLbl :
                      kind === 'section' ? XL_STYLES.section : XL_STYLES.plain;
