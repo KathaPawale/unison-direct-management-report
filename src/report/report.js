@@ -577,8 +577,8 @@ function paginateNotesSection(no, title){
 /* ---------- assembly ---------- */
 
 /* Report section order (PDF, Table of Contents and the Excel management report): Disclaimer, Dashboard, P&L (% of Income),
- * P&L Monthly, P&L Comparative, Balance Sheet, BS Comparative, A/R, A/P, Trial Balance, Notes — then a full-period P&L,
- * a P&L by Class and any other worksheet with figures. One list, so the PDF and Excel never differ. */
+ * P&L Monthly, P&L Comparative, Balance Sheet, BS Comparative, A/R, A/P, Trial Balance, a full-period P&L, a P&L by Class,
+ * any other worksheet with figures — and Notes last. One list, so the PDF and Excel never differ. */
 const REPORT_STATEMENT_ORDER = [
   ['plPercent', 'Profit and Loss (% of Income)'], ['plMonthly', 'Profit and Loss — Monthly'], ['plComparative', 'Profit and Loss — Comparative'],
   ['bs', 'Balance Sheet'], ['bsComparative', 'Balance Sheet — Comparative'],
@@ -604,17 +604,46 @@ function sourceStatementTitle(sm){
       if (SOURCE_TITLE_WORDS.test(t)) return t;
     }
   }
+  /* No statement wording ("Management Accounts", "Monthly Summary"): the first other text line above the headings. */
+  for (let r = 0; r < top; r++){
+    for (const v of rows[r] || []){
+      if (typeof v !== 'string') continue;
+      const t = cellText(v).replace(/\s+/g, ' ');
+      if (!t || t.length < 3 || t.length > 90 || !/[a-z]/i.test(t) || isMetaText(t) || _periodLike(t) || parseAmount(t) !== null) continue;
+      if (client && normLabel(t) === client) continue;
+      if (/^(aging by|by due date|basis|currency|amounts? in)\b/i.test(t)) continue;
+      return t;
+    }
+  }
   return '';
 }
 
-/* Section title for each captured statement: the sheet's own heading exactly as uploaded, else the standard name. */
+/* A tab name that says nothing ("Sheet1", "Tab 2") is not a heading. */
+function isGenericTabName(n){
+  return /^(sheet|tab|page|table|data|worksheet|report)\s*\d*$/i.test(cellText(n));
+}
+
+/* The heading a sheet gives itself: its title line, else its tab name, else (a generic tab) the standard name. */
+function sheetHeading(sm, standard){
+  if (!sm) return standard;
+  return sourceStatementTitle(sm) || (isGenericTabName(sm.name) ? standard : cellText(sm.name)) || standard;
+}
+
+/* Notes: the uploaded notes sheet's own heading, else "Notes to Financial Statements". */
+function notesHeading(md){
+  const sm = md && md.roles.notes ? md.sheetModels[md.roles.notes] : null;
+  return sm ? sheetHeading(sm, 'Notes to Financial Statements') : 'Notes to Financial Statements';
+}
+
+/* Section title for each captured statement: the sheet's own heading exactly as uploaded (title line, else tab name),
+ * else — only for a generic tab such as "Sheet1" — the standard name. */
 function reportStatementTitles(md){
   const out = {};
   if (!md) return out;
   const all = [...REPORT_STATEMENT_ORDER, ...REPORT_TRAILING_ORDER];
   for (const [role, std] of all){
     const sm = md.roles[role] ? md.sheetModels[md.roles[role]] : null;
-    out[role] = sourceStatementTitle(sm) || std;
+    out[role] = sheetHeading(sm, std);
   }
   return out;
 }
@@ -661,11 +690,12 @@ function reportSections(){
     sections.push({ id: 'dash', title: 'Analytical Dashboard' });
     for (const [role, title] of REPORT_STATEMENT_ORDER){ const s = _roleSection(md, role, title); if (s) sections.push(s); }
   }
-  sections.push({ id: 'notes', title: 'Notes to Financial Statements' });
   if (md){
     for (const [role, title] of REPORT_TRAILING_ORDER){ const s = _roleSection(md, role, title); if (s) sections.push(s); }
-    reportExtraSheets(md).forEach((n, i) => sections.push({ id: 'extra' + (i + 1), title: sourceStatementTitle(md.sheetModels[n]) || n, sheet: n }));
+    reportExtraSheets(md).forEach((n, i) => sections.push({ id: 'extra' + (i + 1), title: sheetHeading(md.sheetModels[n], n), sheet: n }));
   }
+  /* Notes are always the last section. */
+  sections.push({ id: 'notes', title: notesHeading(md) });
   return sections;
 }
 

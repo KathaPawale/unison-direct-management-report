@@ -313,5 +313,27 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
     ws.B5 && ws.B5.v === 'Jan-26' && ws.C5 && ws.C5.v === 'Feb-26' && ws.A3 && /For the month ended July 31, 2026/.test(ws.A3.v));
 }
 
+/* Notes are always last (PDF, TOC, Excel tabs); headings come from the sheet: its title line (any wording), else its tab
+ * name, else — for a generic tab such as "Sheet2" — the standard name. */
+{
+  const plNoTitle = [['', 'Total'], ...body(false)];
+  const mgmt = [['Pluto Asset Recovery'], ['Management Accounts'], ['January-December 2025'], [], ['', 'Total'], ...body(false)];
+  const cls = [...head('Profit and Loss by Class'), ['', 'Admin', 'Rooms', 'Total'], ...body(false).map(r => r.length > 1 ? [r[0], r[1] / 2, r[1] / 2, r[1]] : r)];
+  const notes = [['Notes to the Accounts'], ['Rent — Office lease renewed in March']];
+  for (const [label, sheets, want] of [
+    ['title without statement words', { 'P&L': mgmt, 'BS': bs, 'By Class': cls, 'Notes to FS': notes }, { 'P&L': 'Management Accounts' }],
+    ['no title line → tab name', { 'Operating Results': plNoTitle, 'BS': bs }, { 'Operating Results': 'Operating Results' }],
+    ['generic tab → standard name', { 'Sheet1': plNoTitle, 'BS': bs }, { 'Sheet1': 'Profit and Loss' }]]){
+    api.state.sheets = sheets; api.state.client = 'Pluto Asset Recovery'; const md = api.parseWorkbook(sheets); api.state.model = md;
+    const secs = api.reportSections();
+    for (const [tab, title] of Object.entries(want)) check(`Heading from the sheet (${label}): "${tab}" is "${title}"`, secs.some(x => x.sheet === tab && x.title === title));
+    check(`Notes last in the PDF / TOC (${label})`, secs[secs.length - 1].id === 'notes');
+    downloads.length = 0; api.downloadReportExcel();
+    const tabs = XLSX.read(downloads[0].bytes, { type: 'array' }).SheetNames;
+    const notesTab = md.roles.notes || 'Notes';
+    check(`Notes last in the Excel tabs (${label}): "${notesTab}"`, tabs[tabs.length - 1] === notesTab);
+  }
+}
+
 console.log(`${pass + fail} assertions, ${pass} pass, ${fail} fail`);
 process.exitCode = fail ? 1 : 0;
