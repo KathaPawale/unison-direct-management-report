@@ -192,6 +192,29 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
   let refused = false;
   try { api._verifySheetRules(new Uint8Array(XLSX.write(plain, { type: 'array', bookType: 'xlsx' })), plain); } catch (e){ refused = /no tab color/.test(e.message) && /not frozen/.test(e.message); }
   check('Strict rule: a file without tab colors and frozen headings is refused', refused);
+  check('Strict rule: a sheet built without print settings prints one page wide', /<pageSetUpPr fitToPage="1"\/>/.test(xmls.Bare) && /<pageSetup [^>]*fitToWidth="1"/.test(xmls.Bare) && /<pageSetup [^>]*fitToWidth="1"/.test(xmls.Cover));
+  let noPrint = false;
+  try { api._verifySheetRules(new Uint8Array(XLSX.write(plain, { type: 'array', bookType: 'xlsx' })), plain); } catch (e){ noPrint = /not set to print one page wide/.test(e.message); }
+  check('Strict rule: a file without print settings is refused', noPrint);
+  /* A statement sheet whose first column is narrower than its longest account name is refused. */
+  const narrow = XLSX.utils.book_new();
+  const nws = XLSX.utils.aoa_to_sheet([['Particulars', 'Amount'], ['Owner Capital: Owner Investment in the Business', 1]]);
+  nws['!cols'] = [{ wch: 10 }, { wch: 14 }]; nws['!labelWidth'] = 46; nws['!tabColor'] = { rgb: '0B2F59' }; nws['!freeze'] = { xSplit: 1, ySplit: 1 };
+  XLSX.utils.book_append_sheet(narrow, nws, 'Narrow');
+  let tooNarrow = false;
+  try { api._workbookBytes(narrow); } catch (e){ tooNarrow = /narrower than its longest account name/.test(e.message); }
+  check('Strict rule: a first column narrower than the longest account name is refused', tooNarrow);
+}
+/* Every sheet of both downloads prints one page wide. */
+{
+  const sheets = { 'PL': [...head('Profit and Loss'), ['', 'Total'], ...body(false)], 'BS': bs };
+  api.state.sheets = sheets; api.state.model = api.parseWorkbook(sheets);
+  for (const fn of ['downloadReportExcel', 'downloadDataExcel']){
+    downloads.length = 0; api[fn]();
+    const xmls = downloads.length ? sheetXml(downloads[0].bytes) : {};
+    check(`Strict rule: every ${fn === 'downloadReportExcel' ? 'report' : 'data'} workbook sheet prints one page wide`, Object.keys(xmls).length > 0 &&
+      Object.values(xmls).every(x => /<pageSetUpPr fitToPage="1"\/>/.test(x) && /<pageSetup [^>]*fitToWidth="1"/.test(x)));
+  }
 }
 
 /* Strict rule: every worksheet with figures reaches the PDF and Excel; only transaction detail is left out. */

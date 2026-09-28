@@ -208,13 +208,21 @@ function _paneXml(fz){
     `<selection pane="${pane}" activeCell="${top}" sqref="${top}"/>`;
 }
 
-/* Strict rules for every downloaded Excel file: every sheet has a tab color, and every sheet except the Cover and
- * Disclaimer has frozen heading rows and first column. A sheet built without them gets the defaults here. */
+/* Strict rules for every downloaded Excel file: every sheet has a tab color and prints one page wide (margins set);
+ * every sheet except the Cover and Disclaimer has frozen heading rows and first column. A sheet built without them gets
+ * the defaults here. Statement sheets also repeat rows 1-5 on every printed page and size their first column to the
+ * longest account name — _verifySheetRules checks all of it in the written file. */
 const XL_UNFROZEN = new Set(['Cover', 'Disclaimer']);
 function _enforceSheetRules(wb){
   for (const name of wb.SheetNames){
     const ws = wb.Sheets[name];
     if (!ws['!tabColor'] || !ws['!tabColor'].rgb) ws['!tabColor'] = { rgb: '0B2F59' };
+    if (!ws['!pageSetup']){
+      const range = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']) : { e: { c: 0 } };
+      const width = (ws['!cols'] || []).slice(0, range.e.c + 1).reduce((s, c) => s + ((c && c.wch) || 10), 0);
+      ws['!pageSetup'] = { landscape: width > 110 };
+    }
+    if (!ws['!margins']) ws['!margins'] = { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 };
     const fz = ws['!freeze'];
     if (!XL_UNFROZEN.has(name) && !(fz && (fz.xSplit || fz.ySplit))){
       const range = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']) : { e: { c: 0 } };
@@ -227,14 +235,22 @@ function _enforceSheetRules(wb){
 function _verifySheetRules(bytes, wb){
   const zip = XLSX.CFB.read(bytes, { type: 'array' });
   const problems = [];
+  const wbXml = new TextDecoder().decode((zip.FileIndex[zip.FullPaths.findIndex(p => p.endsWith('/xl/workbook.xml'))] || { content: new Uint8Array() }).content);
+  const titleSheets = new Set([...wbXml.matchAll(/<definedName name="_xlnm\.Print_Titles" localSheetId="(\d+)"/g)].map(m => +m[1]));
   wb.SheetNames.forEach((name, i) => {
     const at = zip.FullPaths.findIndex(p => p.endsWith('/xl/worksheets/sheet' + (i + 1) + '.xml'));
     const xml = at < 0 ? '' : new TextDecoder().decode(zip.FileIndex[at].content);
     if (!/<sheetPr>[^]*?<tabColor rgb="[0-9A-F]{8}"/.test(xml)) problems.push(name + ': no tab color');
     if (!XL_UNFROZEN.has(name) && !/<pane [^>]*state="frozen"/.test(xml)) problems.push(name + ': headings not frozen');
-    const fz = wb.Sheets[name]['!freeze'];
-    if (fz && fz.ySplit === 5 && fz.xSplit === 1 && wb.Sheets[name]['!particulars'] && !/<pane xSplit="1" ySplit="5" topLeftCell="B6"/.test(xml))
+    const ws = wb.Sheets[name], fz = ws['!freeze'];
+    if (fz && fz.ySplit === 5 && fz.xSplit === 1 && ws['!particulars'] && !/<pane xSplit="1" ySplit="5" topLeftCell="B6"/.test(xml))
       problems.push(name + ': rows 1-5 and column A not frozen');
+    if (!/<pageSetUpPr fitToPage="1"\/>/.test(xml) || !/<pageSetup [^>]*fitToWidth="1" fitToHeight="0"/.test(xml)) problems.push(name + ': not set to print one page wide');
+    if (ws['!pageSetup'] && ws['!pageSetup'].titleRows && !titleSheets.has(i)) problems.push(name + ': headings not repeated on printed pages');
+    if (ws['!labelWidth']){
+      const m = xml.match(/<col min="1" max="1" width="([\d.]+)"/);
+      if (!m || +m[1] < ws['!labelWidth']) problems.push(name + ': first column narrower than its longest account name');
+    }
   });
   if (problems.length) throw new Error('Excel formatting rules failed — ' + problems.join('; '));
 }
@@ -374,6 +390,7 @@ function _modelSheetToWs(sm, title){
     return Math.min(22, Math.max(c.type === 'percent' ? 11 : 14, headWord + 2, ...texts.map(t => t.length + 3)));
   };
   ws['!cols'] = [{ wch: widest }, ...cols.map(c => ({ wch: valWidth(c) }))];
+  ws['!labelWidth'] = Math.min(60, Math.max(...sm.lines.filter(l => l.kind !== 'meta').map(l => l.label.length + Math.min(l.indent, 10) * 2), 0));
   /* Printing: one page wide (landscape when the statement is wide), centred, headings repeated on every page. */
   const totalWidth = widest + cols.reduce((s, c) => s + valWidth(c), 0);
   ws['!pageSetup'] = { landscape: totalWidth > 95 || cols.length > 6, titleRows: HEAD_R + 1 };
@@ -524,7 +541,8 @@ function downloadReportExcel(){
       _wsSetCell(ws, tr, 0, 'Total', XL_STYLES.totalLbl);
       _wsSetCell(ws, tr, 1, ag.total, XL_STYLES.totalVal);
       _wsSetCell(ws, tr, 2, 1, { ...XL_STYLES.totalVal, numFmt: '0.00%' });
-      ws['!cols'] = [{ wch: 34 }, { wch: 14 }, { wch: 12 }];
+      ws['!cols'] = [{ wch: Math.max(34, ...ag.buckets.map(b => String(b.label).length + 3)) }, { wch: 16 }, { wch: 12 }];
+      ws['!pageSetup'] = { landscape: false, titleRows: 5 };
       _decorateSheet(ws, role, 5, 1);
       XLSX.utils.book_append_sheet(wb, ws, _sheetNameSafe(wb, ROLE_LABELS[role] || name));
       continue;
