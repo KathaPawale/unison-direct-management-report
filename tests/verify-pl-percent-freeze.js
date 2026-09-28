@@ -100,6 +100,11 @@ for (const [name, sheets] of Object.entries(layouts)){
   check(`${name}: dashboard income from the main P&L`, md.metrics.income === 1000);
   const sec = api.reportSections().find(s => s.id === 'plPercent');
   check(`${name}: PDF/report has a "Profit and Loss (% of Income)" section`, sec && sec.sheet === pctName);
+  const contentIds = api.reportSections().slice(2).map(s => s.id);
+  const requestedOrder = ['disc', 'dash', 'plPercent', 'plMonthly', 'plComparative', 'bs', 'bsComparative', 'ar', 'ap', 'tb', 'notes'];
+  const expectedPrefix = requestedOrder.filter(id => contentIds.includes(id));
+  check(`${name}: report sections follow the requested order`,
+    contentIds.slice(0, expectedPrefix.length).join(',') === expectedPrefix.join(','));
   const parts = api.reportTableParts(md.sheetModels[pctName], {});
   const net = parts.rows.find(r => /Net Income/.test(r.html));
   check(`${name}: % of Income table shows amount and % columns`, /% of (Total )?Income/.test(parts.head || JSON.stringify(parts)) &&
@@ -124,7 +129,9 @@ for (const [name, sheets] of Object.entries(layouts)){
     check(`${name}: "${tab}" has a tab color`, /^<\?xml[^>]*>\s*<worksheet\b[^>]*><sheetPr><tabColor rgb="FF[0-9A-F]{6}"\/><\/sheetPr>/.test(xml));
   if (sheets.TrialBalance){
     check(`${name}: every uploaded sheet is captured`, Object.keys(sheets).every(n => Object.values(md.roles).includes(n)));
-    for (const t of ['Trial Balance', 'Profit and Loss', 'Profit and Loss (Monthly)', 'Profit and Loss (Comparative)', 'Balance Sheet — Comparative'])
+    /* The full-period "Profit and Loss" repeats the % of Income statement's amounts, so only the latter is printed. */
+    check(`${name}: no duplicate "Profit and Loss" sheet next to "% of Income"`, !('Profit and Loss' in xmls) && Object.keys(xmls).some(n => /% of Income/.test(n)));
+    for (const t of ['Trial Balance', 'Profit and Loss (% of Income)', 'Profit and Loss (Monthly)', 'Profit and Loss (Comparative)', 'Balance Sheet — Comparative'])
       check(`${name}: Excel has "${t}"`, t in xmls);
   }
   check(`${name}: Cover and Disclaimer are not frozen`, !pane(xmls.Cover) && !pane(xmls.Disclaimer));
