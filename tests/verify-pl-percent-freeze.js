@@ -290,7 +290,7 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
     'PL_Comparative': [...same(), ['', 'Jan-Jul 2026', 'Jan-Jul 2025'], ...body(false).map(r => r.length > 1 ? [r[0], r[1], r[1]] : r)], 'BS': bs };
   api.state.sheets = sheets; api.state.model = api.parseWorkbook(sheets);
   const t = api.reportSections().map(x => x.title);
-  check('Same heading on three P&L sheets: kept exactly as uploaded', t.filter(x => x === 'Income Statement (Profit and Loss)').length === 3);
+  check('Same heading on three P&L sheets: each takes its tab name', ['PL', 'PL_MoM', 'PL_Comparative'].every(x => t.includes(x)) && !t.includes('Income Statement (Profit and Loss)'));
 }
 
 /* Strict rule: nothing the user uploaded is renamed — column headings, the first-column heading, the period line and the
@@ -311,6 +311,58 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
   const ws = back.Sheets.PL_MoM || {};
   check('As uploaded: Excel heading, column headings and period line', ws.A2 && ws.A2.v === 'Income Statement (Profit and Loss)' && ws.A5 && ws.A5.v === 'Account' &&
     ws.B5 && ws.B5.v === 'Jan-26' && ws.C5 && ws.C5.v === 'Feb-26' && ws.A3 && /For the month ended July 31, 2026/.test(ws.A3.v));
+}
+
+/* Notes are always last (PDF, TOC, Excel tabs); headings come from the sheet: its title line (any wording), else its tab
+ * name, else — for a generic tab such as "Sheet2" — the standard name. */
+{
+  const plNoTitle = [['', 'Total'], ...body(false)];
+  const mgmt = [['Pluto Asset Recovery'], ['Management Accounts'], ['January-December 2025'], [], ['', 'Total'], ...body(false)];
+  const cls = [...head('Profit and Loss by Class'), ['', 'Admin', 'Rooms', 'Total'], ...body(false).map(r => r.length > 1 ? [r[0], r[1] / 2, r[1] / 2, r[1]] : r)];
+  const notes = [['Notes to the Accounts'], ['Rent — Office lease renewed in March']];
+  for (const [label, sheets, want] of [
+    ['title without statement words', { 'P&L': mgmt, 'BS': bs, 'By Class': cls, 'Notes to FS': notes }, { 'P&L': 'Management Accounts' }],
+    ['no title line → tab name', { 'Operating Results': plNoTitle, 'BS': bs }, { 'Operating Results': 'Operating Results' }],
+    ['generic tab → standard name', { 'Sheet1': plNoTitle, 'BS': bs }, { 'Sheet1': 'Profit and Loss' }]]){
+    api.state.sheets = sheets; api.state.client = 'Pluto Asset Recovery'; const md = api.parseWorkbook(sheets); api.state.model = md;
+    const secs = api.reportSections();
+    for (const [tab, title] of Object.entries(want)) check(`Heading from the sheet (${label}): "${tab}" is "${title}"`, secs.some(x => x.sheet === tab && x.title === title));
+    check(`Notes last in the PDF / TOC (${label})`, secs[secs.length - 1].id === 'notes');
+    downloads.length = 0; api.downloadReportExcel();
+    const tabs = XLSX.read(downloads[0].bytes, { type: 'array' }).SheetNames;
+    const notesTab = md.roles.notes || 'Notes';
+    check(`Notes last in the Excel tabs (${label}): "${notesTab}"`, tabs[tabs.length - 1] === notesTab);
+  }
+}
+
+/* Greenwood Seneca Foundation: "Statement of Activity" and "Class wise SOA" are both titled "Statement Activity", so each
+ * takes its tab name; "Statement of Financial Position" keeps its own title. */
+{
+  const T = t => [['Greenwood Seneca Foundation'], [t], ['January-August, 2026'], []];
+  const sfp = [...T('Statement of Financial Position'), ['', 'As of Aug 31, 2026'], ['Assets'], ['Checking', 21550.15], ['Security deposits', 100], ['Total for Assets', 21650.15],
+    ['Liabilities and Equity'], ['AMEX CC #1006', 623.99], ['Total for Liabilities', 623.99], ['Equity'], ['Net Assets', 21026.16], ['Total for Equity', 21026.16],
+    ['Total for Liabilities and Equity', 21650.15]];
+  const soa = [...T('Statement Activity'), ['', 'Total'], ['Revenue'], ['Contributed income'], ['Donations', 17739.33], ['Grants', 5000], ['Total for Contributed income', 22739.33],
+    ['Total for Revenue', 22739.33], ['Gross Profit', 22739.33], ['Expenditures'], ['Awards & grants to others', 1000], ['Business License & Registration', 1125],
+    ['Meals & Entertainment', 85.95], ['Total for Expenditures', 2210.95], ['Net Revenue', 20528.38]];
+  const C = ['General', 'Membership Dues Board Seat', 'Tour Fee', 'Worldschooling', 'Your Legacy Tours (Program)', 'Not specified', 'Total'];
+  const row = (l, g, y, tot) => [l, g, '', '', '', y, '', tot];
+  const cls = [...T('Statement Activity'), ['', ...C], ['Revenue'], ['Contributed income'], row('Donations', 17739.33, '', 17739.33), row('Grants', '', 5000, 5000),
+    ['Total for Contributed income', 17739.33, 0, 0, 0, 5000, 0, 22739.33], ['Total for Revenue', 17739.33, 0, 0, 0, 5000, 0, 22739.33],
+    ['Gross Profit', 17739.33, 0, 0, 0, 5000, 0, 22739.33], ['Expenditures'], row('Awards & grants to others', '', 1000, 1000), ['Business License & Registration', '', 1125, '', '', '', '', 1125],
+    row('Meals & Entertainment', 85.95, '', 85.95), ['Total for Expenditures', 85.95, 1125, 0, 0, 1000, 0, 2210.95], ['Net Revenue', 17653.38, -1125, 0, 0, 4000, 0, 20528.38]];
+  const sheets = { 'Statement of Financial Position': sfp, 'Statement of Activity': soa, 'Class wise SOA': cls };
+  api.state.sheets = sheets; api.state.client = 'Greenwood Seneca Foundation'; const md = api.parseWorkbook(sheets); api.state.model = md;
+  check('Greenwood: Statement of Activity is the P&L, Class wise SOA the P&L by Class, the position statement the Balance Sheet',
+    [md.roles.pl, md.roles.plComparative].includes('Statement of Activity') && md.roles.plClass === 'Class wise SOA' && md.roles.bs === 'Statement of Financial Position');
+  const secs = api.reportSections();
+  for (const [tab, title] of [['Statement of Financial Position', 'Statement of Financial Position'], ['Statement of Activity', 'Statement of Activity'], ['Class wise SOA', 'Class wise SOA']])
+    check(`Greenwood: "${tab}" heading is "${title}"`, secs.some(x => x.sheet === tab && x.title === title));
+  check('Greenwood: income 22,739.33 and net 20,528.38', Math.abs(md.metrics.income - 22739.33) < 0.01 && Math.abs(md.metrics.net - 20528.38) < 0.01);
+  downloads.length = 0; api.downloadReportExcel();
+  const back = XLSX.read(downloads[0].bytes, { type: 'array' });
+  check('Greenwood: Excel headings "Statement of Activity" / "Class wise SOA"', back.Sheets['Statement of Activity'] && back.Sheets['Statement of Activity'].A2.v === 'Statement of Activity' &&
+    back.Sheets['Class wise SOA'] && back.Sheets['Class wise SOA'].A2.v === 'Class wise SOA');
 }
 
 console.log(`${pass + fail} assertions, ${pass} pass, ${fail} fail`);

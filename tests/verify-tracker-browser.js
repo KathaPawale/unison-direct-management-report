@@ -483,13 +483,14 @@ function checkWorkbook(w, r, excel, pdf, errors){
   check(`${tag} Row 4 TOC is page 2 and numbering starts at 1`, r.pages[1] && r.pages[1].id === 'toc' && toc.length && /^1\. /.test(toc[0].text), toc[0] && toc[0].text);
   check(`${tag} Row 4 TOC numbers are consecutive`, toc.every((t, i) => new RegExp('^' + (i + 1) + '\\. ').test(t.text)));
   /* Report order: Disclaimer, Dashboard, P&L (% of Income), Monthly, Comparative, Balance Sheets, Aging, Trial Balance, Notes. */
-  const ORDER = ['disc', 'dash', 'plPercent', 'plMonthly', 'plComparative', 'bs', 'bsComparative', 'ar', 'ap', 'tb', 'notes', 'pl', 'plClass'];
+  const ORDER = ['disc', 'dash', 'plPercent', 'plMonthly', 'plComparative', 'bs', 'bsComparative', 'ar', 'ap', 'tb', 'pl', 'plClass', 'notes'];
   const pageIds = r.pages.map(p => p.id).filter((id, i, a) => !['cover', 'toc'].includes(id) && a.indexOf(id) === i);
   check(`${tag} Report order: PDF sections follow the requested order`, pageIds.join(',') === ORDER.filter(id => pageIds.includes(id)).join(','), pageIds.join(','));
-  check(`${tag} Report order: Disclaimer is first and Notes appears in the TOC`, toc.length && /^1\. Management Purpose Disclaimer/.test(toc[0].text) && toc.some(t => /Notes to Financial Statements/.test(t.text)),
+  check(`${tag} Report order: Disclaimer is first and Notes last in the TOC`, toc.length && /^1\. Management Purpose Disclaimer/.test(toc[0].text) && /Notes/i.test(toc[toc.length - 1].text) ,
     toc.map(t => t.text).join(' | '));
   /* Headings are the uploaded sheets' own ("Profit & Loss", "Statement of Activities"), so match any P&L / BS wording. */
-  const BS_T = /balance sheet|financial position|financial condition|assets and liabilities/i, PL_T = /profit|loss|income statement|activities|operations|earnings/i;
+  const BS_T = /balance sheet|financial position|financial condition|assets and liabilities|^b ?s\b|^bs[_ ]/i,
+        PL_T = /profit|loss|income statement|activit|operations|earnings|^p ?& ?l|^pl\b|^pl[_ (]|soa\b/i;
   if (r.finOrder.length >= 2 && r.finOrder.some(t => BS_T.test(t)) && r.finOrder.some(t => PL_T.test(t) && !BS_T.test(t)))
     check(`${tag} Row 15 portal shows Balance Sheet before Profit and Loss`, r.finOrder.findIndex(t => BS_T.test(t)) < r.finOrder.findIndex(t => PL_T.test(t) && !BS_T.test(t)), r.finOrder.join(', '));
   const anchors = new Set(r.pages.map(p => p.anchor).filter(Boolean));
@@ -637,10 +638,11 @@ function checkWorkbook(w, r, excel, pdf, errors){
   check(`${tag} Excel downloads`, excel.ok, excel.error);
   if (!excel.ok) return;
   for (const s of e.excelSheets || []) check(`${tag} Rows 44-54 Excel sheet "${s}"`, excel.sheets.some(x => x.name === s), excel.sheets.map(x => x.name).join(', '));
-  const stmts = excel.sheets.filter(s => !['Cover', 'Analytical Summary', 'Notes', 'Disclaimer'].includes(s.name));
+  const notesTab = r.roles.notes && !/^(sheet|tab|page|table|data|worksheet|report)\s*\d*$/i.test(r.roles.notes) ? tabOf(r.roles.notes) : 'Notes';
+  const stmts = excel.sheets.filter(s => !['Cover', 'Analytical Summary', notesTab, 'Disclaimer'].includes(s.name));
   /* Tabs keep the uploaded names, in report order by statement type. */
   const TAB_ORDER = ['Cover', 'Disclaimer', 'Analytical Summary', ...['plPercent', 'plMonthly', 'plComparative', 'bs', 'bsComparative', 'ar', 'ap', 'tb'].map(k => tabOf(r.roles[k])),
-    'Notes', ...['pl', 'plClass'].map(k => tabOf(r.roles[k]))].filter(Boolean);
+    ...['pl', 'plClass'].map(k => tabOf(r.roles[k])), notesTab].filter(Boolean);
   const tabs = excel.sheets.map(x => x.name);
   check(`${tag} Report order: Excel tabs follow the requested order`, tabs.join('|') === TAB_ORDER.filter(t => tabs.includes(t)).join('|'), tabs.join(' | '));
   check(`${tag} Row 7 every statement cell has a border`, stmts.every(s => s.unbordered === 0), stmts.map(s => s.name + ':' + s.unbordered).join(','));
@@ -658,8 +660,8 @@ function checkWorkbook(w, r, excel, pdf, errors){
   if (pctRowXl.length) check(`${tag} Row 52 Excel "Percentage of total" rows use a % format`, pctRowXl.every(x => /%/.test(x)), pctRowXl.slice(0, 4).join(' | '));
   check(`${tag} Row 41 tab colours differ by statement type`, new Set(excel.sheets.map(s => s.tabColor)).size >= Math.min(3, excel.sheets.length));
   /* Row 40: Notes sheet formatted as a table (title, Line Item / Category | Note headings) */
-  const notesWs = excel.sheets.find(s => s.name === 'Notes');
-  check(`${tag} Row 40 Notes sheet has its title and "Line Item / Category" / "Note" headings`, notesWs && /Notes to Financial Statements/.test(String(notesWs.val('A1'))) &&
+  const notesWs = excel.sheets.find(s => s.name === notesTab);
+  check(`${tag} Row 40 Notes sheet has its title and "Line Item / Category" / "Note" headings`, notesWs && /notes/i.test(String(notesWs.val('A1'))) &&
     notesWs.val('A4') === 'Line Item / Category' && notesWs.val('B4') === 'Note', notesWs && [notesWs.val('A1'), notesWs.val('A4'), notesWs.val('B4')].join(' | '));
   for (const n of e.notes || []) check(`${tag} Row 40 note "${n}" in the Excel Notes sheet`, notesWs && /<v>[^<]*/.test(notesWs.xml) && notesWs.xml.includes(n));
   /* Data workbook (as uploaded): every sheet has a tab colour; every sheet with columns freezes its heading rows and column A */

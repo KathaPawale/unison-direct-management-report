@@ -562,7 +562,7 @@ function downloadReportExcel(){
   }
   /* Every other worksheet with figures, as in the PDF (reportExtraSheets). */
   for (const n of reportExtraSheets(md)){
-    const ws = _modelSheetToWs(md.sheetModels[n], sourceStatementTitle(md.sheetModels[n]) || n);
+    const ws = _modelSheetToWs(md.sheetModels[n], titles['sheet:' + n] || sheetHeading(md.sheetModels[n], n));
     const tab = _sheetNameSafe(wb, n);
     XLSX.utils.book_append_sheet(wb, ws, tab);
     trailingTabs.push(tab);
@@ -570,7 +570,7 @@ function downloadReportExcel(){
 
   /* Notes + disclaimer */
   const notes = {};
-  _wsSetCell(notes, 0, 0, (state.client || 'Client') + ' — Notes to Financial Statements',
+  _wsSetCell(notes, 0, 0, (state.client || 'Client') + ' — ' + notesHeading(md),
     { ...XL_STYLES.title, font: { ...XL_STYLES.title.font, sz: 14 } });
   _wsSetCell(notes, 0, 1, '', XL_STYLES.title);
   _wsSetCell(notes, 1, 0, (state.period || '') + '  ·  ' + reportBasis(),
@@ -604,7 +604,9 @@ function downloadReportExcel(){
   notes['!cols'] = [{ wch: 34 }, { wch: 78 }];
   notes['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }];
   _decorateSheet(notes, 'notes', 5, 1);
-  XLSX.utils.book_append_sheet(wb, notes, 'Notes');
+  /* The uploaded notes sheet's tab name (e.g. "Notes to FS"), else "Notes". */
+  const notesTab = md.roles.notes && !isGenericTabName(md.roles.notes) ? _sheetNameSafe(wb, md.roles.notes) : _sheetNameSafe(wb, 'Notes');
+  XLSX.utils.book_append_sheet(wb, notes, notesTab);
 
   const disc = {};
   _wsSetCell(disc, 0, 0, 'Management Purpose Disclaimer', XL_STYLES.title);
@@ -617,12 +619,13 @@ function downloadReportExcel(){
   _decorateSheet(disc, 'disc', 0, 0);
   XLSX.utils.book_append_sheet(wb, disc, 'Disclaimer');
 
-  /* Tabs keep the uploaded sheet names, in report order: Cover, Disclaimer, Analytical Summary, the statements, Notes,
-   * then a full-period P&L, a P&L by Class and other sheets (as in the PDF). */
-  const own = new Set(['Cover', 'Disclaimer', 'Analytical Summary', 'Notes']);
+  /* Tabs keep the uploaded sheet names, in report order: Cover, Disclaimer, Analytical Summary, the statements, a
+   * full-period P&L, a P&L by Class and other sheets, and the notes last (as in the PDF). */
+  const own = new Set(['Cover', 'Disclaimer', 'Analytical Summary', notesTab]);
   const statementTabs = wb.SheetNames.filter(n => !own.has(n));
   const trailing = statementTabs.filter(n => trailingTabs.includes(n) || wb.Sheets[n]['!trailing']);
-  wb.SheetNames = ['Cover', 'Disclaimer', 'Analytical Summary', ...statementTabs.filter(n => !trailing.includes(n)), 'Notes', ...trailing];
+  /* Notes are always the last tab. */
+  wb.SheetNames = ['Cover', 'Disclaimer', 'Analytical Summary', ...statementTabs.filter(n => !trailing.includes(n)), ...trailing, notesTab];
   if (_saveWorkbook(wb, _reportFileBase() + '-Management-Report.xlsx')) toast('Excel report downloaded');
 }
 
