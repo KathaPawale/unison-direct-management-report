@@ -413,6 +413,7 @@ function wireSettings(){
     }
   };
   $('#clearSessionBtn').onclick = () => {
+    _lastFile = null;
     resetState();
     analyze();
     $('#fileName').textContent = 'No new file selected';
@@ -423,31 +424,43 @@ function wireSettings(){
 
 /* ---------- upload / reset ---------- */
 
+/* Reads the chosen workbook into the session and rebuilds every figure, page and export from it. */
+let _lastFile = null;
+
+async function processFile(f){
+  f = f || _lastFile;
+  if (!f){ toast('Choose an XLSX or CSV file first.'); return; }
+  try {
+    const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
+    resetState();
+    state.fileName = f.name;
+    wb.SheetNames.forEach(n => {
+      state.sheets[n] = keepPercentCells(wb.Sheets[n], XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' }));
+    });
+    ['s1', 's2', 's3'].forEach(id => $('#' + id).classList.add('done'));
+    analyze();
+    goPage('dashboard');
+    _lastFile = f;
+    /* Cleared so choosing the same file again (e.g. an updated copy) processes it again. */
+    $('#fileInput').value = '';
+    toast(`Processed ${wb.SheetNames.length} worksheet(s) from ${f.name}`);
+  } catch (e) {
+    console.error(e);
+    toast('Could not read the workbook: ' + (e.message || e));
+  }
+}
+
 function wireUpload(){
+  /* Choosing a file processes it at once: the dashboard, PDF and Excel can never be built from the previous
+   * session's workbook while a new file sits unprocessed (row 54: "only the Balance Sheet" was the old workbook). */
   $('#fileInput').onchange = () => {
     const f = $('#fileInput').files[0];
     $('#fileName').textContent = f ? f.name : 'No new file selected';
+    if (f) processFile(f);
   };
-  $('#processBtn').onclick = async () => {
-    const f = $('#fileInput').files[0];
-    if (!f){ toast('Choose an XLSX or CSV file first.'); return; }
-    try {
-      const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
-      resetState();
-      state.fileName = f.name;
-      wb.SheetNames.forEach(n => {
-        state.sheets[n] = keepPercentCells(wb.Sheets[n], XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' }));
-      });
-      ['s1', 's2', 's3'].forEach(id => $('#' + id).classList.add('done'));
-      analyze();
-      goPage('dashboard');
-      toast(`Processed ${wb.SheetNames.length} worksheet(s) from ${f.name}`);
-    } catch (e) {
-      console.error(e);
-      toast('Could not read the workbook: ' + (e.message || e));
-    }
-  };
+  $('#processBtn').onclick = () => processFile($('#fileInput').files[0]);
   $('#resetData').onclick = () => {
+    _lastFile = null;
     resetState();
     $('#fileName').textContent = 'No new file selected';
     $$('.step').forEach(s => s.classList.remove('done'));

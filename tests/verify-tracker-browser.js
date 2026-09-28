@@ -684,8 +684,21 @@ function checkWorkbook(w, r, excel, pdf, errors){
       await page.goto(base, { waitUntil: 'networkidle' });
       await page.evaluate(() => { localStorage.clear(); resetState(); });
       await page.evaluate(() => goPage('uploads'));
+      /* Row 54: a previous session held a Balance-Sheet-only workbook; choosing the new file must replace it at once. */
+      if (w === books[0] && !process.env.TRACKER_XLSX){
+        const bsOnly = { sheets: { 'Old BS': [['Old Client'], ['Balance Sheet'], ['As of December 31, 2024'], [], ['', 'Total'], ['Assets'], ['Checking', 10],
+          ['Total Assets', 10], ['Liabilities and Equity'], ['Retained Earnings', 10], ['Total Liabilities and Equity', 10]] } };
+        await page.setInputFiles('#fileInput', { name: 'old.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: toXlsx(bsOnly) });
+        await page.waitForFunction(() => state.fileName === 'old.xlsx' && state.model, null, { timeout: 20000 });
+      }
       await page.setInputFiles('#fileInput', { name: 'workbook.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: w.file || toXlsx(w) });
+      /* Choosing the file processes it — no Process click needed, so a stale workbook can never be exported. */
+      const autoProcessed = await page.waitForFunction(() => state.fileName === 'workbook.xlsx' && state.model, null, { timeout: 20000 }).then(() => true, () => false);
+      check(`[${w.name}] Row 54 choosing the file processes it (no Process click, no stale workbook)`, autoProcessed);
+      /* The Process button still re-runs the chosen file. */
+      await page.evaluate(() => { state.fileName = ''; goPage('uploads'); });
       await page.click('#processBtn');
+      await page.waitForFunction(() => state.fileName === 'workbook.xlsx', null, { timeout: 20000 });
       await page.waitForFunction(() => document.querySelector('#loadedStatus').classList.contains('ok') && state.model, null, { timeout: 20000 });
       const toastText = await page.evaluate(() => document.querySelector('#toast').textContent);
       if (/could not|failed/i.test(toastText)) errors.push('toast: ' + toastText);
