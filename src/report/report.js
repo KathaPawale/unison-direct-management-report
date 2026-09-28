@@ -551,25 +551,35 @@ function paginateNotesSection(no, title){
 
 /* ---------- assembly ---------- */
 
+/* Report section order (PDF, Table of Contents and the Excel management report): disclaimer, dashboard, the P&L
+ * statements, the Balance Sheets, aging, Trial Balance, notes. One list, so the PDF and Excel never differ. */
+const REPORT_STATEMENT_ORDER = [
+  ['plPercent', 'Profit and Loss (% of Income)'], ['pl', 'Profit and Loss'], ['plMonthly', 'Profit and Loss — Monthly'],
+  ['plComparative', 'Profit and Loss — Comparative'], ['plClass', 'Profit and Loss — by Class'],
+  ['bs', 'Balance Sheet'], ['bsComparative', 'Balance Sheet — Comparative'],
+  ['ar', 'A/R Aging Summary'], ['ap', 'A/P Aging Summary'], ['tb', 'Trial Balance']
+];
+
+/* A full-period P&L next to the "% of Income" statement repeats its amounts (the data checks confirm they agree),
+ * so the report prints the % of Income statement only (row 38: fewer pages). */
+function skipReportSection(md, role){
+  return role === 'pl' && !!md.roles.plPercent;
+}
+
 function reportSections(){
   const md = state.model;
-  const sections = [{ id: 'cover', title: 'Cover' }, { id: 'toc', title: 'Table of Contents' }];
+  const sections = [{ id: 'cover', title: 'Cover' }, { id: 'toc', title: 'Table of Contents' },
+                    { id: 'disc', title: 'Management Purpose Disclaimer' }];
   if (md){
     sections.push({ id: 'dash', title: 'Analytical Dashboard' });
-    if (md.roles.bs) sections.push({ id: 'bs', title: 'Balance Sheet', sheet: md.roles.bs });
-    if (md.roles.bsComparative) sections.push({ id: 'bsComparative', title: 'Balance Sheet — Comparative', sheet: md.roles.bsComparative });
-    if (md.roles.tb) sections.push({ id: 'tb', title: 'Trial Balance', sheet: md.roles.tb });
-    if (md.roles.plMonthly)     sections.push({ id: 'plMonthly', title: 'Profit and Loss — Monthly', sheet: md.roles.plMonthly });
-    if (md.roles.plComparative) sections.push({ id: 'plComparative', title: 'Profit and Loss — Comparative', sheet: md.roles.plComparative });
-    if (md.roles.pl)
-      sections.push({ id: 'pl', title: 'Profit and Loss', sheet: md.roles.pl });
-    if (md.roles.plPercent) sections.push({ id: 'plPercent', title: 'Profit and Loss (% of Income)', sheet: md.roles.plPercent });
-    if (md.roles.plClass) sections.push({ id: 'plClass', title: 'Profit and Loss — by Class', sheet: md.roles.plClass });
-    if (md.roles.ar && !md.suppressAR) sections.push({ id: 'ar', title: 'A/R Aging Summary', sheet: md.roles.ar, aging: md.arAging && md.arAging.fromDetail ? md.arAging : null });
-    if (md.roles.ap && !md.suppressAP) sections.push({ id: 'ap', title: 'A/P Aging Summary', sheet: md.roles.ap, aging: md.apAging && md.apAging.fromDetail ? md.apAging : null });
+    for (const [role, title] of REPORT_STATEMENT_ORDER){
+      if (!md.roles[role] || skipReportSection(md, role)) continue;
+      if ((role === 'ar' && md.suppressAR) || (role === 'ap' && md.suppressAP)) continue;
+      const ag = role === 'ar' ? md.arAging : role === 'ap' ? md.apAging : null;
+      sections.push({ id: role, title, sheet: md.roles[role], ...(role === 'ar' || role === 'ap' ? { aging: ag && ag.fromDetail ? ag : null } : {}) });
+    }
   }
   sections.push({ id: 'notes', title: 'Notes to Financial Statements' });
-  sections.push({ id: 'disc', title: 'Management Purpose Disclaimer' });
   return sections;
 }
 

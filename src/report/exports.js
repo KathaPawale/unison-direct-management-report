@@ -476,11 +476,10 @@ function downloadReportExcel(){
   XLSX.utils.book_append_sheet(wb, s, 'Analytical Summary');
 
   /* Financial statement sheets */
-  const order = [['bs', 'Balance Sheet'], ['bsComparative', 'Balance Sheet — Comparative'], ['tb', 'Trial Balance'], ['plMonthly', 'Profit and Loss — Monthly'], ['plComparative', 'Profit and Loss — Comparative'],
-                 ['pl', 'Profit and Loss'], ['plPercent', 'Profit and Loss (% of Income)'], ['plClass', 'Profit and Loss — by Class'], ['ar', 'A/R Aging Summary'], ['ap', 'A/P Aging Summary']];
-  for (const [role, title] of order){
+  /* Same order as the PDF (REPORT_STATEMENT_ORDER in report.js). */
+  for (const [role, title] of REPORT_STATEMENT_ORDER){
     const name = md.roles[role];
-    if (!name) continue;
+    if (!name || skipReportSection(md, role)) continue;
     if ((role === 'ar' && md.suppressAR) || (role === 'ap' && md.suppressAP)) continue;
     const ag = role === 'ar' ? md.arAging : role === 'ap' ? md.apAging : null;
     if (ag && ag.fromDetail){
@@ -563,6 +562,8 @@ function downloadReportExcel(){
   _decorateSheet(disc, 'disc', 0, 0);
   XLSX.utils.book_append_sheet(wb, disc, 'Disclaimer');
 
+  /* Tab order follows the report: Cover, Disclaimer, Analytical Summary, statements, Notes. */
+  wb.SheetNames = ['Cover', 'Disclaimer', ...wb.SheetNames.filter(n => n !== 'Cover' && n !== 'Disclaimer')];
   if (_saveWorkbook(wb, _reportFileBase() + '-Management-Report.xlsx')) toast('Excel report downloaded');
 }
 
