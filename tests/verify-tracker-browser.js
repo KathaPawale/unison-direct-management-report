@@ -66,7 +66,7 @@ function row54Workbook(){
     expect: { roles: { bs: 'BS', bsComparative: 'BS_Comparative', plMonthly: 'P&L(Monthly)', plClass: 'P&l(Classwise)', notes: 'Notes' }, income: 12000, net: -1200, expenses: 13200,
       bank: 7000, months: 12, hasPrior: false, payroll: 9000, currentLiab: 1500, longLiab: 2500,
       zeroRows: ['Accounts Receivable', 'Dues & Subscriptions'], notes: ['Reconciled to bank statements', 'year-end bonus accrual'],
-      excelSheets: ['Balance Sheet', 'Balance Sheet — Comparative', 'Profit and Loss (Monthly)', 'Profit and Loss (by Class)'],
+      excelSheets: ['BS', 'BS_Comparative', 'P&L(Monthly)', 'P&l(Classwise)'],
       sections: ['bs', 'bsComparative', 'plMonthly', 'plClass'] } };
 }
 
@@ -96,7 +96,7 @@ function plutoWorkbook(){
     expect: { roles: { plComparative: 'PL', plPercent: 'PL (% Income)', tb: 'TrialBalance', ap: 'AP Aging Summary' }, income: 10000, net: 5605.2,
       hasPrior: true, priorIncome: 9000, months: 0,
       pctRows: { 'PL (% Income)': { 'Travel': '2.7%', 'Legal & Professional Fees': '1.3%', 'Net Income': '56.1%' } },
-      excelSheets: ['Profit and Loss (Comparative)', 'Profit and Loss (% of Income)', 'Trial Balance', 'AP Aging'],
+      excelSheets: ['PL', 'PL (% Income)', 'TrialBalance', 'AP Aging Summary'],
       tbAccounts: ['Checking', 'Accounts Payable', 'Rent'], apBuckets: ['Current', '1 - 30 Days', 'Older'], emptyAR: true,
       periods: { tb: 'As of December 31, 2025', plPercent: 'January – December 2025' },
       sections: ['bs', 'tb', 'plComparative', 'plPercent', 'ap'] } };
@@ -184,9 +184,9 @@ function plutoClientWorkbook(){
     expect: { roles: { plPercent: 'PL', plMonthly: 'PL_MoM', bs: 'BS', plComparative: 'PL_Comparative', bsComparative: 'BS_Comparative', ar: 'AR_Aging', ap: 'AP_Aging', tb: 'TrialBalance' },
       income: 576101.75, expenses: 144320.77, net: 12580.4, bank: 105205.55, hasPrior: true, priorIncome: 14781.95, months: 7, currentLiab: 241976.43, longLiab: 0,
       tbAccounts: ['Chase Bus Complete Chk #1861', 'Accounts Payable', 'Rent Expenses'], apBuckets: ['Current', '1 - 30 Days', '31 - 60 Days', '61 - 90 Days', 'Older'], emptyAR: true,
-      periods: { tb: 'As of July 31, 2026', ap: 'As of July 31, 2026', bs: 'As of July 31, 2026', plMonthly: 'January – July 2026' },
+      periods: { tb: 'As of July 31, 2026', ap: 'As of July 31, 2026', bs: 'As of July 31, 2026', plMonthly: 'For the month ended July 31, 2026' },
       pctRows: { 'PL': { 'Total Income': '100.0%', 'Gross Profit': '27.2%', 'Net Income': '2.2%', 'Claimant Surplus funds': '(2.4%)' } }, editorPct: 20,
-      excelSheets: ['Balance Sheet', 'Balance Sheet — Comparative', 'Trial Balance', 'Profit and Loss (Monthly)', 'Profit and Loss (Comparative)', 'Profit and Loss (% of Income)', 'AR Aging', 'AP Aging'],
+      excelSheets: ['BS', 'BS_Comparative', 'TrialBalance', 'PL_MoM', 'PL_Comparative', 'PL', 'AR_Aging', 'AP_Aging'],
       sections: ['bs', 'bsComparative', 'tb', 'plMonthly', 'plComparative', 'plPercent', 'ar', 'ap'] } };
 }
 
@@ -287,6 +287,10 @@ function chromiumPath(){
 function inspectPage(){
   const md = state.model;
   /* The app's own helper when it has one (older deployments do not). */
+  const tabOfPage = n => String(n || '').replace(/\bA\/([PR])\b/g, 'A$1').replace(/[\\\/?*\[\]:]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 31);
+  const firstHeads = {};
+  for (const n of Object.values(md.roles).filter(Boolean)) if (md.sheetModels[n])
+    firstHeads[tabOfPage(n)] = typeof window.firstColumnHeading === 'function' ? window.firstColumnHeading(md.sheetModels[n]) : 'Particulars';
   const isPercentRowLabel = typeof window.isPercentRowLabel === 'function' ? window.isPercentRowLabel
     : t => /^(percentage|percent|pct|%)\s*(of\s*)?(the\s*)?(grand\s*)?total$/i.test(String(t || '').trim());
   const out = { roles: md.roles, metrics: md.metrics, prior: md.prior, hasPrior: !!md.hasPrior, months: md.months.map(m => m.short),
@@ -294,7 +298,7 @@ function inspectPage(){
     expenseGroups: md.expenseGroups.map(g => ({ label: g.label, value: g.value, pct: g.pct })), expenseTotal: md.expenseTotal,
     liab: (md.liabilityBifurcation || []).map(x => ({ label: x.label, value: x.value, pct: x.pct })),
     composition: [...md.bsComposition.assets, ...md.bsComposition.liabEquity].map(x => ({ label: x.label, pct: x.pct })),
-    equityPct: (md.bsComposition.liabEquity.find(x => /equity/i.test(x.label)) || {}).pct ?? null };
+    equityPct: (md.bsComposition.liabEquity.find(x => /equity/i.test(x.label)) || {}).pct ?? null, firstHeads };
 
   /* Dashboard (portal) */
   goPage('dashboard');
@@ -438,6 +442,8 @@ function readXlsxFile(file){
 
 /* ---------- checks ---------- */
 
+/* The Excel tab of an uploaded sheet: its own name, made tab-safe as the app does ("A/R Aging" → "AR Aging"). */
+const tabOf = n => String(n || '').replace(/\bA\/([PR])\b/g, 'A$1').replace(/[\\\/?*\[\]:]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 31);
 const isPctLabel = t => /^(percentage|percent|pct|%)\s*(of\s*)?(the\s*)?(grand\s*)?total$/i.test(String(t || '').trim());
 
 function near(a, b, tol = 0.011){ return a !== null && a !== undefined && Math.abs(a - b) <= tol; }
@@ -482,8 +488,10 @@ function checkWorkbook(w, r, excel, pdf, errors){
   check(`${tag} Report order: PDF sections follow the requested order`, pageIds.join(',') === ORDER.filter(id => pageIds.includes(id)).join(','), pageIds.join(','));
   check(`${tag} Report order: Disclaimer is first and Notes appears in the TOC`, toc.length && /^1\. Management Purpose Disclaimer/.test(toc[0].text) && toc.some(t => /Notes to Financial Statements/.test(t.text)),
     toc.map(t => t.text).join(' | '));
-  if (r.finOrder.length >= 2 && r.finOrder.some(t => /Balance Sheet/.test(t)) && r.finOrder.some(t => /Profit and Loss/.test(t)))
-    check(`${tag} Row 15 portal shows Balance Sheet before Profit and Loss`, r.finOrder.findIndex(t => /Balance Sheet/.test(t)) < r.finOrder.findIndex(t => /Profit and Loss/.test(t)), r.finOrder.join(', '));
+  /* Headings are the uploaded sheets' own ("Profit & Loss", "Statement of Activities"), so match any P&L / BS wording. */
+  const BS_T = /balance sheet|financial position|financial condition|assets and liabilities/i, PL_T = /profit|loss|income statement|activities|operations|earnings/i;
+  if (r.finOrder.length >= 2 && r.finOrder.some(t => BS_T.test(t)) && r.finOrder.some(t => PL_T.test(t) && !BS_T.test(t)))
+    check(`${tag} Row 15 portal shows Balance Sheet before Profit and Loss`, r.finOrder.findIndex(t => BS_T.test(t)) < r.finOrder.findIndex(t => PL_T.test(t) && !BS_T.test(t)), r.finOrder.join(', '));
   const anchors = new Set(r.pages.map(p => p.anchor).filter(Boolean));
   check(`${tag} Row 39 every TOC entry links to its section page`, toc.every(t => anchors.has(t.href.slice(1))));
   check(`${tag} Row 39 TOC page numbers point at the section pages`, toc.every(t => {
@@ -563,8 +571,8 @@ function checkWorkbook(w, r, excel, pdf, errors){
 
   /* Row 13, 27: aging + cash basis */
   if (e.noAR) check(`${tag} Row 27 cash basis: no A/R anywhere in the report`, r.suppressAR && !r.pages.some(p => p.id === 'ar') && !r.pages.some(p => /5,205\.70/.test(p.text)));
-  if (r.roles.ar && !r.suppressAR) check(`${tag} Row 13 A/R aging in PDF and Excel`, r.pages.some(p => p.id === 'ar') && excel.sheets.some(s => s.name === 'AR Aging'));
-  if (r.roles.ap && !r.pages.every(p => p.id !== 'ap')) check(`${tag} Row 13 A/P aging in Excel`, excel.sheets.some(s => s.name === 'AP Aging'));
+  if (r.roles.ar && !r.suppressAR) check(`${tag} Row 13 A/R aging in PDF and Excel`, r.pages.some(p => p.id === 'ar') && excel.sheets.some(s => s.name === tabOf(r.roles.ar)));
+  if (r.roles.ap && !r.pages.every(p => p.id !== 'ap')) check(`${tag} Row 13 A/P aging in Excel`, excel.sheets.some(s => s.name === tabOf(r.roles.ap)));
 
   /* Row 16 / 40: notes */
   for (const n of e.notes || []) check(`${tag} Row 16 note "${n}" in the report`, page('notes').some(p => p.text.includes(n)));
@@ -582,8 +590,9 @@ function checkWorkbook(w, r, excel, pdf, errors){
 
   /* Row 26/28/43: monthly P&L keeps all months + Total on one page width */
   for (const p of page('plMonthly')){
-    const monthHeads = p.headers.filter(h => /^[A-Z][a-z]{2}( \d{4})?$/.test(h));
-    check(`${tag} Row 26 monthly P&L page carries every month and the Total`, monthHeads.length === r.months.length && p.headers.includes('Total'), p.headers.join(','));
+    /* Headings are shown as uploaded ("Jan 25", "January 2025", "TOTAL"). */
+    const monthHeads = p.headers.filter(h => /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?([ \-]?'?\d{2,4})?$/i.test(h.trim()));
+    check(`${tag} Row 26 monthly P&L page carries every month and the Total`, monthHeads.length === r.months.length && p.headers.some(h => /^total$/i.test(h.trim())), p.headers.join(','));
   }
 
   /* Row 43: the monthly P&L never splits its columns across pages and is printed landscape */
@@ -629,15 +638,18 @@ function checkWorkbook(w, r, excel, pdf, errors){
   if (!excel.ok) return;
   for (const s of e.excelSheets || []) check(`${tag} Rows 44-54 Excel sheet "${s}"`, excel.sheets.some(x => x.name === s), excel.sheets.map(x => x.name).join(', '));
   const stmts = excel.sheets.filter(s => !['Cover', 'Analytical Summary', 'Notes', 'Disclaimer'].includes(s.name));
-  const TAB_ORDER = ['Cover', 'Disclaimer', 'Analytical Summary', 'Profit and Loss (% of Income)', 'Profit and Loss (Monthly)', 'Profit and Loss (Comparative)',
-    'Balance Sheet', 'Balance Sheet — Comparative', 'AR Aging', 'AP Aging', 'Trial Balance', 'Notes', 'Profit and Loss', 'Profit and Loss (by Class)'];
+  /* Tabs keep the uploaded names, in report order by statement type. */
+  const TAB_ORDER = ['Cover', 'Disclaimer', 'Analytical Summary', ...['plPercent', 'plMonthly', 'plComparative', 'bs', 'bsComparative', 'ar', 'ap', 'tb'].map(k => tabOf(r.roles[k])),
+    'Notes', ...['pl', 'plClass'].map(k => tabOf(r.roles[k]))].filter(Boolean);
   const tabs = excel.sheets.map(x => x.name);
   check(`${tag} Report order: Excel tabs follow the requested order`, tabs.join('|') === TAB_ORDER.filter(t => tabs.includes(t)).join('|'), tabs.join(' | '));
   check(`${tag} Row 7 every statement cell has a border`, stmts.every(s => s.unbordered === 0), stmts.map(s => s.name + ':' + s.unbordered).join(','));
   check(`${tag} Row 25 every Excel amount has a number format and right alignment`, stmts.every(s => s.unformatted === 0), stmts.map(s => s.name + ':' + s.unformatted).join(','));
   check(`${tag} Row 41 every Excel sheet has a tab colour`, excel.sheets.every(s => s.tab), excel.sheets.filter(s => !s.tab).map(s => s.name).join(','));
   check(`${tag} Rows 42/47 statement sheets freeze rows 1-5 and column A in the file`, stmts.every(s => s.pane === 'B6'), stmts.map(s => s.name + ':' + s.pane).join(','));
-  check(`${tag} Row 47 row 5 is "Particulars" on the model statement sheets`, stmts.filter(s => !s.aging).every(s => s.a5 === 'Particulars'), stmts.map(s => s.name + ':' + s.a5).join(','));
+  /* Row 47: row 5 (frozen) is the column-heading row, with the uploaded first-column heading ("Particulars" when blank). */
+  check(`${tag} Row 47 row 5 is the column-heading row (uploaded first-column heading)`, stmts.filter(s => !s.aging).every(s => s.a5 && s.a5 === (r.firstHeads[s.name] || 'Particulars')),
+    stmts.map(s => s.name + ':' + s.a5 + '/' + (r.firstHeads[s.name] || 'Particulars')).join(','));
   check(`${tag} Rows 48/51 no "Amounts in US Dollars" under the heading`, stmts.every(s => !/US Dollars/.test(s.a3)));
   check(`${tag} Row 23 Excel heading rows centred`, stmts.filter(s => !s.aging).every(s => s.centered), stmts.filter(s => !s.aging && !s.centered).map(s => s.name).join(','));
   check(`${tag} Rows 44/45 every Excel amount uses the accounting format ($ negatives in parentheses)`, stmts.every(s => !s.nonAccounting.length),

@@ -115,7 +115,8 @@ for (const [name, sheets] of Object.entries(layouts)){
   check(`${name}: report workbook downloaded`, downloads.length === 1 && downloads[0].bytes instanceof Uint8Array);
   if (!downloads.length) continue;
   const xmls = sheetXml(downloads[0].bytes);
-  const pctTab = Object.keys(xmls).find(n => /% of Income/.test(n));
+  /* Excel tabs keep the uploaded sheet names. */
+  const pctTab = Object.keys(xmls).find(n => n === pctName);
   check(`${name}: Excel has the % of Income sheet`, !!pctTab);
   check(`${name}: Excel % of Income sheet has 60.00% as a number`, pctTab && /<v>0\.6<\/v>/.test(xmls[pctTab]));
   /* Every statement sheet: heading rows 1-5 frozen (row 5 = "Particulars"), first column frozen. */
@@ -125,15 +126,18 @@ for (const [name, sheets] of Object.entries(layouts)){
       /xSplit="1"/.test(pane(xml)) && /ySplit="5"/.test(pane(xml)) && /topLeftCell="B6"/.test(pane(xml)) && /state="frozen"/.test(pane(xml)));
     check(`${name}: "${tab}" prints one page wide, centred`, /<pageSetUpPr fitToPage="1"\/>/.test(xml) && /<pageSetup [^>]*fitToWidth="1" fitToHeight="0"/.test(xml) && /<printOptions horizontalCentered="1"\/>/.test(xml));
     check(`${name}: "${tab}" first column fits its longest account name`, (() => { const m = xml.match(/<col min="1" max="1" width="([\d.]+)"/); return m && +m[1] >= 32; })());
-    check(`${name}: "${tab}" row 5 is Particulars`, /<c r="A5"[^>]*><v>Particulars<\/v><\/c>/.test(xml));
+    /* Row 5 is the column-heading row, with the uploaded first-column heading ("Particulars" when it is blank). */
+    const up = (sheets[tab] || [])[api.state.model.sheetModels[tab] ? api.state.model.sheetModels[tab].headerRow : -1] || [];
+    const wantA5 = String(up[0] || '').trim() || 'Particulars';
+    check(`${name}: "${tab}" row 5 is its column-heading row ("${wantA5}")`, new RegExp('<c r="A5"[^>]*><v>' + wantA5.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '<\\/v><\\/c>').test(xml));
   }
   for (const [tab, xml] of Object.entries(xmls))
     check(`${name}: "${tab}" has a tab color`, /^<\?xml[^>]*>\s*<worksheet\b[^>]*><sheetPr><tabColor rgb="FF[0-9A-F]{6}"\/>(<pageSetUpPr [^>]*\/>)?<\/sheetPr>/.test(xml));
   if (sheets.TrialBalance){
     check(`${name}: every uploaded sheet is captured`, Object.keys(sheets).every(n => Object.values(md.roles).includes(n)));
     /* The full-period "Profit and Loss" repeats the % of Income statement's amounts, so only the latter is printed. */
-    check(`${name}: no duplicate "Profit and Loss" sheet next to "% of Income"`, !('Profit and Loss' in xmls) && Object.keys(xmls).some(n => /% of Income/.test(n)));
-    for (const t of ['Trial Balance', 'Profit and Loss (% of Income)', 'Profit and Loss (Monthly)', 'Profit and Loss (Comparative)', 'Balance Sheet — Comparative'])
+    check(`${name}: no duplicate full-period "PL" sheet next to "PL (% Income)"`, !('PL' in xmls) && 'PL (% Income)' in xmls);
+    for (const t of ['TrialBalance', 'PL (% Income)', 'PL_MoM', 'PL_Comparative', 'BS_Comparative'])
       check(`${name}: Excel has "${t}"`, t in xmls);
   }
   { const zip = XLSX.CFB.read(downloads[0].bytes, { type: 'array' });
@@ -171,7 +175,7 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
   check('Strict rule: its figures reach the dashboard (income 1,000, net 600)', md.metrics.income === 1000 && md.metrics.net === 600);
   check('Strict rule: the report has the "Profit and Loss (% of Income)" section', api.reportSections().some(x => x.id === 'plPercent'));
   downloads.length = 0; api.downloadReportExcel();
-  check('Strict rule: the Excel file has the "% of Income" sheet', downloads.length === 1 && Object.keys(sheetXml(downloads[0].bytes)).some(n => /% of Income/.test(n)));
+  check('Strict rule: the Excel file has the "% of Income" sheet under its uploaded name', downloads.length === 1 && 'PL (% Income)' in sheetXml(downloads[0].bytes));
 }
 /* A "% Change" column followed by a "Total Income" line is not a "% of Total Income" title. */
 {
@@ -225,7 +229,7 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
   const sheets = { 'PL': [...head('Profit and Loss'), ['', 'Total'], ...body(false)], 'BS': bs, 'Cash Flow': cashFlow, 'GeneralLedger': gl };
   api.state.sheets = sheets; const md = api.parseWorkbook(sheets); api.state.model = md;
   const secs = api.reportSections();
-  check('Strict rule: an unrecognised sheet with figures ("Cash Flow") is its own PDF section', secs.some(x => x.sheet === 'Cash Flow' && x.title === 'Cash Flow'));
+  check('Strict rule: an unrecognised sheet with figures ("Cash Flow") is its own PDF section, under its own heading', secs.some(x => x.sheet === 'Cash Flow' && x.title === 'Statement of Cash Flows'));
   check('Strict rule: transaction detail (General Ledger) is not printed', !secs.some(x => x.sheet === 'GeneralLedger'));
   downloads.length = 0; api.downloadReportExcel();
   const xmls = downloads.length ? sheetXml(downloads[0].bytes) : {};
@@ -258,6 +262,55 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
     check(`Non-profit (${label}): Net Assets read as equity (21,026.16)`, Math.abs(md.metrics.equity - 21026.16) < 0.01);
     check(`Non-profit (${label}): the report has the P&L section`, api.reportSections().some(x => x.sheet === tab));
   }
+}
+
+/* Strict rule: every statement keeps its uploaded sheet's own heading in the PDF / TOC and the Excel heading row. */
+{
+  const act = [...head('Statement of Activities'), ['', 'Total'], ['Revenue'], ['Contributions', 1000], ['Total Revenue', 1000], ['Expenses'], ['Programs', 400],
+    ['Total Expenses', 400], ['Change in Net Assets', 600]];
+  const sfp = [...head('Statement of Financial Position'), ['', 'Total'], ['Assets'], ['Checking', 500], ['Total Assets', 500], ['Liabilities and Net Assets'],
+    ['Accounts Payable', 100], ['Total Liabilities', 100], ['Net Assets'], ['Net Assets without Donor Restrictions', 400], ['Total Net Assets', 400], ['Total Liabilities and Net Assets', 500]];
+  const noTitle = [['', 'Total'], ['Assets'], ['Checking', 500], ['Total Assets', 500], ['Liabilities and Equity'], ['Accounts Payable', 100], ['Total Liabilities', 100],
+    ['Equity'], ['Retained Earnings', 400], ['Total Equity', 400], ['Total Liabilities and Equity', 500]];
+  for (const [label, sheets, want] of [['titled statements', { 'PL': act, 'BS': sfp }, { PL: 'Statement of Activities', BS: 'Statement of Financial Position' }],
+                                      ['no title rows', { 'PL': act, 'Sheet2': noTitle }, { PL: 'Statement of Activities', Sheet2: 'Balance Sheet' }]]){
+    api.state.sheets = sheets; api.state.client = 'Pluto Asset Recovery'; const md = api.parseWorkbook(sheets); api.state.model = md;
+    const secs = api.reportSections();
+    downloads.length = 0; api.downloadReportExcel();
+    const zip = XLSX.CFB.read(downloads[0].bytes, { type: 'array' });
+    const back = XLSX.read(downloads[0].bytes, { type: 'array' });
+    for (const [tab, title] of Object.entries(want)){
+      check(`Source heading (${label}): "${tab}" is "${title}" in the PDF / TOC`, secs.some(x => x.sheet === tab && x.title === title));
+      check(`Source heading (${label}): "${tab}" is "${title}" in the Excel heading row`, back.SheetNames.some(n => back.Sheets[n].A2 && back.Sheets[n].A2.v === title));
+    }
+  }
+  /* Three P&L sheets with the same heading keep it, with the variant added so the TOC is not ambiguous. */
+  const same = t => [['Pluto Asset Recovery'], ['Income Statement (Profit and Loss)'], ['For the 7 months ended July 31, 2026'], []];
+  const sheets = { 'PL': [...same(), ['', 'Total', '% of Income'], ...body(true)], 'PL_MoM': [...same(), ['', 'Jan 2026', 'Feb 2026', 'Total'], ...body(false).map(r => r.length > 1 ? [r[0], r[1] / 2, r[1] / 2, r[1]] : r)],
+    'PL_Comparative': [...same(), ['', 'Jan-Jul 2026', 'Jan-Jul 2025'], ...body(false).map(r => r.length > 1 ? [r[0], r[1], r[1]] : r)], 'BS': bs };
+  api.state.sheets = sheets; api.state.model = api.parseWorkbook(sheets);
+  const t = api.reportSections().map(x => x.title);
+  check('Same heading on three P&L sheets: kept exactly as uploaded', t.filter(x => x === 'Income Statement (Profit and Loss)').length === 3);
+}
+
+/* Strict rule: nothing the user uploaded is renamed — column headings, the first-column heading, the period line and the
+ * Excel tab names come back exactly as uploaded. */
+{
+  const mom = [['Pluto Asset Recovery'], ['Income Statement (Profit and Loss)'], ['For the month ended July 31, 2026'], [],
+    ['Account', 'Jan-26', 'Feb-26', 'Total'], ['Income'], ['Sales', 500, 500, 1000], ['Total Income', 500, 500, 1000], ['Expenses'], ['Rent', 200, 200, 400],
+    ['Total Expenses', 200, 200, 400], ['Net Income', 300, 300, 600]];
+  const sheets = { 'PL_MoM': mom, 'BS': bs };
+  api.state.sheets = sheets; api.state.client = 'Pluto Asset Recovery'; const md = api.parseWorkbook(sheets); api.state.model = md;
+  const parts = api.reportTableParts(md.sheetModels.PL_MoM, {});
+  check('As uploaded: PDF column headings "Account", "Jan-26", "Feb-26", "Total"', /<th class="lbl">Account<\/th><th>Jan-26<\/th><th>Feb-26<\/th><th>Total<\/th>/.test(parts.theadHtml));
+  check('As uploaded: period line "For the month ended July 31, 2026"', api.reportSections().some(x => x.sheet === 'PL_MoM') &&
+    /For the month ended July 31, 2026/.test(ctx.statementPeriodText ? ctx.statementPeriodText(md.sheetModels.PL_MoM) : vm.runInContext('statementPeriodText(state.model.sheetModels.PL_MoM)', ctx)));
+  downloads.length = 0; api.downloadReportExcel();
+  const back = XLSX.read(downloads[0].bytes, { type: 'array' });
+  check('As uploaded: Excel tabs keep the uploaded names ("PL_MoM", "BS")', back.SheetNames.includes('PL_MoM') && back.SheetNames.includes('BS'));
+  const ws = back.Sheets.PL_MoM || {};
+  check('As uploaded: Excel heading, column headings and period line', ws.A2 && ws.A2.v === 'Income Statement (Profit and Loss)' && ws.A5 && ws.A5.v === 'Account' &&
+    ws.B5 && ws.B5.v === 'Jan-26' && ws.C5 && ws.C5.v === 'Feb-26' && ws.A3 && /For the month ended July 31, 2026/.test(ws.A3.v));
 }
 
 console.log(`${pass + fail} assertions, ${pass} pass, ${fail} fail`);

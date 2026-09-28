@@ -37,17 +37,10 @@ function watermarkHtml(){
 /* Balance Sheet and aging reports are "as of" a date; P&L statements cover a period. */
 function statementPeriodText(sm){
   const md = state.model;
-  /* Each statement shows the period its own worksheet states (a Trial Balance "As of …", a P&L "For the 7 months
-   * ended …"). A month-by-month sheet titled "For the month ended …" but holding several months shows its month range. */
+  /* Each statement shows the period line its own worksheet states, as uploaded ("As of July 31, 2026", "For the month
+   * ended July 31, 2026"); only the dash spacing is normalised (row 5). */
   const own = sm ? sheetOwnPeriod(state.sheets[sm.name] || [], sm) : '';
-  if (own){
-    const months = sm.cols.filter(c => c.type === 'month' && c.key !== null && c.key !== undefined);
-    if (sm.role === 'plMonthly' && months.length > 1 && /^for the month ended\b/i.test(own)){
-      const a = months.reduce((x, y) => (y.key < x.key ? y : x)), b = months.reduce((x, y) => (y.key > x.key ? y : x));
-      return a.year === b.year ? `${MONTH_FULL[a.m]} – ${MONTH_FULL[b.m]} ${b.year}` : `${MONTH_FULL[a.m]} ${a.year} – ${MONTH_FULL[b.m]} ${b.year}`;
-    }
-    return formatPeriodText(own);
-  }
+  if (own) return formatPeriodText(own);
   if (sm && ['ar', 'ap'].includes(sm.role)){
     const rows = (state.sheets[sm.name] || []).slice(0, Math.max(0, sm.headerRow));
     for (const row of rows) for (const c of (row || [])){
@@ -80,6 +73,13 @@ function sectionHead(no, title, sub, continued = false){
 
 /* Rows 48/51: Heading (3) — the period line under each statement title — shows only the period.
  * The currency is stated once on the cover, so it is not repeated here. */
+/* The uploaded first-column heading ("Account", "Particulars", "Description"), or "Particulars" when it is blank. */
+function firstColumnHeading(sm){
+  const row = sm && sm.headerRow >= 0 ? (state.sheets[sm.name] || [])[sm.headerRow] || [] : [];
+  const t = (sm ? sm.cols.filter(c => c.type === 'label').map(c => cellText(row[c.idx])).filter(Boolean) : []).join(' ');
+  return t || 'Particulars';
+}
+
 function tableSectionSub(sm){
   return statementPeriodText(sm);
 }
@@ -117,7 +117,9 @@ function formatReportCell(v, colType, opts = {}){
   return escapeHtml(s);
 }
 
+/* Column headings are shown exactly as uploaded; a generated label is used only for a column with no heading. */
 function _headLabel(c){
+  if (c.rawLabel) return c.rawLabel;
   if (c.label) return c.label;
   if (c.type === 'current') return state.model && state.model.currentLabel !== 'Current Period' ? state.model.currentLabel : 'Amount';
   if (c.type === 'prior') return 'Prior Period';
@@ -134,7 +136,7 @@ function reportTableParts(sm, { forExport = false, cols = null, compact = false,
   let valPct = showCols.length ? (100 - labelPct) / showCols.length : 0;
   if (valPct > 22){ valPct = 22; labelPct = 100 - valPct * showCols.length; }
   const colgroup = `<colgroup><col style="width:${labelPct}%">` + showCols.map(() => `<col style="width:${valPct.toFixed(3)}%">`).join('') + '</colgroup>';
-  const thead = '<tr><th class="lbl">Particulars</th>' + showCols.map(c =>
+  const thead = '<tr><th class="lbl">' + escapeHtml(firstColumnHeading(sm)) + '</th>' + showCols.map(c =>
     `<th>${escapeHtml(_headLabel(c))}</th>`).join('') + '</tr>';
 
   const doSkip = skipZeros === null ? forExport : !!skipZeros;
@@ -584,10 +586,44 @@ const REPORT_STATEMENT_ORDER = [
 ];
 const REPORT_TRAILING_ORDER = [['pl', 'Profit and Loss'], ['plClass', 'Profit and Loss — by Class']];
 
+/* Strict rule: a statement keeps the heading its uploaded sheet gives it ("Statement of Activities" stays "Statement of
+ * Activities", never "Profit and Loss") in the PDF, Table of Contents, Excel and the Financial Statements page. The title is
+ * the line above the column headings that names the statement — never the company name or the period line. */
+const SOURCE_TITLE_WORDS = /statement|profit|loss|\bp ?(&|and) ?l\b|\bpnl\b|income|balance|trial|ag(e)?ing|aged|activities|financial position|operations|earnings|revenue|expenditure|\baccount\b|debtors|creditors|receivable|payable|cash flow|position|condition|net assets|summary|report/i;
+function sourceStatementTitle(sm){
+  if (!sm) return '';
+  const rows = state.sheets[sm.name] || [];
+  const top = Math.min(sm.headerRow >= 0 ? sm.headerRow : 6, 8, rows.length);
+  const client = normLabel(state.client || '');
+  for (let r = 0; r < top; r++){
+    for (const v of rows[r] || []){
+      if (typeof v !== 'string') continue;
+      const t = cellText(v).replace(/\s+/g, ' ');
+      if (!t || t.length > 90 || isMetaText(t) || _periodLike(t) || parseAmount(t) !== null) continue;
+      if (client && normLabel(t) === client) continue;
+      if (SOURCE_TITLE_WORDS.test(t)) return t;
+    }
+  }
+  return '';
+}
+
+/* Section title for each captured statement: the sheet's own heading exactly as uploaded, else the standard name. */
+function reportStatementTitles(md){
+  const out = {};
+  if (!md) return out;
+  const all = [...REPORT_STATEMENT_ORDER, ...REPORT_TRAILING_ORDER];
+  for (const [role, std] of all){
+    const sm = md.roles[role] ? md.sheetModels[md.roles[role]] : null;
+    out[role] = sourceStatementTitle(sm) || std;
+  }
+  return out;
+}
+
 function _roleSection(md, role, title){
   if (!md.roles[role] || skipReportSection(md, role)) return null;
   if ((role === 'ar' && md.suppressAR) || (role === 'ap' && md.suppressAP)) return null;
   const ag = role === 'ar' ? md.arAging : role === 'ap' ? md.apAging : null;
+  title = reportStatementTitles(md)[role] || title;
   return { id: role, title, sheet: md.roles[role], ...(role === 'ar' || role === 'ap' ? { aging: ag && ag.fromDetail ? ag : null } : {}) };
 }
 
@@ -628,7 +664,7 @@ function reportSections(){
   sections.push({ id: 'notes', title: 'Notes to Financial Statements' });
   if (md){
     for (const [role, title] of REPORT_TRAILING_ORDER){ const s = _roleSection(md, role, title); if (s) sections.push(s); }
-    reportExtraSheets(md).forEach((n, i) => sections.push({ id: 'extra' + (i + 1), title: n, sheet: n }));
+    reportExtraSheets(md).forEach((n, i) => sections.push({ id: 'extra' + (i + 1), title: sourceStatementTitle(md.sheetModels[n]) || n, sheet: n }));
   }
   return sections;
 }

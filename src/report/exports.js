@@ -341,7 +341,7 @@ function _modelSheetToWs(sm, title){
     _wsSetCell(ws, 2, c, '', XL_STYLES.subtitle, null, { border: false });
   }
   const HEAD_R = 4;
-  _wsSetCell(ws, HEAD_R, 0, 'Particulars', { ...XL_STYLES.headL, alignment: { horizontal: 'left', vertical: 'center' } });
+  _wsSetCell(ws, HEAD_R, 0, firstColumnHeading(sm), { ...XL_STYLES.headL, alignment: { horizontal: 'left', vertical: 'center' } });
   cols.forEach((c, i) => _wsSetCell(ws, HEAD_R, i + 1, _headLabel(c), { ...XL_STYLES.head, alignment: { horizontal: 'center', vertical: 'center', wrapText: true } }));
 
   /* Rows 34 / 52: each percent column keeps one scale (fractions or whole percents) for every row. */
@@ -520,7 +520,11 @@ function downloadReportExcel(){
 
   /* Financial statement sheets */
   /* Same statements as the PDF (REPORT_STATEMENT_ORDER, REPORT_TRAILING_ORDER); tab order is set by reportTabOrder below. */
-  for (const [role, title] of [...REPORT_STATEMENT_ORDER, ...REPORT_TRAILING_ORDER]){
+  const titles = reportStatementTitles(md);   // each statement keeps its uploaded sheet's heading
+  const trailingTabs = [];
+  for (const [role, stdTitle] of [...REPORT_STATEMENT_ORDER, ...REPORT_TRAILING_ORDER]){
+    const title = titles[role] || stdTitle;
+    const isTrailing = REPORT_TRAILING_ORDER.some(([r]) => r === role);
     const name = md.roles[role];
     if (!name || skipReportSection(md, role)) continue;
     if ((role === 'ar' && md.suppressAR) || (role === 'ap' && md.suppressAP)) continue;
@@ -544,22 +548,24 @@ function downloadReportExcel(){
       ws['!cols'] = [{ wch: Math.max(34, ...ag.buckets.map(b => String(b.label).length + 3)) }, { wch: 16 }, { wch: 12 }];
       ws['!pageSetup'] = { landscape: false, titleRows: 5 };
       _decorateSheet(ws, role, 5, 1);
-      XLSX.utils.book_append_sheet(wb, ws, _sheetNameSafe(wb, ROLE_LABELS[role] || name));
+      ws['!trailing'] = isTrailing; XLSX.utils.book_append_sheet(wb, ws, _sheetNameSafe(wb, name));
       continue;
     }
     const modelWs = _modelSheetToWs(md.sheetModels[name], title);
     if (role === 'tb'){
       const tbWs = modelWs;
       _decorateSheet(tbWs, 'tb', 5, 1);
-      XLSX.utils.book_append_sheet(wb, tbWs, _sheetNameSafe(wb, ROLE_LABELS[role] || name));
+      tbWs['!trailing'] = isTrailing; XLSX.utils.book_append_sheet(wb, tbWs, _sheetNameSafe(wb, name));
     } else {
-      XLSX.utils.book_append_sheet(wb, modelWs, _sheetNameSafe(wb, ROLE_LABELS[role] || name));
+      modelWs['!trailing'] = isTrailing; XLSX.utils.book_append_sheet(wb, modelWs, _sheetNameSafe(wb, name));
     }
   }
   /* Every other worksheet with figures, as in the PDF (reportExtraSheets). */
   for (const n of reportExtraSheets(md)){
-    const ws = _modelSheetToWs(md.sheetModels[n], n);
-    XLSX.utils.book_append_sheet(wb, ws, _sheetNameSafe(wb, n));
+    const ws = _modelSheetToWs(md.sheetModels[n], sourceStatementTitle(md.sheetModels[n]) || n);
+    const tab = _sheetNameSafe(wb, n);
+    XLSX.utils.book_append_sheet(wb, ws, tab);
+    trailingTabs.push(tab);
   }
 
   /* Notes + disclaimer */
@@ -611,11 +617,12 @@ function downloadReportExcel(){
   _decorateSheet(disc, 'disc', 0, 0);
   XLSX.utils.book_append_sheet(wb, disc, 'Disclaimer');
 
-  const reportTabOrder = ['Cover', 'Disclaimer', 'Analytical Summary', 'Profit and Loss (% of Income)',
-    'Profit and Loss (Monthly)', 'Profit and Loss (Comparative)', 'Balance Sheet', 'Balance Sheet — Comparative',
-    'AR Aging', 'AP Aging', 'Trial Balance', 'Notes', 'Profit and Loss', 'Profit and Loss (by Class)'];
-  wb.SheetNames = [...reportTabOrder.filter(name => wb.SheetNames.includes(name)),
-    ...wb.SheetNames.filter(name => !reportTabOrder.includes(name))];
+  /* Tabs keep the uploaded sheet names, in report order: Cover, Disclaimer, Analytical Summary, the statements, Notes,
+   * then a full-period P&L, a P&L by Class and other sheets (as in the PDF). */
+  const own = new Set(['Cover', 'Disclaimer', 'Analytical Summary', 'Notes']);
+  const statementTabs = wb.SheetNames.filter(n => !own.has(n));
+  const trailing = statementTabs.filter(n => trailingTabs.includes(n) || wb.Sheets[n]['!trailing']);
+  wb.SheetNames = ['Cover', 'Disclaimer', 'Analytical Summary', ...statementTabs.filter(n => !trailing.includes(n)), 'Notes', ...trailing];
   if (_saveWorkbook(wb, _reportFileBase() + '-Management-Report.xlsx')) toast('Excel report downloaded');
 }
 

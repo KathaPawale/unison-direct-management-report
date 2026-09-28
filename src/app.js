@@ -187,22 +187,23 @@ function statementViewHtml(sm){
 function renderStatements(){
   const md = state.model;
   const get = role => md && md.roles[role] ? md.sheetModels[md.roles[role]] : null;
+  const titles = reportStatementTitles(md);   // the uploaded sheet's own heading, as in the PDF and Excel
   const head = (title, sm) => `<div class="stmt-heading"><div class="stmt-company">${escapeHtml(state.client)}</div>` +
     `<div class="stmt-title">${escapeHtml(title)}</div><div class="stmt-period">${escapeHtml(statementPeriodText(sm))} · Amounts in US Dollars ($)</div></div>`;
   const pl = get('plMonthly') || get('pl') || get('plComparative');
-  $('#bsView').innerHTML = (get('bs') ? head('Balance Sheet', get('bs')) : '') + statementViewHtml(get('bs'));
-  $('#plView').innerHTML = (pl ? head(pl.role === 'plMonthly' ? 'Profit and Loss — Monthly' : 'Profit and Loss', pl) : '') + statementViewHtml(pl);
+  $('#bsView').innerHTML = (get('bs') ? head(titles.bs || 'Balance Sheet', get('bs')) : '') + statementViewHtml(get('bs'));
+  $('#plView').innerHTML = (pl ? head(titles[pl.role] || (pl.role === 'plMonthly' ? 'Profit and Loss — Monthly' : 'Profit and Loss'), pl) : '') + statementViewHtml(pl);
   $('#plCompView').innerHTML = md && md.roles.plComparative && md.roles.plMonthly
-    ? head('Profit and Loss — Comparative', get('plComparative')) + statementViewHtml(get('plComparative')) : '';
+    ? head(titles.plComparative || 'Profit and Loss — Comparative', get('plComparative')) + statementViewHtml(get('plComparative')) : '';
   /* Row 54: every captured statement is on this page, in report order. */
   const extra = [['bsComparative', 'Balance Sheet — Comparative'], ['tb', 'Trial Balance'], ...(pl && pl.role !== 'pl' && get('pl') ? [['pl', 'Profit and Loss']] : []),
                  ['plPercent', 'Profit and Loss (% of Income)'], ['plClass', 'Profit and Loss — by Class']];
   const extraBox = $('#extraViews');
   if (extraBox) extraBox.innerHTML = extra.filter(([role]) => get(role)).map(([role, title]) =>
-    `<div class="card" style="margin-top:18px">${head(title, get(role))}${statementViewHtml(get(role))}</div>`).join('');
+    `<div class="card" style="margin-top:18px">${head(titles[role] || title, get(role))}${statementViewHtml(get(role))}</div>`).join('');
   const agingView = (role, ag, suppressed) => {
     if (suppressed) return '<div class="empty">Not applicable — cash-basis client with no balance in the Balance Sheet.</div>';
-    if (ag && ag.fromDetail) return head(role === 'ar' ? 'A/R Aging Summary' : 'A/P Aging Summary', get(role)) + agingTableHtml(ag);
+    if (ag && ag.fromDetail) return head(titles[role] || (role === 'ar' ? 'A/R Aging Summary' : 'A/P Aging Summary'), get(role)) + agingTableHtml(ag);
     return statementViewHtml(get(role));
   };
   $('#arView').innerHTML = agingView('ar', md && md.arAging, md && md.suppressAR);
