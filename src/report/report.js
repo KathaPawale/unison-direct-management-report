@@ -646,13 +646,17 @@ function reportStatementTitles(md){
     out[role] = sheetHeading(sm, std);
   }
   for (const n of reportExtraSheets(md)) out['sheet:' + n] = sheetHeading(md.sheetModels[n], n);
-  /* Two or more sheets with the same heading ("Statement Activity" on both "Statement of Activity" and "Class wise SOA"):
-   * each takes its tab name instead, so every statement is told apart by the name the user gave it. */
+  /* Two or more sheets with the same heading ("Balance Sheet" on both "BS" and "BS_Comparative"): each shows its heading
+   * followed by its sheet name — "Balance Sheet (BS)", "Balance Sheet (BS_Comparative)" — so every statement keeps its
+   * heading and is told apart by the name the user gave it. A generic tab ("Sheet1") adds nothing. */
   const sheetOf = k => k.startsWith('sheet:') ? k.slice(6) : md.roles[k];
   const keys = Object.keys(out).filter(k => sheetOf(k));
   const count = {};
   for (const k of keys) count[normLabel(out[k])] = (count[normLabel(out[k])] || 0) + 1;
-  for (const k of keys) if (count[normLabel(out[k])] > 1 && !isGenericTabName(sheetOf(k))) out[k] = cellText(sheetOf(k));
+  for (const k of keys){
+    const tab = cellText(sheetOf(k));
+    if (count[normLabel(out[k])] > 1 && !isGenericTabName(tab) && normLabel(tab) !== normLabel(out[k])) out[k] = `${out[k]} (${tab})`;
+  }
   return out;
 }
 
