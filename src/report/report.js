@@ -646,16 +646,27 @@ function reportStatementTitles(md){
     out[role] = sheetHeading(sm, std);
   }
   for (const n of reportExtraSheets(md)) out['sheet:' + n] = sheetHeading(md.sheetModels[n], n);
-  /* Two or more sheets with the same heading ("Balance Sheet" on both "BS" and "BS_Comparative"): each shows its heading
-   * followed by its sheet name — "Balance Sheet (BS)", "Balance Sheet (BS_Comparative)" — so every statement keeps its
-   * heading and is told apart by the name the user gave it. A generic tab ("Sheet1") adds nothing. */
+  /* Strict heading rule. The heading is always shown. When several printed statements share a heading, the first one (in
+   * report order) shows the heading alone and every later one shows the heading followed by its sheet name:
+   * "Balance Sheet", "Balance Sheet (BS_Comparative)". Titles are then guaranteed unique and to start with the heading. */
   const sheetOf = k => k.startsWith('sheet:') ? k.slice(6) : md.roles[k];
-  const keys = Object.keys(out).filter(k => sheetOf(k));
-  const count = {};
-  for (const k of keys) count[normLabel(out[k])] = (count[normLabel(out[k])] || 0) + 1;
+  const printed = k => {
+    if (k.startsWith('sheet:')) return true;
+    if (!md.roles[k] || skipReportSection(md, k)) return false;
+    return !((k === 'ar' && md.suppressAR) || (k === 'ap' && md.suppressAP));
+  };
+  const keys = Object.keys(out).filter(k => sheetOf(k) && printed(k));
+  const used = new Set();
   for (const k of keys){
-    const tab = cellText(sheetOf(k));
-    if (count[normLabel(out[k])] > 1 && !isGenericTabName(tab) && normLabel(tab) !== normLabel(out[k])) out[k] = `${out[k]} (${tab})`;
+    const heading = out[k];
+    let title = heading;
+    if (used.has(normLabel(title))){
+      const tab = cellText(sheetOf(k));
+      title = `${heading} (${tab})`;
+      for (let n = 2; used.has(normLabel(title)); n++) title = `${heading} (${tab} ${n})`;
+    }
+    used.add(normLabel(title));
+    out[k] = title;
   }
   return out;
 }
@@ -709,6 +720,14 @@ function reportSections(){
   }
   /* Notes are always the last section. */
   sections.push({ id: 'notes', title: notesHeading(md) });
+  /* Strict rule, final guard: no two sections of the report (and so of the TOC and the Excel headings) share a title. */
+  const seen = new Set();
+  for (const sec of sections){
+    if (!sec.sheet || !seen.has(normLabel(sec.title))){ seen.add(normLabel(sec.title)); continue; }
+    let t = `${sec.title} (${cellText(sec.sheet)})`;
+    for (let n = 2; seen.has(normLabel(t)); n++) t = `${sec.title} (${cellText(sec.sheet)} ${n})`;
+    sec.title = t; seen.add(normLabel(t));
+  }
   return sections;
 }
 
