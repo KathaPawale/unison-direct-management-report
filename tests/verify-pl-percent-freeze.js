@@ -290,8 +290,8 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
     'PL_Comparative': [...same(), ['', 'Jan-Jul 2026', 'Jan-Jul 2025'], ...body(false).map(r => r.length > 1 ? [r[0], r[1], r[1]] : r)], 'BS': bs };
   api.state.sheets = sheets; api.state.model = api.parseWorkbook(sheets);
   const t = api.reportSections().map(x => x.title);
-  check('Same heading on three P&L sheets: heading + sheet name', ['Income Statement (Profit and Loss) (PL)', 'Income Statement (Profit and Loss) (PL_MoM)',
-    'Income Statement (Profit and Loss) (PL_Comparative)'].every(x => t.includes(x)));
+  check('Same heading on three P&L sheets: the first shows the heading, later ones heading + sheet name', ['Income Statement (Profit and Loss)',
+    'Income Statement (Profit and Loss) (PL_MoM)', 'Income Statement (Profit and Loss) (PL_Comparative)'].every(x => t.includes(x)) && !t.includes('Income Statement (Profit and Loss) (PL)'));
 }
 
 /* Strict rule: nothing the user uploaded is renamed — column headings, the first-column heading, the period line and the
@@ -336,8 +336,8 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
   }
 }
 
-/* Greenwood Seneca Foundation: "Statement of Activity" and "Class wise SOA" are both titled "Statement Activity", so each
- * shows the heading + its sheet name; "Statement of Financial Position" keeps its own title. */
+/* Greenwood Seneca Foundation: "Statement of Activity" and "Class wise SOA" are both titled "Statement Activity": the first
+ * shows the heading, the second the heading + its sheet name; "Statement of Financial Position" keeps its own title. */
 {
   const T = t => [['Greenwood Seneca Foundation'], [t], ['January-August, 2026'], []];
   const sfp = [...T('Statement of Financial Position'), ['', 'As of Aug 31, 2026'], ['Assets'], ['Checking', 21550.15], ['Security deposits', 100], ['Total for Assets', 21650.15],
@@ -357,15 +357,47 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
   check('Greenwood: Statement of Activity is the P&L, Class wise SOA the P&L by Class, the position statement the Balance Sheet',
     [md.roles.pl, md.roles.plComparative].includes('Statement of Activity') && md.roles.plClass === 'Class wise SOA' && md.roles.bs === 'Statement of Financial Position');
   const secs = api.reportSections();
-  for (const [tab, title] of [['Statement of Financial Position', 'Statement of Financial Position'], ['Statement of Activity', 'Statement Activity (Statement of Activity)'],
+  for (const [tab, title] of [['Statement of Financial Position', 'Statement of Financial Position'], ['Statement of Activity', 'Statement Activity'],
                               ['Class wise SOA', 'Statement Activity (Class wise SOA)']])
     check(`Greenwood: "${tab}" heading is "${title}"`, secs.some(x => x.sheet === tab && x.title === title));
   check('Greenwood: income 22,739.33 and net 20,528.38', Math.abs(md.metrics.income - 22739.33) < 0.01 && Math.abs(md.metrics.net - 20528.38) < 0.01);
   downloads.length = 0; api.downloadReportExcel();
   const back = XLSX.read(downloads[0].bytes, { type: 'array' });
-  check('Greenwood: Excel headings "Statement Activity (Statement of Activity)" / "Statement Activity (Class wise SOA)"',
-    back.Sheets['Statement of Activity'] && back.Sheets['Statement of Activity'].A2.v === 'Statement Activity (Statement of Activity)' &&
+  check('Greenwood: Excel headings "Statement Activity" / "Statement Activity (Class wise SOA)"',
+    back.Sheets['Statement of Activity'] && back.Sheets['Statement of Activity'].A2.v === 'Statement Activity' &&
     back.Sheets['Class wise SOA'] && back.Sheets['Class wise SOA'].A2.v === 'Statement Activity (Class wise SOA)');
+}
+
+/* Strict heading rule, over 300 random workbooks with repeated headings: every statement title starts with its sheet heading;
+ * the first statement with a heading shows it alone, later ones add their sheet name; no two titles are the same. */
+{
+  let seed = 20260929; const rnd = n => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+  const HEADS = ['Balance Sheet', 'Statement Activity', 'Income Statement (Profit and Loss)', 'Report', ''];
+  const plRows = h => [...(h ? [['Client Co'], [h], ['For the year ended December 31, 2025'], []] : []), ['', 'Total'], ...body(false)];
+  const bsRows = h => [...(h ? [['Client Co'], [h], ['As of December 31, 2025'], []] : []), ['', 'Total'], ['Assets'], ['Checking', 500], ['Total Assets', 500],
+    ['Liabilities and Equity'], ['Accounts Payable', 100], ['Total Liabilities', 100], ['Equity'], ['Retained Earnings', 400], ['Total Equity', 400], ['Total Liabilities and Equity', 500]];
+  const monRows = h => [...(h ? [['Client Co'], [h], ['For the year ended December 31, 2025'], []] : []), ['', 'Jan 2025', 'Feb 2025', 'Total'], ...body(false).map(r => r.length > 1 ? [r[0], r[1] / 2, r[1] / 2, r[1]] : r)];
+  const TABS = ['BS', 'BS_Comparative', 'Sheet1', 'Sheet2', 'PL', 'PL_MoM', 'Statement of Activity', 'Class wise SOA'];
+  let bad = 0, runs = 0;
+  for (let i = 0; i < 300; i++){
+    const tabs = [...TABS].sort(() => rnd(3) - 1).slice(0, 3);
+    const sheets = { [tabs[0]]: bsRows(HEADS[rnd(5)]), [tabs[1]]: plRows(HEADS[rnd(5)]), [tabs[2]]: monRows(HEADS[rnd(5)]) };
+    api.state.sheets = sheets; api.state.client = 'Client Co';
+    const md = api.parseWorkbook(sheets); api.state.model = md;
+    const secs = api.reportSections().filter(x => x.sheet);
+    if (!secs.length) continue;
+    runs++;
+    const titles = secs.map(x => x.title);
+    const unique = new Set(titles.map(t => t.toLowerCase())).size === titles.length;
+    const firstSeen = new Set();
+    const ruleOk = secs.every(x => {
+      const own = vm.runInContext('sheetHeading', ctx)(md.sheetModels[x.sheet], x.title);
+      const first = !firstSeen.has(own.toLowerCase()); firstSeen.add(own.toLowerCase());
+      return x.title.startsWith(own) && (first ? x.title === own : x.title.startsWith(own + ' ('));
+    });
+    if (!unique || !ruleOk){ bad++; if (bad < 4) console.error('   ', JSON.stringify(tabs), titles.join(' | ')); }
+  }
+  check(`Strict heading rule holds on ${runs} random workbooks (heading always first; later duplicates add the sheet name; titles unique)`, runs > 200 && !bad);
 }
 
 console.log(`${pass + fail} assertions, ${pass} pass, ${fail} fail`);
