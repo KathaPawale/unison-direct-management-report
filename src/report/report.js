@@ -128,7 +128,10 @@ function _headLabel(c){
 
 /* Build thead + row HTML strings for a parsed sheet.
  * Returns {theadHtml, rows:[{html, orphanGuard}], colCount, valueCols} */
-function reportTableParts(sm, { forExport = false, cols = null, compact = false, skipZeros = null } = {}){
+/* "Uncategorized Income / Expense / Asset …" lines: kept in Excel and on the app's statement pages, left out of the PDF. */
+const UNCATEGORIZED_LINE_RE = /^(total (for )?)?uncategori[sz]ed\b/;
+
+function reportTableParts(sm, { forExport = false, cols = null, compact = false, skipZeros = null, hideUncategorized = false } = {}){
   const rows = state.sheets[sm.name] || [];
   const showCols = cols || displayColumns(sm);
   /* Amount columns are at most 22% wide, so a one- or two-column statement keeps its figures near their labels. */
@@ -162,6 +165,7 @@ function reportTableParts(sm, { forExport = false, cols = null, compact = false,
   for (const line of sm.lines){
     if (line.kind === 'meta') continue;
     if (doSkip && isRowZero(line)) continue;
+    if (hideUncategorized && UNCATEGORIZED_LINE_RE.test(line.mkey || labelKey(line.label))) continue;
     const row = rows[line.r] || [];
     const kind = line.kind;
     const isTotal = kind === 'total' || kind === 'grandTotal' || kind === 'computed';
@@ -259,7 +263,7 @@ function paginateTableSection(no, title, sm, opts = {}){
   groups.forEach((cols, gi) => {
     const orientation = forceLandscape || tbLandscape || cols.length > WIDE_TABLE_COLS ? 'landscape' : 'portrait';
     const compact = cols.length > 8;
-    const parts = reportTableParts(sm, { ...opts, cols, compact });
+    const parts = reportTableParts(sm, { ...opts, cols, compact, hideUncategorized: true });
     const marker = groups.length > 1 ? `<div class="wide-col-marker">Columns ${escapeHtml(_headLabel(cols[0]))} – ${escapeHtml(_headLabel(cols[cols.length - 1]))}</div>` : '';
     let tableCls = 'report-table' + (compact ? ' compact' : '') + (orientation === 'landscape' ? ' wide' : '') + (cols.length <= 4 || forceLandscape ? ' roomy' : '');
     const shell = _measureShell(orientation);
@@ -489,8 +493,10 @@ function dashboardBodies(no, title){
       chartLegend(series) + svgGroupedBars({ series, labels: ps.map(x => x.label), height: 220 }));
   }
 
-  if (md.expenseGroups.length){
-    const top = md.expenseGroups.slice(0, 10);
+  /* Uncategorized expense lines are left out of the PDF (their shares of total expenses are unchanged). */
+  const pdfGroups = md.expenseGroups.filter(g => !UNCATEGORIZED_LINE_RE.test(labelKey(g.label)));
+  if (pdfGroups.length){
+    const top = pdfGroups.slice(0, 10);
     blocks.push(`<div class="report-section-title">Expense Breakdown — Top ${top.length} Categories</div>` +
       '<div class="chart-note">' + escapeHtml(expenseShareNote(md)) + '</div>' +
       svgHBars({ items: top, color: CHART_COLORS.teal }));
@@ -576,9 +582,8 @@ function paginateNotesSection(no, title){
 
 /* ---------- assembly ---------- */
 
-/* Report section order (PDF, Table of Contents and the Excel management report): Disclaimer, Dashboard, P&L (% of Income),
- * P&L Monthly, P&L Comparative, Balance Sheet, BS Comparative, A/R, A/P, Trial Balance, a full-period P&L, a P&L by Class,
- * any other worksheet with figures — and Notes last. One list, so the PDF and Excel never differ. */
+/* The statements the report prints (PDF, Table of Contents, Excel). They appear in the uploaded workbook's tab order
+ * (reportSections sorts them), after the Disclaimer and Dashboard and before the Notes. */
 const REPORT_STATEMENT_ORDER = [
   ['plPercent', 'Profit and Loss (% of Income)'], ['plMonthly', 'Profit and Loss — Monthly'], ['plComparative', 'Profit and Loss — Comparative'],
   ['bs', 'Balance Sheet'], ['bsComparative', 'Balance Sheet — Comparative'],
@@ -623,10 +628,13 @@ function isGenericTabName(n){
   return /^(sheet|tab|page|table|data|worksheet|report)\s*\d*$/i.test(cellText(n));
 }
 
-/* The heading a sheet gives itself: its title line, else its tab name, else (a generic tab) the standard name. */
+/* Strict heading rule (user, 2026-09-30): a statement's heading is its sheet (tab) name exactly as uploaded — "PL_MoM",
+ * "BS_Comparative", "Class wise SOA". Only a generic tab ("Sheet1") falls back to the sheet's own title line, then the
+ * standard name. */
 function sheetHeading(sm, standard){
   if (!sm) return standard;
-  return sourceStatementTitle(sm) || (isGenericTabName(sm.name) ? standard : cellText(sm.name)) || standard;
+  if (!isGenericTabName(sm.name) && cellText(sm.name)) return cellText(sm.name);
+  return sourceStatementTitle(sm) || standard;
 }
 
 /* Notes: the uploaded notes sheet's own heading, else "Notes to Financial Statements". */
@@ -646,8 +654,6 @@ function reportStatementTitles(md){
     out[role] = sheetHeading(sm, std);
   }
   for (const n of reportExtraSheets(md)) out['sheet:' + n] = sheetHeading(md.sheetModels[n], n);
-  /* Strict heading rule: every statement shows its own heading exactly as the sheet gives it — never the sheet (tab) name
-   * added to it, even when several sheets share the heading. */
   return out;
 }
 
@@ -685,18 +691,25 @@ function reportExtraSheets(md){
   });
 }
 
+/* Position of an uploaded sheet in the workbook (its tab order). */
+function workbookIndex(name){
+  const i = Object.keys(state.sheets || {}).indexOf(name);
+  return i < 0 ? Number.MAX_SAFE_INTEGER : i;
+}
+
 function reportSections(){
   const md = state.model;
   const sections = [{ id: 'cover', title: 'Cover' }, { id: 'toc', title: 'Table of Contents' },
                     { id: 'disc', title: 'Management Purpose Disclaimer' }];
   if (md){
     sections.push({ id: 'dash', title: 'Analytical Dashboard' });
-    for (const [role, title] of REPORT_STATEMENT_ORDER){ const s = _roleSection(md, role, title); if (s) sections.push(s); }
-  }
-  if (md){
-    for (const [role, title] of REPORT_TRAILING_ORDER){ const s = _roleSection(md, role, title); if (s) sections.push(s); }
+    /* Statements follow the uploaded workbook's tab order (user, 2026-09-30); Disclaimer and Dashboard first, Notes last. */
+    const statements = [];
+    for (const [role, title] of [...REPORT_STATEMENT_ORDER, ...REPORT_TRAILING_ORDER]){ const s = _roleSection(md, role, title); if (s) statements.push(s); }
     const titles = reportStatementTitles(md);
-    reportExtraSheets(md).forEach((n, i) => sections.push({ id: 'extra' + (i + 1), title: titles['sheet:' + n] || sheetHeading(md.sheetModels[n], n), sheet: n }));
+    reportExtraSheets(md).forEach((n, i) => statements.push({ id: 'extra' + (i + 1), title: titles['sheet:' + n] || sheetHeading(md.sheetModels[n], n), sheet: n }));
+    statements.sort((a, b) => workbookIndex(a.sheet) - workbookIndex(b.sheet));
+    sections.push(...statements);
   }
   /* Notes are always the last section. */
   sections.push({ id: 'notes', title: notesHeading(md) });
