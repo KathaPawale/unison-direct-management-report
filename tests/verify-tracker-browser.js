@@ -190,6 +190,19 @@ function plutoClientWorkbook(){
       sections: ['bs', 'bsComparative', 'tb', 'plMonthly', 'plComparative', 'plPercent', 'ar', 'ap'] } };
 }
 
+/* Uncategorized lines: counted in the figures, printed in the Excel report, left out of the PDF. */
+function uncategorizedWorkbook(){
+  const client = 'Harbor Uncategorized LLC', period = 'January-December 2025';
+  const pl = [...T(client, 'Profit and Loss', period), ['', 'Total'], ['Income'], ['Sales', 9000], ['Uncategorized Income', 1000], ['Total Income', 10000],
+    ['Expenses'], ['Rent', 3000], ['Uncategorized Expense', 500], ['Total Expenses', 3500], ['Net Income', 6500]];
+  const bs = [...T(client, 'Balance Sheet', 'As of December 31, 2025'), ['', 'Total'], ['Assets'], ['Checking', 8000], ['Uncategorized Asset', 200], ['Total Assets', 8200],
+    ['Liabilities and Equity'], ['Accounts Payable', 1700], ['Total Liabilities', 1700], ['Equity'], ['Retained Earnings', 6500], ['Total Equity', 6500],
+    ['Total Liabilities and Equity', 8200]];
+  return { name: 'Uncategorized lines (Excel only)', client, period, sheets: { 'BS': bs, 'P&L': pl },
+    expect: { roles: { bs: 'BS', pl: 'P&L' }, income: 10000, net: 6500, expenses: 3500, excelLines: ['Uncategorized Income', 'Uncategorized Expense', 'Uncategorized Asset'],
+      pdfLacks: ['Uncategorized Income', 'Uncategorized Expense', 'Uncategorized Asset'], sections: ['bs', 'pl'] } };
+}
+
 /* Row 34: comparative P&L whose % of Income columns are whole percents (2.48 = 2.48%). */
 function comparativePctWorkbook(){
   const client = 'Harbor Front Desk Services', period = 'January-December 2025';
@@ -483,9 +496,13 @@ function checkWorkbook(w, r, excel, pdf, errors){
   check(`${tag} Row 4 TOC is page 2 and numbering starts at 1`, r.pages[1] && r.pages[1].id === 'toc' && toc.length && /^1\. /.test(toc[0].text), toc[0] && toc[0].text);
   check(`${tag} Row 4 TOC numbers are consecutive`, toc.every((t, i) => new RegExp('^' + (i + 1) + '\\. ').test(t.text)));
   /* Report order: Disclaimer, Dashboard, P&L (% of Income), Monthly, Comparative, Balance Sheets, Aging, Trial Balance, Notes. */
-  const ORDER = ['disc', 'dash', 'plPercent', 'plMonthly', 'plComparative', 'bs', 'bsComparative', 'ar', 'ap', 'tb', 'pl', 'plClass', 'notes'];
+  /* Report order (user, 2026-09-30): Disclaimer, Dashboard, the statements in the uploaded workbook's tab order, Notes last. */
+  const wbOrder = Object.keys(w.sheets || {}).map(tabOf);
   const pageIds = r.pages.map(p => p.id).filter((id, i, a) => !['cover', 'toc'].includes(id) && a.indexOf(id) === i);
-  check(`${tag} Report order: PDF sections follow the requested order`, pageIds.join(',') === ORDER.filter(id => pageIds.includes(id)).join(','), pageIds.join(','));
+  const stmtIds = pageIds.filter(id => r.roles[id]);
+  const byWb = [...stmtIds].sort((a, b) => wbOrder.indexOf(tabOf(r.roles[a])) - wbOrder.indexOf(tabOf(r.roles[b])));
+  check(`${tag} Report order: Disclaimer, Dashboard, statements in workbook order, Notes last`, pageIds[0] === 'disc' && pageIds[1] === 'dash' &&
+    pageIds[pageIds.length - 1] === 'notes' && (process.env.TRACKER_XLSX || stmtIds.join(',') === byWb.join(',')), pageIds.join(','));
   check(`${tag} Report order: Disclaimer is first and Notes last in the TOC`, toc.length && /^1\. Management Purpose Disclaimer/.test(toc[0].text) && /Notes/i.test(toc[toc.length - 1].text) ,
     toc.map(t => t.text).join(' | '));
   /* Headings are the uploaded sheets' own ("Profit & Loss", "Statement of Activities"), so match any P&L / BS wording. */
@@ -610,6 +627,10 @@ function checkWorkbook(w, r, excel, pdf, errors){
   const disc = page('disc').map(p => p.text).join('\n');
   check(`${tag} Row 33 disclaimer sentence appears once`, (disc.match(/for management purpose only/gi) || []).length === 1);
 
+  /* Uncategorized lines are never printed in the PDF (they stay in Excel and on the app pages). */
+  for (const l of e.pdfLacks || []) check(`${tag} PDF leaves out "${l}"`, !content.some(p => p.text.includes(l)));
+  check(`${tag} No "Uncategorized …" line in the PDF`, !content.some(p => p.id !== 'dash' && /^\s*(total (for )?)?uncategori[sz]ed\b/im.test(p.text)));
+
   /* Row 37: zero rows left out of the PDF */
   for (const z of e.zeroRows || []) check(`${tag} Row 37 zero-balance ledger "${z}" left out of the PDF`, !content.some(p => p.id !== 'dash' && new RegExp('^\\s*' + z.replace(/[&]/g, '\\$&') + '\\s', 'm').test(p.text)));
 
@@ -641,10 +662,15 @@ function checkWorkbook(w, r, excel, pdf, errors){
   const notesTab = r.roles.notes && !/^(sheet|tab|page|table|data|worksheet|report)\s*\d*$/i.test(r.roles.notes) ? tabOf(r.roles.notes) : 'Notes';
   const stmts = excel.sheets.filter(s => !['Cover', 'Analytical Summary', notesTab, 'Disclaimer'].includes(s.name));
   /* Tabs keep the uploaded names, in report order by statement type. */
-  const TAB_ORDER = ['Cover', 'Disclaimer', 'Analytical Summary', ...['plPercent', 'plMonthly', 'plComparative', 'bs', 'bsComparative', 'ar', 'ap', 'tb'].map(k => tabOf(r.roles[k])),
-    ...['pl', 'plClass'].map(k => tabOf(r.roles[k])), notesTab].filter(Boolean);
+  /* Excel tabs: Cover, Disclaimer, Analytical Summary, the statements in the uploaded workbook's tab order, notes last. */
   const tabs = excel.sheets.map(x => x.name);
-  check(`${tag} Report order: Excel tabs follow the requested order`, tabs.join('|') === TAB_ORDER.filter(t => tabs.includes(t)).join('|'), tabs.join(' | '));
+  const stmtTabs = tabs.filter(t => !['Cover', 'Disclaimer', 'Analytical Summary', notesTab].includes(t));
+  const wbTabs = Object.keys(w.sheets || {}).map(tabOf);
+  check(`${tag} Report order: Excel tabs Cover, Disclaimer, Summary, statements in workbook order, notes last`,
+    tabs.slice(0, 3).join('|') === 'Cover|Disclaimer|Analytical Summary' && tabs[tabs.length - 1] === notesTab &&
+    (process.env.TRACKER_XLSX || stmtTabs.join('|') === [...stmtTabs].sort((a, b) => wbTabs.indexOf(a) - wbTabs.indexOf(b)).join('|')), tabs.join(' | '));
+  for (const l of e.excelLines || [])
+    check(`${tag} Excel keeps "${l}"`, stmts.some(s => s.cells.some(c => c.col === 'A' && String(s.val('A' + c.row)) === l)));
   check(`${tag} Row 7 every statement cell has a border`, stmts.every(s => s.unbordered === 0), stmts.map(s => s.name + ':' + s.unbordered).join(','));
   check(`${tag} Row 25 every Excel amount has a number format and right alignment`, stmts.every(s => s.unformatted === 0), stmts.map(s => s.name + ':' + s.unformatted).join(','));
   check(`${tag} Row 41 every Excel sheet has a tab colour`, excel.sheets.every(s => s.tab), excel.sheets.filter(s => !s.tab).map(s => s.name).join(','));
@@ -683,7 +709,7 @@ function checkWorkbook(w, r, excel, pdf, errors){
     ? [{ name: path.basename(process.env.TRACKER_XLSX), file: fs.readFileSync(process.env.TRACKER_XLSX),
          /* TRACKER_EXPECT=expect.json adds the figures to check: { client, expect: { income, net, roles, periods, … } } */
          ...(process.env.TRACKER_EXPECT ? JSON.parse(fs.readFileSync(process.env.TRACKER_EXPECT, 'utf8')) : { expect: {} }) }]
-    : [row54Workbook(), plutoWorkbook(), plutoClientWorkbook(), comparativePctWorkbook(), halfYearCashWorkbook(), ...fixtureWorkbooks()])
+    : [row54Workbook(), plutoWorkbook(), plutoClientWorkbook(), uncategorizedWorkbook(), comparativePctWorkbook(), halfYearCashWorkbook(), ...fixtureWorkbooks()])
     .filter(w => !process.env.TRACKER_ONLY || w.name.includes(process.env.TRACKER_ONLY));   // e.g. TRACKER_ONLY="Row 54"
   if (!books.length) throw new Error('No workbook matches TRACKER_ONLY=' + process.env.TRACKER_ONLY);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'udmr-'));

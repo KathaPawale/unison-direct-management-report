@@ -100,11 +100,11 @@ for (const [name, sheets] of Object.entries(layouts)){
   check(`${name}: dashboard income from the main P&L`, md.metrics.income === 1000);
   const sec = api.reportSections().find(s => s.id === 'plPercent');
   check(`${name}: PDF/report has a "Profit and Loss (% of Income)" section`, sec && sec.sheet === pctName);
-  const contentIds = api.reportSections().slice(2).map(s => s.id);
-  const requestedOrder = ['disc', 'dash', 'plPercent', 'plMonthly', 'plComparative', 'bs', 'bsComparative', 'ar', 'ap', 'tb', 'notes'];
-  const expectedPrefix = requestedOrder.filter(id => contentIds.includes(id));
-  check(`${name}: report sections follow the requested order`,
-    contentIds.slice(0, expectedPrefix.length).join(',') === expectedPrefix.join(','));
+  /* Report order (user, 2026-09-30): Disclaimer, Dashboard, the statements in the uploaded workbook's tab order, Notes last. */
+  const secsNow = api.reportSections().slice(2);
+  const stmtSheets = secsNow.filter(x => x.sheet).map(x => x.sheet);
+  check(`${name}: report sections follow the workbook's tab order`, secsNow[0].id === 'disc' && secsNow[1].id === 'dash' && secsNow[secsNow.length - 1].id === 'notes' &&
+    stmtSheets.join('|') === [...stmtSheets].sort((a, b) => Object.keys(sheets).indexOf(a) - Object.keys(sheets).indexOf(b)).join('|'));
   const parts = api.reportTableParts(md.sheetModels[pctName], {});
   const net = parts.rows.find(r => /Net Income/.test(r.html));
   check(`${name}: % of Income table shows amount and % columns`, /% of (Total )?Income/.test(parts.head || JSON.stringify(parts)) &&
@@ -229,7 +229,7 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
   const sheets = { 'PL': [...head('Profit and Loss'), ['', 'Total'], ...body(false)], 'BS': bs, 'Cash Flow': cashFlow, 'GeneralLedger': gl };
   api.state.sheets = sheets; const md = api.parseWorkbook(sheets); api.state.model = md;
   const secs = api.reportSections();
-  check('Strict rule: an unrecognised sheet with figures ("Cash Flow") is its own PDF section, under its own heading', secs.some(x => x.sheet === 'Cash Flow' && x.title === 'Statement of Cash Flows'));
+  check('Strict rule: an unrecognised sheet with figures ("Cash Flow") is its own PDF section, under its sheet name', secs.some(x => x.sheet === 'Cash Flow' && x.title === 'Cash Flow'));
   check('Strict rule: transaction detail (General Ledger) is not printed', !secs.some(x => x.sheet === 'GeneralLedger'));
   downloads.length = 0; api.downloadReportExcel();
   const xmls = downloads.length ? sheetXml(downloads[0].bytes) : {};
@@ -272,16 +272,17 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
     ['Accounts Payable', 100], ['Total Liabilities', 100], ['Net Assets'], ['Net Assets without Donor Restrictions', 400], ['Total Net Assets', 400], ['Total Liabilities and Net Assets', 500]];
   const noTitle = [['', 'Total'], ['Assets'], ['Checking', 500], ['Total Assets', 500], ['Liabilities and Equity'], ['Accounts Payable', 100], ['Total Liabilities', 100],
     ['Equity'], ['Retained Earnings', 400], ['Total Equity', 400], ['Total Liabilities and Equity', 500]];
-  for (const [label, sheets, want] of [['titled statements', { 'PL': act, 'BS': sfp }, { PL: 'Statement of Activities', BS: 'Statement of Financial Position' }],
-                                      ['no title rows', { 'PL': act, 'Sheet2': noTitle }, { PL: 'Statement of Activities', Sheet2: 'Balance Sheet' }]]){
+  /* Headings are the sheet (tab) names; a generic tab ("Sheet2") uses its own title, else the standard name. */
+  for (const [label, sheets, want] of [['titled statements', { 'PL': act, 'BS': sfp }, { PL: 'PL', BS: 'BS' }],
+                                      ['no title rows', { 'PL': act, 'Sheet2': noTitle }, { PL: 'PL', Sheet2: 'Balance Sheet' }]]){
     api.state.sheets = sheets; api.state.client = 'Pluto Asset Recovery'; const md = api.parseWorkbook(sheets); api.state.model = md;
     const secs = api.reportSections();
     downloads.length = 0; api.downloadReportExcel();
     const zip = XLSX.CFB.read(downloads[0].bytes, { type: 'array' });
     const back = XLSX.read(downloads[0].bytes, { type: 'array' });
     for (const [tab, title] of Object.entries(want)){
-      check(`Source heading (${label}): "${tab}" is "${title}" in the PDF / TOC`, secs.some(x => x.sheet === tab && x.title === title));
-      check(`Source heading (${label}): "${tab}" is "${title}" in the Excel heading row`, back.SheetNames.some(n => back.Sheets[n].A2 && back.Sheets[n].A2.v === title));
+      check(`Sheet-name heading (${label}): "${tab}" is "${title}" in the PDF / TOC`, secs.some(x => x.sheet === tab && x.title === title));
+      check(`Sheet-name heading (${label}): "${tab}" is "${title}" in the Excel heading row`, back.SheetNames.some(n => back.Sheets[n].A2 && back.Sheets[n].A2.v === title));
     }
   }
   /* Three P&L sheets with the same heading keep it, with the variant added so the TOC is not ambiguous. */
@@ -290,7 +291,7 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
     'PL_Comparative': [...same(), ['', 'Jan-Jul 2026', 'Jan-Jul 2025'], ...body(false).map(r => r.length > 1 ? [r[0], r[1], r[1]] : r)], 'BS': bs };
   api.state.sheets = sheets; api.state.model = api.parseWorkbook(sheets);
   const t = api.reportSections().map(x => x.title);
-  check('Same heading on three P&L sheets: each shows the heading only, never the sheet name', t.filter(x => x === 'Income Statement (Profit and Loss)').length === 3 && !t.some(x => /\((PL|PL_MoM|PL_Comparative)\)/.test(x)));
+  check('Same heading on three P&L sheets: each shows its sheet name', ['PL', 'PL_MoM', 'PL_Comparative'].every(x => t.includes(x)) && !t.includes('Income Statement (Profit and Loss)'));
 }
 
 /* Strict rule: nothing the user uploaded is renamed — column headings, the first-column heading, the period line and the
@@ -309,7 +310,7 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
   const back = XLSX.read(downloads[0].bytes, { type: 'array' });
   check('As uploaded: Excel tabs keep the uploaded names ("PL_MoM", "BS")', back.SheetNames.includes('PL_MoM') && back.SheetNames.includes('BS'));
   const ws = back.Sheets.PL_MoM || {};
-  check('As uploaded: Excel heading, column headings and period line', ws.A2 && ws.A2.v === 'Income Statement (Profit and Loss)' && ws.A5 && ws.A5.v === 'Account' &&
+  check('As uploaded: Excel heading (sheet name), column headings and period line', ws.A2 && ws.A2.v === 'PL_MoM' && ws.A5 && ws.A5.v === 'Account' &&
     ws.B5 && ws.B5.v === 'Jan-26' && ws.C5 && ws.C5.v === 'Feb-26' && ws.A3 && /For the month ended July 31, 2026/.test(ws.A3.v));
 }
 
@@ -321,7 +322,7 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
   const cls = [...head('Profit and Loss by Class'), ['', 'Admin', 'Rooms', 'Total'], ...body(false).map(r => r.length > 1 ? [r[0], r[1] / 2, r[1] / 2, r[1]] : r)];
   const notes = [['Notes to the Accounts'], ['Rent — Office lease renewed in March']];
   for (const [label, sheets, want] of [
-    ['title without statement words', { 'P&L': mgmt, 'BS': bs, 'By Class': cls, 'Notes to FS': notes }, { 'P&L': 'Management Accounts' }],
+    ['sheet name, not the title line', { 'P&L': mgmt, 'BS': bs, 'By Class': cls, 'Notes to FS': notes }, { 'P&L': 'P&L', 'By Class': 'By Class' }],
     ['no title line → tab name', { 'Operating Results': plNoTitle, 'BS': bs }, { 'Operating Results': 'Operating Results' }],
     ['generic tab → standard name', { 'Sheet1': plNoTitle, 'BS': bs }, { 'Sheet1': 'Profit and Loss' }]]){
     api.state.sheets = sheets; api.state.client = 'Pluto Asset Recovery'; const md = api.parseWorkbook(sheets); api.state.model = md;
@@ -335,8 +336,8 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
   }
 }
 
-/* Greenwood Seneca Foundation: "Statement of Activity" and "Class wise SOA" are both titled "Statement Activity": both show
- * the heading only; "Statement of Financial Position" keeps its own title. */
+/* Greenwood Seneca Foundation: every statement is headed by its sheet name — "Statement of Financial Position",
+ * "Statement of Activity", "Class wise SOA" (both activity sheets are titled "Statement Activity" inside). */
 {
   const T = t => [['Greenwood Seneca Foundation'], [t], ['January-August, 2026'], []];
   const sfp = [...T('Statement of Financial Position'), ['', 'As of Aug 31, 2026'], ['Assets'], ['Checking', 21550.15], ['Security deposits', 100], ['Total for Assets', 21650.15],
@@ -356,19 +357,19 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
   check('Greenwood: Statement of Activity is the P&L, Class wise SOA the P&L by Class, the position statement the Balance Sheet',
     [md.roles.pl, md.roles.plComparative].includes('Statement of Activity') && md.roles.plClass === 'Class wise SOA' && md.roles.bs === 'Statement of Financial Position');
   const secs = api.reportSections();
-  for (const [tab, title] of [['Statement of Financial Position', 'Statement of Financial Position'], ['Statement of Activity', 'Statement Activity'],
-                              ['Class wise SOA', 'Statement Activity']])
+  for (const [tab, title] of [['Statement of Financial Position', 'Statement of Financial Position'], ['Statement of Activity', 'Statement of Activity'],
+                              ['Class wise SOA', 'Class wise SOA']])
     check(`Greenwood: "${tab}" heading is "${title}"`, secs.some(x => x.sheet === tab && x.title === title));
   check('Greenwood: income 22,739.33 and net 20,528.38', Math.abs(md.metrics.income - 22739.33) < 0.01 && Math.abs(md.metrics.net - 20528.38) < 0.01);
   downloads.length = 0; api.downloadReportExcel();
   const back = XLSX.read(downloads[0].bytes, { type: 'array' });
-  check('Greenwood: Excel headings are "Statement Activity" on both sheets (heading only)',
-    back.Sheets['Statement of Activity'] && back.Sheets['Statement of Activity'].A2.v === 'Statement Activity' &&
-    back.Sheets['Class wise SOA'] && back.Sheets['Class wise SOA'].A2.v === 'Statement Activity');
+  check('Greenwood: Excel headings are the sheet names "Statement of Activity" / "Class wise SOA"',
+    back.Sheets['Statement of Activity'] && back.Sheets['Statement of Activity'].A2.v === 'Statement of Activity' &&
+    back.Sheets['Class wise SOA'] && back.Sheets['Class wise SOA'].A2.v === 'Class wise SOA');
 }
 
 /* Strict heading rule, over 300 random workbooks with repeated headings, generic tabs and missing titles: every statement
- * title is exactly its sheet heading — never the sheet name added. */
+ * title is its sheet name (a generic tab: its own title line, else the standard name). */
 {
   let seed = 20260929; const rnd = n => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
   const HEADS = ['Balance Sheet', 'Statement Activity', 'Income Statement (Profit and Loss)', 'Report', ''];
@@ -390,7 +391,33 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
     const ruleOk = secs.every(x => x.title === vm.runInContext('sheetHeading', ctx)(md.sheetModels[x.sheet], x.title));
     if (!ruleOk){ bad++; if (bad < 4) console.error('   ', JSON.stringify(tabs), titles.join(' | ')); }
   }
-  check(`Strict heading rule holds on ${runs} random workbooks (every title is exactly its sheet heading)`, runs > 200 && !bad);
+  check(`Strict heading rule holds on ${runs} random workbooks (every title is its sheet name; generic tabs use the title)`, runs > 200 && !bad);
+}
+
+/* Uncategorized lines (user, 2026-09-30): kept in the Excel report and on the app's statement pages, left out of the PDF.
+ * Statements (PDF sections and Excel tabs) follow the uploaded workbook's tab order. */
+{
+  const plU = [...head('Profit and Loss'), ['', 'Total'], ['Income'], ['Sales', 1000], ['Uncategorized Income', 250], ['Total Income', 1250], ['Expenses'], ['Rent', 400],
+    ['Uncategorized Expense', 50], ['Total Expenses', 450], ['Net Income', 800]];
+  const bsU = [...head('Balance Sheet'), ['', 'Total'], ['Assets'], ['Checking', 500], ['Uncategorized Asset', 100], ['Total Assets', 600], ['Liabilities and Equity'],
+    ['Accounts Payable', 100], ['Total Liabilities', 100], ['Equity'], ['Retained Earnings', 500], ['Total Equity', 500], ['Total Liabilities and Equity', 600]];
+  const sheets = { 'BS': bsU, 'Monthly Note': [['Management Notes'], ['Sales — strong quarter']], 'P&L': plU };
+  api.state.sheets = sheets; api.state.client = 'Pluto Asset Recovery'; const md = api.parseWorkbook(sheets); api.state.model = md;
+  check('Uncategorized: the figures still include them (income 1,250, assets 600)', md.metrics.income === 1250 && md.metrics.assets === 600);
+  /* The PDF tables are built with hideUncategorized (paginateTableSection); the browser suite checks the rendered pages. */
+  const pdfText = ['P&L', 'BS'].map(n => api.reportTableParts(md.sheetModels[n], { forExport: true, hideUncategorized: true }).rows.map(r => r.html).join(' ')).join(' ').replace(/<[^>]+>/g, ' ');
+  check('Uncategorized: no "Uncategorized …" line in the PDF tables', !/Uncategori[sz]ed/i.test(pdfText) && /Sales/.test(pdfText) && /Checking/.test(pdfText));
+  check('Uncategorized: the PDF pages are built with hideUncategorized', /reportTableParts\(sm, \{ \.\.\.opts, cols, compact, hideUncategorized: true \}\)/.test(fs.readFileSync(path.join(root, 'src/report/report.js'), 'utf8')));
+  check('Uncategorized: shown on the app statement page', /Uncategorized Income/.test(api.reportTableParts(md.sheetModels['P&L'], {}).rows.map(r => r.html).join('')));
+  downloads.length = 0; api.downloadReportExcel();
+  const back = XLSX.read(downloads[0].bytes, { type: 'array' });
+  const cells = n => Object.values(back.Sheets[n] || {}).map(c => c && c.v);
+  check('Uncategorized: kept in the Excel report with their values', cells('P&L').includes('Uncategorized Income') && cells('P&L').includes(250) &&
+    cells('P&L').includes('Uncategorized Expense') && cells('BS').includes('Uncategorized Asset'));
+  const stmts = back.SheetNames.filter(n => !['Cover', 'Disclaimer', 'Analytical Summary'].includes(n));
+  check('Excel tabs: statements in the workbook tab order (BS before P&L), notes last', stmts.indexOf('BS') < stmts.indexOf('P&L') && back.SheetNames[back.SheetNames.length - 1] === 'Monthly Note');
+  const order = api.reportSections().filter(x => x.sheet).map(x => x.sheet);
+  check('PDF: statements in the workbook tab order (BS before P&L)', order.indexOf('BS') < order.indexOf('P&L'));
 }
 
 console.log(`${pass + fail} assertions, ${pass} pass, ${fail} fail`);

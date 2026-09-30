@@ -521,10 +521,8 @@ function downloadReportExcel(){
   /* Financial statement sheets */
   /* Same statements as the PDF (REPORT_STATEMENT_ORDER, REPORT_TRAILING_ORDER); tab order is set by reportTabOrder below. */
   const titles = reportStatementTitles(md);   // each statement keeps its uploaded sheet's heading
-  const trailingTabs = [];
   for (const [role, stdTitle] of [...REPORT_STATEMENT_ORDER, ...REPORT_TRAILING_ORDER]){
     const title = titles[role] || stdTitle;
-    const isTrailing = REPORT_TRAILING_ORDER.some(([r]) => r === role);
     const name = md.roles[role];
     if (!name || skipReportSection(md, role)) continue;
     if ((role === 'ar' && md.suppressAR) || (role === 'ap' && md.suppressAP)) continue;
@@ -548,24 +546,23 @@ function downloadReportExcel(){
       ws['!cols'] = [{ wch: Math.max(34, ...ag.buckets.map(b => String(b.label).length + 3)) }, { wch: 16 }, { wch: 12 }];
       ws['!pageSetup'] = { landscape: false, titleRows: 5 };
       _decorateSheet(ws, role, 5, 1);
-      ws['!trailing'] = isTrailing; XLSX.utils.book_append_sheet(wb, ws, _sheetNameSafe(wb, name));
+      ws['!source'] = name; XLSX.utils.book_append_sheet(wb, ws, _sheetNameSafe(wb, name));
       continue;
     }
     const modelWs = _modelSheetToWs(md.sheetModels[name], title);
     if (role === 'tb'){
       const tbWs = modelWs;
       _decorateSheet(tbWs, 'tb', 5, 1);
-      tbWs['!trailing'] = isTrailing; XLSX.utils.book_append_sheet(wb, tbWs, _sheetNameSafe(wb, name));
+      tbWs['!source'] = name; XLSX.utils.book_append_sheet(wb, tbWs, _sheetNameSafe(wb, name));
     } else {
-      modelWs['!trailing'] = isTrailing; XLSX.utils.book_append_sheet(wb, modelWs, _sheetNameSafe(wb, name));
+      modelWs['!source'] = name; XLSX.utils.book_append_sheet(wb, modelWs, _sheetNameSafe(wb, name));
     }
   }
   /* Every other worksheet with figures, as in the PDF (reportExtraSheets). */
   for (const n of reportExtraSheets(md)){
     const ws = _modelSheetToWs(md.sheetModels[n], titles['sheet:' + n] || sheetHeading(md.sheetModels[n], n));
-    const tab = _sheetNameSafe(wb, n);
-    XLSX.utils.book_append_sheet(wb, ws, tab);
-    trailingTabs.push(tab);
+    ws['!source'] = n;
+    XLSX.utils.book_append_sheet(wb, ws, _sheetNameSafe(wb, n));
   }
 
   /* Notes + disclaimer */
@@ -619,13 +616,12 @@ function downloadReportExcel(){
   _decorateSheet(disc, 'disc', 0, 0);
   XLSX.utils.book_append_sheet(wb, disc, 'Disclaimer');
 
-  /* Tabs keep the uploaded sheet names, in report order: Cover, Disclaimer, Analytical Summary, the statements, a
-   * full-period P&L, a P&L by Class and other sheets, and the notes last (as in the PDF). */
+  /* Tabs keep the uploaded sheet names, in the uploaded workbook's tab order: Cover, Disclaimer, Analytical Summary, the
+   * statements as the workbook orders them, and the notes last (as in the PDF). */
   const own = new Set(['Cover', 'Disclaimer', 'Analytical Summary', notesTab]);
-  const statementTabs = wb.SheetNames.filter(n => !own.has(n));
-  const trailing = statementTabs.filter(n => trailingTabs.includes(n) || wb.Sheets[n]['!trailing']);
-  /* Notes are always the last tab. */
-  wb.SheetNames = ['Cover', 'Disclaimer', 'Analytical Summary', ...statementTabs.filter(n => !trailing.includes(n)), ...trailing, notesTab];
+  const statementTabs = wb.SheetNames.filter(n => !own.has(n))
+    .sort((a, b) => workbookIndex(wb.Sheets[a]['!source']) - workbookIndex(wb.Sheets[b]['!source']));
+  wb.SheetNames = ['Cover', 'Disclaimer', 'Analytical Summary', ...statementTabs, notesTab];
   if (_saveWorkbook(wb, _reportFileBase() + '-Management-Report.xlsx')) toast('Excel report downloaded');
 }
 
