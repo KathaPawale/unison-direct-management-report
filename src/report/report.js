@@ -679,12 +679,92 @@ function isTransactionDetailSheet(name, rows){
   return /ledger|journal|detail|transaction|register/.test(t);
 }
 
+/* ---------- index sheet and transaction lists ---------- */
+
+/* An index sheet ("Summary"): lists the workbook's other sheets — "1 | Profit and Loss(Comparative) | Click here to view!"
+ * — with an optional "NOTE :" line. Each entry is matched to the uploaded sheet it names ("Uncategorized Expenses" →
+ * the "Uncategorized Exp" tab). */
+function indexSheetEntries(name, rows){
+  const others = Object.keys(state.sheets || {}).filter(n => n !== name);
+  const match = t => {
+    const k = normLabel(t);
+    if (k.length < 3 || /^click here/.test(k)) return null;
+    return others.find(o => normLabel(o) === k) ||
+      others.find(o => { const a = normLabel(o); return a.length >= 5 && (k.startsWith(a) || a.startsWith(k)); }) || null;
+  };
+  const entries = [], notes = [];
+  for (const row of rows || []){
+    const cells = (row || []).map(cellText);
+    const noteAt = cells.findIndex(c => /^notes?\s*:/i.test(c) || /^notes?$/i.test(c));
+    if (noteAt >= 0){
+      const text = cells.slice(noteAt).join(' ').replace(/^notes?\s*:?\s*/i, '').trim();
+      if (text) notes.push(text);
+      continue;
+    }
+    for (const c of cells){
+      const sheet = match(c);
+      if (sheet){ entries.push({ no: cells.find(x => /^\d+\.?$/.test(x)) || String(entries.length + 1), label: c, sheet }); break; }
+    }
+  }
+  return { entries, notes };
+}
+
+function isIndexSheet(name, rows){
+  return isIndexLikeSheet(name, rows, Object.keys(state.sheets || {}));
+}
+
+/* A transaction list ("Uncategorized Expenses", "Invoice required": Transaction date | Type | Name | Description | Amount |
+ * Comment). It goes into the Excel report (Excel only, like uncategorized lines); a General Ledger / journal does not. */
+const LISTING_DATE_HEAD_RE = /^(date|txn date|transaction date|posting date|invoice date|due date|payment date)$/i;
+function isLedgerSheet(name, rows){
+  return /ledger|journal/.test(normLabel(name + ' ' + (rows || []).slice(0, 4).flat().filter(v => typeof v === 'string').join(' ')));
+}
+
+function reportListingSheets(md){
+  if (!md) return [];
+  const captured = new Set(Object.values(md.roles).filter(Boolean));
+  return Object.keys(state.sheets).filter(n => {
+    const sm = md.sheetModels[n], rows = state.sheets[n] || [];
+    if (captured.has(n) || !sm || isIndexSheet(n, rows) || isLedgerSheet(n, rows)) return false;
+    const hr = listingHeaderRow(sm, rows);
+    if (hr < 0) return false;
+    const header = (rows[hr] || []).map(cellText);
+    const dated = header.some(h => LISTING_DATE_HEAD_RE.test(h));
+    if (!dated && !isTransactionDetailSheet(n, rows)) return false;
+    return rows.slice(hr + 1).some(row => (row || []).some(v => cellText(v) !== ''));
+  });
+}
+
+/* The uploaded index sheet, if any (detection gives it the summary role; it is not a statement). */
+function reportIndexSheet(md){
+  return md && md.roles.summary && state.sheets[md.roles.summary] ? md.roles.summary : null;
+}
+
+/* A transaction list's heading row: the row holding its date heading ("Transaction date"), else the parser's. */
+function listingHeaderRow(sm, rows){
+  const r = (rows || []).slice(0, 30).findIndex(row => (row || []).some(v => LISTING_DATE_HEAD_RE.test(cellText(v))));
+  return r >= 0 ? r : sm.headerRow;
+}
+
+/* The index as a PDF page: No. | Particulars, then the note. */
+function indexSectionBody(no, title, sheet){
+  const idx = indexSheetEntries(sheet, state.sheets[sheet] || []);
+  /* The PDF index lists only sheets that are in the PDF (transaction lists and uncategorized sheets are Excel only). */
+  const inPdf = new Set(reportSections().filter(s => s.sheet && !s.index).map(s => s.sheet));
+  const entries = idx.entries.filter(e => inPdf.has(e.sheet)), notes = idx.notes;
+  const rows = entries.map(e => `<tr><td class="val" style="text-align:center">${escapeHtml(e.no)}</td><td class="lbl">${escapeHtml(e.label)}</td></tr>`).join('');
+  return sectionHead(no, title) +
+    `<div class="report-table-wrap"><table class="report-table roomy"><colgroup><col style="width:12%"><col style="width:88%"></colgroup>` +
+    `<thead><tr><th style="text-align:center">No.</th><th class="lbl">Particulars</th></tr></thead><tbody>${rows}</tbody></table></div>` +
+    notes.map(t => `<div class="report-notes" style="margin-top:14px"><b>NOTE:</b> ${escapeHtml(t)}</div>`).join('');
+}
+
 function reportExtraSheets(md){
   if (!md) return [];
   const captured = new Set(Object.values(md.roles).filter(Boolean));
   return Object.keys(state.sheets).filter(n => {
     const sm = md.sheetModels[n], rows = state.sheets[n] || [];
-    if (captured.has(n) || !sm || !sm.lines.length || isTransactionDetailSheet(n, rows)) return false;
+    if (captured.has(n) || !sm || !sm.lines.length || isTransactionDetailSheet(n, rows) || isIndexSheet(n, rows)) return false;
     /* A dated listing (Date column) is transaction detail too, whatever its name. */
     if (sm.cols.some(c => /^(date|txn date|transaction date|posting date)$/i.test(cellText(c.label)))) return false;
     return displayColumns(sm).length > 0 && rows.some(row => (row || []).some(v => parseAmount(v) !== null));
@@ -708,6 +788,9 @@ function reportSections(){
     for (const [role, title] of [...REPORT_STATEMENT_ORDER, ...REPORT_TRAILING_ORDER]){ const s = _roleSection(md, role, title); if (s) statements.push(s); }
     const titles = reportStatementTitles(md);
     reportExtraSheets(md).forEach((n, i) => statements.push({ id: 'extra' + (i + 1), title: titles['sheet:' + n] || sheetHeading(md.sheetModels[n], n), sheet: n }));
+    /* The uploaded index sheet ("Summary") is a section of its own, in its workbook position (usually first). */
+    const idx = reportIndexSheet(md);
+    if (idx) statements.push({ id: 'index', title: isGenericTabName(idx) ? 'Summary' : cellText(idx), sheet: idx, index: true });
     statements.sort((a, b) => workbookIndex(a.sheet) - workbookIndex(b.sheet));
     sections.push(...statements);
   }
@@ -735,6 +818,7 @@ function buildPages({ forExport = false } = {}){
           break;
         case 'notes': bodies = paginateNotesSection(no, sec.title); break;
         case 'disc':  bodies = [{ body: disclaimerBody(no, sec.title) }]; break;
+        case 'index': bodies = [{ body: indexSectionBody(no, sec.title, sec.sheet) }]; break;
         default: {
           if (sec.aging){ bodies = [{ body: sectionHead(no, sec.title, md.bsAsOf || state.period) + agingTableHtml(sec.aging) }]; break; }
           const sm = md && md.sheetModels[sec.sheet];
