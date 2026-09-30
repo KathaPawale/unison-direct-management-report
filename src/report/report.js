@@ -779,8 +779,12 @@ function workbookIndex(name){
 
 function reportSections(){
   const md = state.model;
-  const sections = [{ id: 'cover', title: 'Cover' }, { id: 'toc', title: 'Table of Contents' },
-                    { id: 'disc', title: 'Management Purpose Disclaimer' }];
+  const sections = [{ id: 'cover', title: 'Cover' }, { id: 'toc', title: 'Table of Contents' }];
+  /* The uploaded index sheet ("Summary") opens the report, as it opens the user's workbook (user, 2026-09-30); then the
+   * Disclaimer and Dashboard, the other sheets in workbook order, and the Notes last. */
+  const idx = md ? reportIndexSheet(md) : null;
+  if (idx) sections.push({ id: 'index', title: isGenericTabName(idx) ? 'Summary' : cellText(idx), sheet: idx, index: true });
+  sections.push({ id: 'disc', title: 'Management Purpose Disclaimer' });
   if (md){
     sections.push({ id: 'dash', title: 'Analytical Dashboard' });
     /* Statements follow the uploaded workbook's tab order (user, 2026-09-30); Disclaimer and Dashboard first, Notes last. */
@@ -788,9 +792,6 @@ function reportSections(){
     for (const [role, title] of [...REPORT_STATEMENT_ORDER, ...REPORT_TRAILING_ORDER]){ const s = _roleSection(md, role, title); if (s) statements.push(s); }
     const titles = reportStatementTitles(md);
     reportExtraSheets(md).forEach((n, i) => statements.push({ id: 'extra' + (i + 1), title: titles['sheet:' + n] || sheetHeading(md.sheetModels[n], n), sheet: n }));
-    /* The uploaded index sheet ("Summary") is a section of its own, in its workbook position (usually first). */
-    const idx = reportIndexSheet(md);
-    if (idx) statements.push({ id: 'index', title: isGenericTabName(idx) ? 'Summary' : cellText(idx), sheet: idx, index: true });
     statements.sort((a, b) => workbookIndex(a.sheet) - workbookIndex(b.sheet));
     sections.push(...statements);
   }
