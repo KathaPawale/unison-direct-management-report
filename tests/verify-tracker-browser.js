@@ -552,9 +552,11 @@ function checkWorkbook(w, r, excel, pdf, errors){
   const pageIds = r.pages.map(p => p.id).filter((id, i, a) => !['cover', 'toc'].includes(id) && a.indexOf(id) === i);
   const stmtIds = pageIds.filter(id => r.roles[id]);
   const byWb = [...stmtIds].sort((a, b) => wbOrder.indexOf(tabOf(r.roles[a])) - wbOrder.indexOf(tabOf(r.roles[b])));
-  check(`${tag} Report order: Disclaimer, Dashboard, statements in workbook order, Notes last`, pageIds[0] === 'disc' && pageIds[1] === 'dash' &&
+  /* An uploaded index sheet ("Summary") opens the report, before the Disclaimer. */
+  const at = pageIds[0] === 'index' ? 1 : 0;
+  check(`${tag} Report order: [Summary], Disclaimer, Dashboard, statements in workbook order, Notes last`, pageIds[at] === 'disc' && pageIds[at + 1] === 'dash' &&
     pageIds[pageIds.length - 1] === 'notes' && (process.env.TRACKER_XLSX || stmtIds.join(',') === byWb.join(',')), pageIds.join(','));
-  check(`${tag} Report order: Disclaimer is first and Notes last in the TOC`, toc.length && /^1\. Management Purpose Disclaimer/.test(toc[0].text) && /Notes/i.test(toc[toc.length - 1].text) ,
+  check(`${tag} Report order: Disclaimer first (after an uploaded Summary) and Notes last in the TOC`, toc.length && (/^1\. Management Purpose Disclaimer/.test(toc[0].text) || (/^1\. Summary/.test(toc[0].text) && /^2\. Management Purpose Disclaimer/.test((toc[1] || {}).text || ''))) && /Notes/i.test(toc[toc.length - 1].text) ,
     toc.map(t => t.text).join(' | '));
   /* Headings are the uploaded sheets' own ("Profit & Loss", "Statement of Activities"), so match any P&L / BS wording. */
   const BS_T = /balance sheet|financial position|financial condition|assets and liabilities|^b ?s\b|^bs[_ ]/i,
@@ -718,8 +720,8 @@ function checkWorkbook(w, r, excel, pdf, errors){
     const links = idx ? (idx.xml.match(/<hyperlink [^>]*location="[^"]+"/g) || []).length : 0;
     check(`${tag} Summary index: ${e.indexLinks} "Click here to view!" links to this file's tabs`, links === e.indexLinks, links);
     check(`${tag} Summary index: No. | Particulars | Link headings and the NOTE`, idx && idx.val('A5') === 'No.' && idx.val('B5') === 'Particulars' && /NOTE/.test(idx.xml));
-    check(`${tag} Summary is the first uploaded sheet in the PDF and Excel`, r.pages.map(p => p.id).filter(id => !['cover', 'toc', 'disc', 'dash'].includes(id))[0] === 'index' &&
-      excel.sheets.map(x => x.name)[3] === 'Summary');
+    check(`${tag} Summary is section 1 of the PDF / TOC and the first tab after the Cover`, r.pages.map(p => p.id).filter(id => !['cover', 'toc'].includes(id))[0] === 'index' &&
+      /^1\. Summary/.test(((r.pages.find(p => p.id === 'toc') || {}).tocItems || [{}])[0].text || '') && excel.sheets.map(x => x.name)[1] === 'Summary');
   }
   if (e.listings) check(`${tag} Review & Edit shows transaction dates as dates, not dollars`, r.editorDates.length > 0 && r.editorDates.every(v => /^\d{2}\/\d{2}\/\d{4}$/.test(v)) && !(r.editorDollarDates || []).length,
     r.editorDates.slice(0, 3).join(' ') + ' | ' + (r.editorDollarDates || []).slice(0, 3).join(' '));
@@ -737,7 +739,7 @@ function checkWorkbook(w, r, excel, pdf, errors){
   const stmtTabs = tabs.filter(t => !['Cover', 'Disclaimer', 'Analytical Summary', notesTab].includes(t));
   const wbTabs = Object.keys(w.sheets || {}).map(tabOf);
   check(`${tag} Report order: Excel tabs Cover, Disclaimer, Summary, statements in workbook order, notes last`,
-    tabs.slice(0, 3).join('|') === 'Cover|Disclaimer|Analytical Summary' && tabs[tabs.length - 1] === notesTab &&
+    tabs.filter(t => !r.nonStatementTabs.includes(t) || t !== tabs[1]).slice(0, 3).join('|') === 'Cover|Disclaimer|Analytical Summary' && tabs[tabs.length - 1] === notesTab &&
     (process.env.TRACKER_XLSX || stmtTabs.join('|') === [...stmtTabs].sort((a, b) => wbTabs.indexOf(a) - wbTabs.indexOf(b)).join('|')), tabs.join(' | '));
   for (const l of e.excelLines || [])
     check(`${tag} Excel keeps "${l}"`, stmts.some(s => s.cells.some(c => c.col === 'A' && String(s.val('A' + c.row)) === l)));

@@ -713,7 +713,9 @@ function downloadReportExcel(){
   const own = new Set(['Cover', 'Disclaimer', 'Analytical Summary', notesTab]);
   const statementTabs = wb.SheetNames.filter(n => !own.has(n))
     .sort((a, b) => workbookIndex(wb.Sheets[a]['!source']) - workbookIndex(wb.Sheets[b]['!source']));
-  wb.SheetNames = ['Cover', 'Disclaimer', 'Analytical Summary', ...statementTabs, notesTab];
+  /* The uploaded index sheet ("Summary") comes right after the Cover, as it opens the user's workbook. */
+  const indexTab = statementTabs.find(t => indexSheet && wb.Sheets[t]['!source'] === indexSheet);
+  wb.SheetNames = ['Cover', ...(indexTab ? [indexTab] : []), 'Disclaimer', 'Analytical Summary', ...statementTabs.filter(t => t !== indexTab), notesTab];
   if (_saveWorkbook(wb, _reportFileBase() + '-Management-Report.xlsx')) toast('Excel report downloaded');
 }
 
