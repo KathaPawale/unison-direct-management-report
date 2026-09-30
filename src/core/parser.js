@@ -632,6 +632,20 @@ function statementFingerprint(keys){
   return { pl: count(PL_TERMS), plAnchors: count(PL_ANCHORS), bs: count(BS_TERMS), bsAnchors: count(BS_ANCHORS), cashFlow: list.some(k => CASH_FLOW_RE.test(k)) };
 }
 
+/* A sheet whose cells name at least three of the workbook's other sheets ("Profit and Loss(Comparative)", "AP Aging",
+ * "Uncategorized Expenses" for the "Uncategorized Exp" tab): the workbook's index / summary sheet. */
+function isIndexLikeSheet(name, rows, allNames){
+  const others = (allNames || []).filter(n => n !== name).map(n => normLabel(n)).filter(Boolean);
+  const hits = new Set();
+  for (const row of rows || []) for (const v of row || []){
+    const k = normLabel(v);
+    if (k.length < 3) continue;
+    const m = others.find(a => a === k || (a.length >= 5 && (k.startsWith(a) || a.startsWith(k))));
+    if (m) hits.add(m);
+  }
+  return hits.size >= 3;
+}
+
 function detectRoles(sheets, sheetModels){
   const roles = { plMonthly: null, plComparative: null, plPercent: null, plClass: null, pl: null, bs: null, bsComparative: null, tb: null, ar: null, ap: null, notes: null, summary: null };
   const names = Object.keys(sheets);
@@ -685,6 +699,11 @@ function detectRoles(sheets, sheetModels){
              detail: /detail|by customer|by vendor|transaction|ledger|journal|register/.test(text) || fp.cashFlow || dated };
   });
   const free = x => !Object.values(roles).includes(x.n);
+  /* An index sheet ("Summary": 1 | Profit and Loss(Comparative) | Click here to view!) lists the other sheets. It is never a
+   * statement — its mentions of "AP Aging" / "Balance Sheet" made it look like one — so it takes the summary role first. */
+  for (const x of info){
+    if (!roles.summary && isIndexLikeSheet(x.n, sheets[x.n] || [], names)) roles.summary = x.n;
+  }
 
   for (const x of info){
     if (!free(x)) continue;

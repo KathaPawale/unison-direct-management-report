@@ -166,8 +166,11 @@ function renderDashboard(){
   const captured = new Set(Object.values(md.roles).filter(Boolean));
   const extra = reportExtraSheets(md);
   if (extra.length) alerts.push(['Info', 'Included as their own report sections (not a standard statement): ' + extra.map(escapeHtml).join(', ') + '.']);
-  const left = Object.keys(state.sheets).filter(n => !captured.has(n) && !extra.includes(n) && (state.sheets[n] || []).some(row => (row || []).some(v => parseAmount(v) !== null)));
-  if (left.length) alerts.push(['Info', 'Not in the report (transaction detail): ' + left.map(escapeHtml).join(', ') + '.']);
+  const listing = reportListingSheets(md), indexSheet = reportIndexSheet(md);
+  if (listing.length) alerts.push(['Info', 'In the Excel report only (transaction lists, not the PDF): ' + listing.map(escapeHtml).join(', ') + '.']);
+  const left = Object.keys(state.sheets).filter(n => !captured.has(n) && !extra.includes(n) && !listing.includes(n) && n !== indexSheet &&
+    (state.sheets[n] || []).some(row => (row || []).some(v => parseAmount(v) !== null)));
+  if (left.length) alerts.push(['Info', 'Not in the report (ledger / transaction detail): ' + left.map(escapeHtml).join(', ') + '.']);
   if (!md.roles.plMonthly && !md.roles.plComparative && !md.roles.pl && !md.roles.plPercent) alerts.push(['Info', 'No Profit and Loss worksheet was detected in this workbook.']);
   if (state.edited.size || state.adjusted.size) alerts.push(['Info', `${state.edited.size} manual edit(s) and ${state.adjusted.size} automatic adjustment(s) are reflected in this report (highlighted in the preview, not in downloads).`]);
   $('#attention').innerHTML = alerts.length
@@ -225,6 +228,10 @@ function editorTableHtml(sheetName){
   const sm = state.model && state.model.sheetModels[sheetName];
   const headerRow = sm ? sm.headerRow : -1;
   const pctCols = new Map(sm ? sm.cols.filter(c => c.type === 'percent').map(c => [c.idx, percentColumnIsFraction(sm, rows, c.idx)]) : []);
+  /* Date columns of a transaction list ("Transaction date") show dates, never dollar amounts. */
+  const dateHeadRow = rows.slice(0, 30).findIndex(row => (row || []).some(v => LISTING_DATE_HEAD_RE.test(cellText(v))));
+  const dateCols = new Set(dateHeadRow < 0 ? [] : (rows[dateHeadRow] || []).map((v, c) => LISTING_DATE_HEAD_RE.test(cellText(v)) ? c : -1).filter(c => c >= 0));
+  const asDate = n => { const d = new Date(Math.round((n - 25569) * 864e5)); return String(d.getUTCMonth() + 1).padStart(2, '0') + '/' + String(d.getUTCDate()).padStart(2, '0') + '/' + d.getUTCFullYear(); };
   const valueIdx = sm ? displayColumns(sm).map(c => c.idx) : [];
   let html = '<div class="table-wrap"><table class="fin-table edit-table"><tbody>';
   shown.forEach((row, ri) => {
@@ -243,6 +250,10 @@ function editorTableHtml(sheetName){
         numeric && num(v) < 0 ? 'neg' : '',
         numeric ? 'num' : ''
       ].filter(Boolean).join(' ');
+      if (ri > dateHeadRow && dateHeadRow >= 0 && dateCols.has(ci) && typeof v === 'number' && v > 20000 && v < 80000){
+        html += `<td class="date"><input data-r="${ri}" data-c="${ci}" value="${escapeAttr(asDate(v))}" readonly title="Date"></td>`;
+        continue;
+      }
       const asPct = ri !== headerRow && (isNumericCell(v) || isPercentText(v)) && (pctRow ? valueIdx.includes(ci) : pctCols.has(ci));
       if (asPct){
         const shown = formatReportCell(v, 'percent', { fraction: pctRow ? pctRowFrac : pctCols.get(ci) });

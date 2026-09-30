@@ -402,6 +402,84 @@ function _modelSheetToWs(sm, title){
   return ws;
 }
 
+/* The centred heading block shared by the generated sheets: company, heading, period (rows 1-3). */
+function _headingBlock(ws, heading, sub, lastCol){
+  const center = { horizontal: 'center', vertical: 'center', wrapText: true };
+  _wsSetCell(ws, 0, 0, state.client, { ...XL_STYLES.title, font: { bold: true, sz: 16, color: { rgb: 'FFFFFF' } }, alignment: center }, null, { border: false });
+  _wsSetCell(ws, 1, 0, heading, { ...XL_STYLES.subtitle, font: { bold: true, sz: 12, color: { rgb: 'FFFFFF' } }, alignment: center }, null, { border: false });
+  _wsSetCell(ws, 2, 0, sub || '', { ...XL_STYLES.subtitle, alignment: center }, null, { border: false });
+  for (let c = 1; c <= lastCol; c++) for (let r = 0; r < 3; r++) _wsSetCell(ws, r, c, '', r === 0 ? XL_STYLES.title : XL_STYLES.subtitle, null, { border: false });
+  ws['!merges'] = [0, 1, 2].map(r => ({ s: { r, c: 0 }, e: { r, c: lastCol } }));
+  ws['!rows'] = [{ hpt: 26 }, { hpt: 20 }, { hpt: 18 }, { hpt: 6 }, { hpt: 30 }];
+}
+
+const XL_LINK = { font: { name: 'Arial', sz: 10, color: { rgb: '0563C1' }, underline: true }, alignment: { horizontal: 'left', vertical: 'center' } };
+
+/* The uploaded index sheet ("Summary"), rebuilt: No. | Particulars | a "Click here to view!" link to that sheet's tab in this
+ * file, then the NOTE lines. tabOf maps an uploaded sheet name to its tab here. */
+function _indexSheetToWs(name, heading, tabOf){
+  const ws = {};
+  const { entries, notes } = indexSheetEntries(name, state.sheets[name] || []);
+  _headingBlock(ws, heading, '', 2);
+  [['No.', 'center'], ['Particulars', 'left'], ['Link', 'left']].forEach(([h, al], i) =>
+    _wsSetCell(ws, 4, i, h, { ...XL_STYLES.headL, alignment: { horizontal: al, vertical: 'center' } }));
+  let r = 5;
+  for (const e of entries){
+    _wsSetCell(ws, r, 0, /^\d+$/.test(String(e.no).replace(/\.$/, '')) ? +String(e.no).replace(/\.$/, '') : e.no, { ...XL_STYLES.plain, alignment: { horizontal: 'center', vertical: 'center' } });
+    _wsSetCell(ws, r, 1, e.label, { ...XL_STYLES.plain, alignment: { horizontal: 'left', vertical: 'center' } });
+    const tab = tabOf(e.sheet);
+    if (tab){
+      _wsSetCell(ws, r, 2, 'Click here to view!', XL_LINK);
+      ws[XLSX.utils.encode_cell({ r, c: 2 })].l = { Target: `#'${tab.replace(/'/g, "''")}'!A1`, Tooltip: 'Open ' + tab };
+    } else _wsSetCell(ws, r, 2, '', XL_STYLES.plain);
+    r++;
+  }
+  r++;
+  for (const t of notes){
+    _wsSetCell(ws, r, 0, 'NOTE :', { font: { name: 'Arial', bold: true, sz: 10 }, alignment: { horizontal: 'left', vertical: 'top' } }, null, { border: false });
+    _wsSetCell(ws, r, 1, t, { font: { name: 'Arial', bold: true, sz: 10 }, alignment: { wrapText: true, vertical: 'top' } }, null, { border: false });
+    _wsSetCell(ws, r, 2, '', {}, null, { border: false });
+    ws['!merges'].push({ s: { r, c: 1 }, e: { r, c: 2 } });
+    (ws['!rows'][r] = { hpt: Math.min(120, 15 * Math.ceil(t.length / 70) + 4) });
+    r++;
+  }
+  ws['!cols'] = [{ wch: 8 }, { wch: Math.min(60, Math.max(34, ...entries.map(e => e.label.length + 3))) }, { wch: 22 }];
+  ws['!pageSetup'] = { landscape: false, titleRows: 5 };
+  _decorateSheet(ws, 'summary', 5, 1);
+  return ws;
+}
+
+/* A transaction list ("Uncategorized Expenses", "Invoice required"), rebuilt as a formatted table: every uploaded column
+ * and row; dates as dates, amounts in the accounting format, long text wrapped; headings frozen. */
+function _listingSheetToWs(name, heading, sm){
+  const ws = {};
+  const rows = state.sheets[name] || [];
+  const hr = listingHeaderRow(sm, rows);
+  const header = (rows[hr] || []).map(cellText);
+  const body = rows.slice(hr + 1).filter(row => (row || []).some(v => cellText(v) !== ''));
+  const width = Math.max(header.length, ...body.map(r => (r || []).length));
+  const last = Math.max(width - 1, 1);
+  _headingBlock(ws, heading, statementPeriodText(sm), last);
+  const isDate = c => LISTING_DATE_HEAD_RE.test(header[c] || '');
+  const numeric = c => body.filter(r => parseAmount((r || [])[c]) !== null).length >= Math.max(1, body.filter(r => cellText((r || [])[c]) !== '').length * 0.6);
+  for (let c = 0; c < width; c++) _wsSetCell(ws, 4, c, header[c] || '', { ...XL_STYLES.head, alignment: { horizontal: 'center', vertical: 'center', wrapText: true } });
+  body.forEach((row, i) => {
+    const r = 5 + i;
+    for (let c = 0; c < width; c++){
+      const v = (row || [])[c];
+      const n = typeof v === 'number' ? v : parseAmount(v);
+      if (isDate(c) && typeof v === 'number') _wsSetCell(ws, r, c, v, { ...XL_STYLES.plain, numFmt: 'mm/dd/yyyy', alignment: { horizontal: 'left', vertical: 'top' } });
+      else if (!isDate(c) && n !== null && numeric(c)) _wsSetCell(ws, r, c, n, { ...XL_STYLES.money, alignment: { horizontal: 'right', vertical: 'top' }, font: { sz: 10, ...(n < 0 ? { color: { rgb: 'C93438' } } : {}) } });
+      else _wsSetCell(ws, r, c, cellText(v), XL_STYLES.wrap);
+    }
+  });
+  const widthOf = c => isDate(c) ? 12 : numeric(c) ? 14 : Math.min(50, Math.max(12, String(header[c] || '').length + 2, ...body.map(r => cellText((r || [])[c]).length + 2)));
+  ws['!cols'] = Array.from({ length: width }, (_, c) => ({ wch: widthOf(c) }));
+  ws['!pageSetup'] = { landscape: true, titleRows: 5 };
+  _decorateSheet(ws, 'other', 5, 1);
+  return ws;
+}
+
 function _rawSheetToWs(rows, modelHeaderRow = -1, role = null, sm = null){
   const ws = {};
   const data = rows || [];
@@ -563,6 +641,20 @@ function downloadReportExcel(){
     const ws = _modelSheetToWs(md.sheetModels[n], titles['sheet:' + n] || sheetHeading(md.sheetModels[n], n));
     ws['!source'] = n;
     XLSX.utils.book_append_sheet(wb, ws, _sheetNameSafe(wb, n));
+  }
+  /* Transaction lists ("Uncategorized Expenses", "Invoice required"): Excel only. */
+  for (const n of reportListingSheets(md)){
+    const ws = _listingSheetToWs(n, sheetHeading(md.sheetModels[n], n), md.sheetModels[n]);
+    ws['!source'] = n;
+    XLSX.utils.book_append_sheet(wb, ws, _sheetNameSafe(wb, n));
+  }
+  /* The uploaded index sheet ("Summary"), with a working link to each sheet's tab in this file. */
+  const indexSheet = reportIndexSheet(md);
+  if (indexSheet){
+    const tabOf = src => wb.SheetNames.find(t => wb.Sheets[t]['!source'] === src) || null;
+    const ws = _indexSheetToWs(indexSheet, isGenericTabName(indexSheet) ? 'Summary' : cellText(indexSheet), tabOf);
+    ws['!source'] = indexSheet;
+    XLSX.utils.book_append_sheet(wb, ws, _sheetNameSafe(wb, indexSheet));
   }
 
   /* Notes + disclaimer */

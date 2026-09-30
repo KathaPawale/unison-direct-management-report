@@ -190,6 +190,44 @@ function plutoClientWorkbook(){
       sections: ['bs', 'bsComparative', 'tb', 'plMonthly', 'plComparative', 'plPercent', 'ar', 'ap'] } };
 }
 
+/* Seneca: a Summary index tab first (sheet names, "Click here to view!", NOTE), statements, and transaction lists
+ * (Invoice required, Uncategorized Exp / Income) that go into Excel only. */
+function senecaWorkbook(){
+  const client = 'Seneca Real Estate Services, Inc.', period = 'January-July, 2026';
+  const T = (t, p) => [[client], [t], [p || period], []];
+  const serial = (m, d) => Math.round((Date.UTC(2026, m - 1, d) - Date.UTC(1899, 11, 30)) / 864e5);
+  const names = ['Profit and Loss(Comparative)', 'Profit and Loss(Monthly)', 'Profit and Loss(% of Income)', 'Balance Sheet', 'AP Aging', 'AR Aging',
+    'Invoice required', 'Uncategorized Expenses', 'Uncategorized Income'];
+  const summary = [['', client], [], ...names.map((n, i) => [i + 1, n, 'Click here to view!']), [], ['NOTE :', 'Intercompany balances may vary as per july 2026 because The Greenwood Seneca LLC & Greenwood Seneca Foundation books are not closed.']];
+  const body = f => [['Income'], ['Rental Income', ...f(90000)], ['Management Fees', ...f(10000)], ['Total Income', ...f(100000)], ['Expenses'], ['Rent', ...f(30000)],
+    ['Payroll', ...f(40000)], ['Uncategorized Expense', ...f(2000)], ['Total Expenses', ...f(72000)], ['Net Income', ...f(28000)]];
+  const plc = [...T('Profit and Loss'), ['', 'Jan - Jul 2026', 'Jan - Jul 2025 (PY)'], ...body(v => [v, v * 0.9])];
+  const M = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul'];
+  const plm = [...T('Profit and Loss'), ['', ...M.map(m => m + ' 2026'), 'Total'], ...body(v => [...M.map(() => +(v / 7).toFixed(2)), v])];
+  const plp = [...T('Profit and Loss % of Total Income'), ['', 'Jan - Jul 2026', '% of Income'], ...body(v => [v, v / 100000])];
+  const bs = [...T('Balance Sheet', 'As of Jul 31, 2026'), ['', 'Total'], ['Assets'], ['Checking', 150000], ['Accounts Receivable', 20000], ['Total Assets', 170000],
+    ['Liabilities and Equity'], ['Accounts Payable', 15000], ['Total Liabilities', 15000], ['Equity'], ['Retained Earnings', 127000], ['Net Income', 28000], ['Total Equity', 155000],
+    ['Total Liabilities and Equity', 170000]];
+  const ap = [...T('A/P Aging Summary', 'As of Jul 31, 2026'), ['Vendor', 'Current', '1 - 30', '31 - 60', 'Total'], ['Vendor A', 10000, 3000, 0, 13000], ['Vendor B', 2000, 0, 0, 2000], ['TOTAL', 12000, 3000, 0, 15000]];
+  const ar = [...T('A/R Aging Summary', 'As of Jul 31, 2026'), ['Customer', 'Current', '1 - 30', '31 - 60', 'Total'], ['Tenant A', 15000, 5000, 0, 20000], ['TOTAL', 15000, 5000, 0, 20000]];
+  const LH = ['Transaction date', 'Transaction type', 'Name', 'Description', 'Item split account', 'Amount', "Unison's Comment"];
+  const inv = [...T('Transaction Report'), LH, [serial(3, 9), 'Expense', 'Alternative LDA', 'ALTERNATIVE LDA', 'SRS Credit Card -0183', 116.23, 'Please provide the invoice'],
+    [serial(3, 5), 'Expense', 'GovSpend Smart Procure, Inc.', 'BLS*GOVSPEND PARKLAND FL', 'Business Platinum Card 43000', 7210, 'Please provide the invoice']];
+  const ue = [...T('Transaction Report'), LH, [serial(2, 23), 'Expense', 'Choice Builder', 'CHOICE BUILDER DES:ONLIN PMNT ID:82246219 INDN:Del Richardson Associ CO ID:XXXXX15986 WEB', 'BOA-3193-Operational', 300.18, 'Please advise the nature of this transaction?'],
+    [serial(2, 4), 'Expense', 'LA Tax', 'LA TAX BILL PAYMENT 844-663-4411 CA TAX BILL', 'Business Platinum Card 43000', 1699.82, 'Please advise the nature of this transaction?']];
+  const ui = [...T('Transaction Report'), LH, [serial(3, 25), 'Deposit', 'WSP - WSP USA, Inc.', 'WSP USA Administ DES:PAYMENTS ID:1011711', 'BOA-3193-Operational', 2547.42, 'Can you please advise nature of this transaction?'],
+    [serial(4, 30), 'Deposit', '', 'Counter Credit', 'BOA-3193-Operational', 993.79, 'Can you please advise nature of this transaction?']];
+  return { name: 'Seneca: Summary index, statements, Invoice required, Uncategorized lists', client, period,
+    sheets: { 'Summary': summary, 'Profit and Loss(Comparative)': plc, 'Profit and Loss(Monthly)': plm, 'Profit and Loss(% of Income)': plp, 'Balance Sheet': bs,
+      'AP Aging': ap, 'AR Aging': ar, 'Invoice required': inv, 'Uncategorized Exp': ue, 'Uncategorized Income': ui },
+    expect: { roles: { plComparative: 'Profit and Loss(Comparative)', plMonthly: 'Profit and Loss(Monthly)', plPercent: 'Profit and Loss(% of Income)', bs: 'Balance Sheet',
+        ap: 'AP Aging', ar: 'AR Aging' }, income: 100000, net: 28000,
+      excelSheets: ['Summary', 'Profit and Loss(Comparative)', 'Profit and Loss(Monthly)', 'Profit and Loss(% of Income)', 'Balance Sheet', 'AP Aging', 'AR Aging',
+        'Invoice required', 'Uncategorized Exp', 'Uncategorized Income'],
+      indexLinks: 9, listings: { 'Uncategorized Exp': 2, 'Uncategorized Income': 2, 'Invoice required': 2 }, pdfLacks: ['Uncategorized Expense', 'Choice Builder', 'Counter Credit'],
+      sections: ['index', 'plComparative', 'plMonthly', 'plPercent', 'bs', 'ap', 'ar'] } };
+}
+
 /* Uncategorized lines: counted in the figures, printed in the Excel report, left out of the PDF. */
 function uncategorizedWorkbook(){
   const client = 'Harbor Uncategorized LLC', period = 'January-December 2025';
@@ -301,8 +339,9 @@ function inspectPage(){
   const md = state.model;
   /* The app's own helper when it has one (older deployments do not). */
   const tabOfPage = n => String(n || '').replace(/\bA\/([PR])\b/g, 'A$1').replace(/[\\\/?*\[\]:]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 31);
+  const nonStatementTabs = [md.roles.summary, ...(typeof window.reportListingSheets === 'function' ? window.reportListingSheets(md) : [])].filter(Boolean).map(tabOfPage);
   const firstHeads = {};
-  for (const n of Object.values(md.roles).filter(Boolean)) if (md.sheetModels[n])
+  for (const n of Object.values(md.roles).filter(Boolean)) if (md.sheetModels[n] && n !== md.roles.summary)
     firstHeads[tabOfPage(n)] = typeof window.firstColumnHeading === 'function' ? window.firstColumnHeading(md.sheetModels[n]) : 'Particulars';
   const isPercentRowLabel = typeof window.isPercentRowLabel === 'function' ? window.isPercentRowLabel
     : t => /^(percentage|percent|pct|%)\s*(of\s*)?(the\s*)?(grand\s*)?total$/i.test(String(t || '').trim());
@@ -311,7 +350,7 @@ function inspectPage(){
     expenseGroups: md.expenseGroups.map(g => ({ label: g.label, value: g.value, pct: g.pct })), expenseTotal: md.expenseTotal,
     liab: (md.liabilityBifurcation || []).map(x => ({ label: x.label, value: x.value, pct: x.pct })),
     composition: [...md.bsComposition.assets, ...md.bsComposition.liabEquity].map(x => ({ label: x.label, pct: x.pct })),
-    equityPct: (md.bsComposition.liabEquity.find(x => /equity/i.test(x.label)) || {}).pct ?? null, firstHeads };
+    equityPct: (md.bsComposition.liabEquity.find(x => /equity/i.test(x.label)) || {}).pct ?? null, firstHeads, nonStatementTabs };
 
   /* Dashboard (portal) */
   goPage('dashboard');
@@ -325,7 +364,9 @@ function inspectPage(){
   out.attention = (document.querySelector('#attention') || {}).innerText || '';
   out.equityPctText = out.equityPct === null ? null : pctText(out.equityPct);
 
-  /* Review & Edit */
+  /* Review & Edit (on a statement sheet: the first tab may be an index with no amounts) */
+  const stmtSheet = md.roles.plMonthly || md.roles.pl || md.roles.plComparative || md.roles.bs;
+  if (stmtSheet && md.roles.summary && (!state.active || state.active === md.roles.summary)){ state.active = stmtSheet; renderEditor(); }
   goPage('editor');
   const inputs = [...document.querySelectorAll('#editorTable td.num:not(.pct) input')].map(i => i.value);
   out.editorNumeric = inputs.length;
@@ -349,6 +390,16 @@ function inspectPage(){
     }
   }
   state.active = keepActive; renderEditor();
+
+  /* Review & Edit on a transaction list: dates shown as dates (mm/dd/yyyy), never dollar amounts */
+  out.editorDates = [];
+  const listingSheets = typeof window.reportListingSheets === 'function' ? window.reportListingSheets(md) : [];
+  if (listingSheets.length){
+    const keep = state.active; state.active = listingSheets[0]; renderEditor();
+    out.editorDates = [...document.querySelectorAll('#editorTable td.date input')].map(i => i.value);
+    out.editorDollarDates = [...document.querySelectorAll('#editorTable td.num input')].map(i => i.value).filter(v => /^\$4\d,\d{3}\.00$/.test(v));
+    state.active = keep; renderEditor();
+  }
 
   /* A/R & A/P Aging page */
   goPage('aging');
@@ -660,7 +711,26 @@ function checkWorkbook(w, r, excel, pdf, errors){
   if (!excel.ok) return;
   for (const s of e.excelSheets || []) check(`${tag} Rows 44-54 Excel sheet "${s}"`, excel.sheets.some(x => x.name === s), excel.sheets.map(x => x.name).join(', '));
   const notesTab = r.roles.notes && !/^(sheet|tab|page|table|data|worksheet|report)\s*\d*$/i.test(r.roles.notes) ? tabOf(r.roles.notes) : 'Notes';
-  const stmts = excel.sheets.filter(s => !['Cover', 'Analytical Summary', notesTab, 'Disclaimer'].includes(s.name));
+  const others = excel.sheets.filter(s => r.nonStatementTabs.includes(s.name));
+  const stmts = excel.sheets.filter(s => !['Cover', 'Analytical Summary', notesTab, 'Disclaimer'].includes(s.name) && !r.nonStatementTabs.includes(s.name));
+  if (e.indexLinks){
+    const idx = others.find(s => /<hyperlink /.test(s.xml));
+    const links = idx ? (idx.xml.match(/<hyperlink [^>]*location="[^"]+"/g) || []).length : 0;
+    check(`${tag} Summary index: ${e.indexLinks} "Click here to view!" links to this file's tabs`, links === e.indexLinks, links);
+    check(`${tag} Summary index: No. | Particulars | Link headings and the NOTE`, idx && idx.val('A5') === 'No.' && idx.val('B5') === 'Particulars' && /NOTE/.test(idx.xml));
+    check(`${tag} Summary is the first uploaded sheet in the PDF and Excel`, r.pages.map(p => p.id).filter(id => !['cover', 'toc', 'disc', 'dash'].includes(id))[0] === 'index' &&
+      excel.sheets.map(x => x.name)[3] === 'Summary');
+  }
+  if (e.listings) check(`${tag} Review & Edit shows transaction dates as dates, not dollars`, r.editorDates.length > 0 && r.editorDates.every(v => /^\d{2}\/\d{2}\/\d{4}$/.test(v)) && !(r.editorDollarDates || []).length,
+    r.editorDates.slice(0, 3).join(' ') + ' | ' + (r.editorDollarDates || []).slice(0, 3).join(' '));
+  for (const [tab, n] of Object.entries(e.listings || {})){
+    const sh = excel.sheets.find(s => s.name === tab);
+    const dataRows = sh ? new Set(sh.cells.filter(c => c.row > 5).map(c => c.row)).size : 0;
+    check(`${tag} Excel has the transaction list "${tab}" with its ${n} rows`, dataRows === n, dataRows);
+    check(`${tag} "${tab}": dates as dates, amounts in accounting format, headings frozen`, sh && sh.cells.some(c => c.col === 'A' && c.row === 6 && /yy/.test(c.fmt)) &&
+      sh.cells.some(c => c.row === 6 && c.numeric && /\(#,##0\.00\)/.test(c.fmt)) && sh.pane === 'B6');
+    check(`${tag} "${tab}" is not in the PDF`, !r.pages.some(p => p.text.includes(tab + '\n')) && !r.pages.some(p => p.anchor && p.anchor.includes(tab)));
+  }
   /* Tabs keep the uploaded names, in report order by statement type. */
   /* Excel tabs: Cover, Disclaimer, Analytical Summary, the statements in the uploaded workbook's tab order, notes last. */
   const tabs = excel.sheets.map(x => x.name);
@@ -709,7 +779,7 @@ function checkWorkbook(w, r, excel, pdf, errors){
     ? [{ name: path.basename(process.env.TRACKER_XLSX), file: fs.readFileSync(process.env.TRACKER_XLSX),
          /* TRACKER_EXPECT=expect.json adds the figures to check: { client, expect: { income, net, roles, periods, … } } */
          ...(process.env.TRACKER_EXPECT ? JSON.parse(fs.readFileSync(process.env.TRACKER_EXPECT, 'utf8')) : { expect: {} }) }]
-    : [row54Workbook(), plutoWorkbook(), plutoClientWorkbook(), uncategorizedWorkbook(), comparativePctWorkbook(), halfYearCashWorkbook(), ...fixtureWorkbooks()])
+    : [row54Workbook(), plutoWorkbook(), plutoClientWorkbook(), uncategorizedWorkbook(), senecaWorkbook(), comparativePctWorkbook(), halfYearCashWorkbook(), ...fixtureWorkbooks()])
     .filter(w => !process.env.TRACKER_ONLY || w.name.includes(process.env.TRACKER_ONLY));   // e.g. TRACKER_ONLY="Row 54"
   if (!books.length) throw new Error('No workbook matches TRACKER_ONLY=' + process.env.TRACKER_ONLY);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'udmr-'));
