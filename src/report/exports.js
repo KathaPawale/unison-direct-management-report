@@ -223,6 +223,11 @@ function _enforceSheetRules(wb){
       ws['!pageSetup'] = { landscape: width > 110 };
     }
     if (!ws['!margins']) ws['!margins'] = { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 };
+    /* One font everywhere, as in the PDF: Arial on every cell (a sheet built from plain rows would otherwise be Calibri). */
+    for (const [addr, cell] of Object.entries(ws)){
+      if (addr[0] === '!' || !cell || typeof cell !== 'object') continue;
+      cell.s = { ...(cell.s || {}), font: { sz: 10, ...((cell.s || {}).font || {}), name: 'Arial' } };
+    }
     const fz = ws['!freeze'];
     if (!XL_UNFROZEN.has(name) && !(fz && (fz.xSplit || fz.ySplit))){
       const range = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']) : { e: { c: 0 } };
