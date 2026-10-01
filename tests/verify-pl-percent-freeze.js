@@ -420,5 +420,23 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
   check('PDF: statements in the workbook tab order (BS before P&L)', order.indexOf('BS') < order.indexOf('P&L'));
 }
 
+/* One font everywhere, as in the PDF: every font in both Excel downloads is Arial. */
+{
+  const sheets = { 'PL': [...head('Profit and Loss'), ['', 'Total'], ...body(false)], 'BS': bs };
+  api.state.sheets = sheets; api.state.notes = 'Rent — renewed'; api.state.model = api.parseWorkbook(sheets);
+  for (const fn of ['downloadReportExcel', 'downloadDataExcel']){
+    downloads.length = 0; api[fn]();
+    const zip = XLSX.CFB.read(downloads[0].bytes, { type: 'array' });
+    const styles = new TextDecoder().decode(zip.FileIndex[zip.FullPaths.findIndex(p => p.endsWith('/xl/styles.xml'))].content);
+    const fonts = [...styles.matchAll(/<font>[^]*?<name val="([^"]+)"/g)].map(m => m[1]);
+    const used = new Set();
+    for (let i = 0; i < zip.FullPaths.length; i++) if (/worksheets\/sheet\d+\.xml$/.test(zip.FullPaths[i]))
+      for (const m of new TextDecoder().decode(zip.FileIndex[i].content).matchAll(/ s="(\d+)"/g)) used.add(+m[1]);
+    const xfs = [...styles.slice(styles.indexOf('<cellXfs')).matchAll(/<xf [^>]*fontId="(\d+)"/g)].map(m => +m[1]);
+    const usedFonts = [...used].map(i => fonts[xfs[i]]).filter(Boolean);
+    check(`Every font in the ${fn === 'downloadReportExcel' ? 'report' : 'data'} workbook is Arial (as in the PDF)`, usedFonts.length > 0 && usedFonts.every(f => f === 'Arial'), [...new Set(usedFonts)].join(','));
+  }
+}
+
 console.log(`${pass + fail} assertions, ${pass} pass, ${fail} fail`);
 process.exitCode = fail ? 1 : 0;
