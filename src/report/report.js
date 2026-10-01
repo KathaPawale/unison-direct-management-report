@@ -215,6 +215,9 @@ function _outerHeight(el){
 
 /* Split a statement into page bodies that fit. Wide statements go on landscape pages; very wide
  * ones are split into column groups (each group keeps the account labels). */
+/* The one font size of every statement table in the PDF (the P&L size), see paginateTableSection. */
+const STATEMENT_FONT_PX = 12;
+
 /* Splits table rows into page-sized chunks; a section heading row is never left alone at the foot of a page. */
 function _chunkRows(rows, heights, budgetFirst, budgetCont){
   const chunks = [];
@@ -234,6 +237,37 @@ function _chunkRows(rows, heights, budgetFirst, budgetCont){
   }
   if (cur.length) chunks.push(cur);
   return chunks;
+}
+
+/* The largest font (≤ STATEMENT_FONT_PX) at which a statement's table shows every figure uncut on its page width. */
+function _fittingFontPx(sm){
+  const cols = displayColumns(sm);
+  if (!sm.lines.length || !cols.length) return STATEMENT_FONT_PX;
+  const orientation = sm.role === 'plMonthly' || cols.length >= 12 || (sm.role === 'tb' && cols.length > 4) || cols.length > WIDE_TABLE_COLS ? 'landscape' : 'portrait';
+  const parts = reportTableParts(sm, { forExport: true, cols, compact: cols.length > 8, hideUncategorized: true });
+  const shell = _measureShell(orientation);
+  shell.innerHTML = `<table class="report-table grow${cols.length > 8 ? ' compact' : ''}${orientation === 'landscape' ? ' wide' : ''}">${parts.colgroup}<thead>${parts.theadHtml}</thead><tbody>` +
+    parts.rows.map(r => r.html).join('') + '</tbody></table>';
+  const tbl = shell.querySelector('table');
+  const overflowing = () => [...tbl.querySelectorAll('td.val, thead th')].some(td => td.scrollWidth > td.clientWidth + 0.5);
+  let fs = STATEMENT_FONT_PX;
+  tbl.style.setProperty('--grow-fs', fs + 'px');
+  while (overflowing() && fs > 6){ fs -= 0.25; tbl.style.setProperty('--grow-fs', fs + 'px'); }
+  $('#pdfMeasure').innerHTML = '';
+  return fs;
+}
+
+/* One font size for the whole report: the largest size every statement table (up to 10 columns) fits at. Wider tables
+ * (12 months + Total) may step down further so no figure is cut off. */
+function reportStatementFontPx(sections){
+  const md = state.model;
+  let fs = STATEMENT_FONT_PX;
+  for (const sec of sections){
+    const sm = sec.sheet && !sec.aging && !sec.index && md ? md.sheetModels[sec.sheet] : null;
+    if (!sm || displayColumns(sm).length > 10) continue;
+    try { fs = Math.min(fs, _fittingFontPx(sm)); } catch (e){ /* measurement unavailable: keep the standard size */ }
+  }
+  return fs;
 }
 
 function paginateTableSection(no, title, sm, opts = {}){
@@ -272,18 +306,17 @@ function paginateTableSection(no, title, sm, opts = {}){
       `<div class="mh2">${sectionHead(no, title, tableSectionSub(sm), true)}${marker}</div>` +
       `<table class="${tableCls}">${parts.colgroup}<thead>${parts.theadHtml}</thead><tbody>` +
       parts.rows.map(r => r.html).join('') + '</tbody></table>';
-    /* Row 21: no column may be cut off. If any amount is wider than its cell (large figures on a
-     * 12-month landscape P&L), step the table's font down until every cell fits (floor 6px). */
+    /* One font size for every statement table (user, 2026-10-01: Balance Sheet and P&L must not differ) — STATEMENT_FONT_PX.
+     * Row 21: a column is never cut off — only a table too wide for that size (a 12-month P&L) steps down until every
+     * cell fits (floor 6px). */
     const tbl = shell.querySelector('table');
     const overflowing = () => [...tbl.querySelectorAll('td.val, thead th')].some(td => td.scrollWidth > td.clientWidth + 0.5);
-    let fitAttr = '';
-    if (overflowing()){
-      tbl.classList.add('fit');
-      let fs = 9;
-      for (; fs > 6; fs -= 0.25){ tbl.style.setProperty('--fit-fs', fs + 'px'); if (!overflowing()) break; }
-      tableCls += ' fit';
-      fitAttr = ` style="--fit-fs:${fs}px"`;
-    }
+    tbl.classList.add('grow');
+    let fs = Math.min(STATEMENT_FONT_PX, opts.fontPx || STATEMENT_FONT_PX);
+    tbl.style.setProperty('--grow-fs', fs + 'px');
+    while (overflowing() && fs > 6){ fs -= 0.25; tbl.style.setProperty('--grow-fs', fs + 'px'); }
+    tableCls += ' grow';
+    const fitAttr = ` style="--grow-fs:${fs}px"`;
     const avail = _bodyBudget(orientation);
     const layout = () => {
       const h1 = _outerHeight(shell.querySelector('.mh1'));
@@ -292,22 +325,7 @@ function paginateTableSection(no, title, sm, opts = {}){
       const heights = [...shell.querySelectorAll('tbody tr')].map(tr => tr.getBoundingClientRect().height || 18);
       return _chunkRows(parts.rows, heights, avail - h1 - theadH - 6, avail - h2 - theadH - 6);
     };
-    let chunks = layout();
-    /* Readable size: when nothing is cut off, the table grows to the largest font (portrait 12px, landscape 11px)
-     * that still fits every figure and needs no more pages than the standard size — no half-empty pages of tiny print. */
-    if (!fitAttr){
-      const pages = chunks.length;
-      tbl.classList.add('grow');
-      let best = null;
-      for (let fs = orientation === 'landscape' ? 11 : 12; fs >= 9; fs -= 0.5){
-        tbl.style.setProperty('--grow-fs', fs + 'px');
-        if (overflowing()) continue;
-        const c = layout();
-        if (c.length <= pages){ best = fs; chunks = c; break; }
-      }
-      if (best){ tableCls += ' grow'; fitAttr = ` style="--grow-fs:${best}px"`; }
-      else { tbl.classList.remove('grow'); chunks = layout(); }
-    }
+    const chunks = layout();
     /* Rows 26/28/43: a monthly P&L (or trial balance) keeps ALL its columns — every month and the
      * Total — on each landscape page; only a statement too long for one page continues by rows onto
      * the next page, with the column header repeated. */
@@ -747,14 +765,14 @@ function listingHeaderRow(sm, rows){
 }
 
 /* The index as a PDF page: No. | Particulars, then the note. */
-function indexSectionBody(no, title, sheet){
+function indexSectionBody(no, title, sheet, fontPx = STATEMENT_FONT_PX){
   const idx = indexSheetEntries(sheet, state.sheets[sheet] || []);
   /* The PDF index lists only sheets that are in the PDF (transaction lists and uncategorized sheets are Excel only). */
   const inPdf = new Set(reportSections().filter(s => s.sheet && !s.index).map(s => s.sheet));
   const entries = idx.entries.filter(e => inPdf.has(e.sheet)), notes = idx.notes;
   const rows = entries.map(e => `<tr><td class="val" style="text-align:center">${escapeHtml(e.no)}</td><td class="lbl">${escapeHtml(e.label)}</td></tr>`).join('');
   return sectionHead(no, title) +
-    `<div class="report-table-wrap"><table class="report-table roomy"><colgroup><col style="width:12%"><col style="width:88%"></colgroup>` +
+    `<div class="report-table-wrap"><table class="report-table grow" style="--grow-fs:${fontPx}px"><colgroup><col style="width:12%"><col style="width:88%"></colgroup>` +
     `<thead><tr><th style="text-align:center">No.</th><th class="lbl">Particulars</th></tr></thead><tbody>${rows}</tbody></table></div>` +
     notes.map(t => `<div class="report-notes" style="margin-top:14px"><b>NOTE:</b> ${escapeHtml(t)}</div>`).join('');
 }
@@ -803,6 +821,7 @@ function reportSections(){
 function buildPages({ forExport = false } = {}){
   const sections = reportSections();
   const md = state.model;
+  const reportFontPx = reportStatementFontPx(sections);   // one table font for the whole report
   const pages = [];   // {sectionNo, sectionId, title, body, orientation}
 
   let contentNo = 0;
@@ -819,11 +838,11 @@ function buildPages({ forExport = false } = {}){
           break;
         case 'notes': bodies = paginateNotesSection(no, sec.title); break;
         case 'disc':  bodies = [{ body: disclaimerBody(no, sec.title) }]; break;
-        case 'index': bodies = [{ body: indexSectionBody(no, sec.title, sec.sheet) }]; break;
+        case 'index': bodies = [{ body: indexSectionBody(no, sec.title, sec.sheet, reportFontPx) }]; break;
         default: {
-          if (sec.aging){ bodies = [{ body: sectionHead(no, sec.title, md.bsAsOf || state.period) + agingTableHtml(sec.aging) }]; break; }
+          if (sec.aging){ bodies = [{ body: sectionHead(no, sec.title, md.bsAsOf || state.period) + `<div style="--aging-fs:${reportFontPx}px">` + agingTableHtml(sec.aging) + '</div>' }]; break; }
           const sm = md && md.sheetModels[sec.sheet];
-          bodies = sm ? paginateTableSection(no, sec.title, sm, { forExport })
+          bodies = sm ? paginateTableSection(no, sec.title, sm, { forExport, fontPx: reportFontPx })
                       : [{ body: sectionHead(no, sec.title) + '<div class="report-empty">No matching worksheet found.</div>' }];
         }
       }

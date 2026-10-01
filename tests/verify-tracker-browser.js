@@ -454,6 +454,7 @@ function inspectPage(){
       centered: hc ? getComputedStyle(hc).textAlign === 'center' : null,
       netNegOk: netRows.every(tr => [...tr.cells].slice(1).every(td => !/^\(\$/.test(td.textContent.trim()) || td.classList.contains('neg') && getComputedStyle(td).color === 'rgb(201, 52, 56)')),
       tableRows: el.querySelectorAll('.report-table tbody tr').length,
+      tableFs: (() => { const td = el.querySelector('.report-table tbody td.lbl'); return td ? parseFloat(getComputedStyle(td).fontSize) : null; })(),
       usedFraction: (contentBottom - r0.top) / (fTop - r0.top),
       watermark: (el.querySelector('.report-watermark') || {}).textContent || '',
       coverNameFits: p.sectionId === 'cover' ? [...el.querySelectorAll('h1')].every(h => h.scrollWidth <= h.clientWidth + 1 && h.getBoundingClientRect().right <= r0.right + 0.5) : null,
@@ -686,6 +687,11 @@ function checkWorkbook(w, r, excel, pdf, errors){
 
   /* Row 37: zero rows left out of the PDF */
   for (const z of e.zeroRows || []) check(`${tag} Row 37 zero-balance ledger "${z}" left out of the PDF`, !content.some(p => p.id !== 'dash' && new RegExp('^\\s*' + z.replace(/[&]/g, '\\$&') + '\\s', 'm').test(p.text)));
+
+  /* One font size for every statement table in the PDF (Balance Sheet = P&L); only a very wide table (12+ columns) may shrink. */
+  const fsPages = content.filter(p => p.id !== 'dash' && p.tableFs && p.headers.length <= 10);
+  check(`${tag} Same font size on every statement page (${[...new Set(fsPages.map(p => p.tableFs))].join(', ')}px)`, new Set(fsPages.map(p => p.tableFs)).size <= 1,
+    fsPages.map(p => p.id + ':' + p.tableFs).join(', '));
 
   /* Row 38: no half-empty page before a continuation page */
   const early = r.pages.filter((p, i) => i + 1 < r.pages.length && r.pages[i + 1].id === p.id && p.id !== 'cover' && p.usedFraction < 0.5);
