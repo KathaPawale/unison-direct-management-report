@@ -244,7 +244,7 @@ function _fittingFontPx(sm){
   const cols = displayColumns(sm);
   if (!sm.lines.length || !cols.length) return STATEMENT_FONT_PX;
   const orientation = sm.role === 'plMonthly' || cols.length >= 12 || (sm.role === 'tb' && cols.length > 4) || cols.length > WIDE_TABLE_COLS ? 'landscape' : 'portrait';
-  const parts = reportTableParts(sm, { forExport: true, cols, compact: cols.length > 8, hideUncategorized: true });
+  const parts = reportTableParts(sm, { forExport: true, cols, compact: cols.length > 8 });
   const shell = _measureShell(orientation);
   shell.innerHTML = `<table class="report-table grow${cols.length > 8 ? ' compact' : ''}${orientation === 'landscape' ? ' wide' : ''}">${parts.colgroup}<thead>${parts.theadHtml}</thead><tbody>` +
     parts.rows.map(r => r.html).join('') + '</tbody></table>';
@@ -297,7 +297,7 @@ function paginateTableSection(no, title, sm, opts = {}){
   groups.forEach((cols, gi) => {
     const orientation = forceLandscape || tbLandscape || cols.length > WIDE_TABLE_COLS ? 'landscape' : 'portrait';
     const compact = cols.length > 8;
-    const parts = reportTableParts(sm, { ...opts, cols, compact, hideUncategorized: true });
+    const parts = reportTableParts(sm, { ...opts, cols, compact });
     const marker = groups.length > 1 ? `<div class="wide-col-marker">Columns ${escapeHtml(_headLabel(cols[0]))} – ${escapeHtml(_headLabel(cols[cols.length - 1]))}</div>` : '';
     let tableCls = 'report-table' + (compact ? ' compact' : '') + (orientation === 'landscape' ? ' wide' : '') + (cols.length <= 4 || forceLandscape ? ' roomy' : '');
     const shell = _measureShell(orientation);
@@ -511,8 +511,7 @@ function dashboardBodies(no, title){
       chartLegend(series) + svgGroupedBars({ series, labels: ps.map(x => x.label), height: 220 }));
   }
 
-  /* Uncategorized expense lines are left out of the PDF (their shares of total expenses are unchanged). */
-  const pdfGroups = md.expenseGroups.filter(g => !UNCATEGORIZED_LINE_RE.test(labelKey(g.label)));
+  const pdfGroups = md.expenseGroups;
   if (pdfGroups.length){
     const top = pdfGroups.slice(0, 10);
     blocks.push(`<div class="report-section-title">Expense Breakdown — Top ${top.length} Categories</div>` +
@@ -535,14 +534,17 @@ function dashboardBodies(no, title){
     blocks.push('<div class="report-section-title">Receivables &amp; Payables</div>' + svgHBars({ items, color: CHART_COLORS.teal, showPct: false }));
   }
 
+  /* Balance Sheet Composition (both donuts) and the Liabilities Bifurcation are one block: never split across pages. */
+  const lt = liabilitiesTableHtml('report-mini-table');
+  let bsBlock = '';
   if (md.bsComposition.assets.length || md.bsComposition.liabEquity.length){
-    blocks.push('<div class="report-section-title">Balance Sheet Composition</div><div class="donut-row">' +
+    bsBlock += '<div class="report-section-title">Balance Sheet Composition</div><div class="donut-row">' +
       (md.bsComposition.assets.length ? donutChart({ items: md.bsComposition.assets, title: 'Assets — ' + money(m.assets) }) : '') +
       (md.bsComposition.liabEquity.length ? donutChart({ items: md.bsComposition.liabEquity, title: 'Liabilities & Equity — ' + money(m.totalLE ?? (m.liabilities + m.equity)) }) : '') +
-      '</div>');
+      '</div>';
   }
-  const lt = liabilitiesTableHtml('report-mini-table');
-  if (lt) blocks.push({ html: '<div class="report-section-title">Liabilities Bifurcation</div>' + lt, orphanGuard: true });
+  if (lt) bsBlock += '<div class="report-section-title">Liabilities Bifurcation</div>' + lt;
+  if (bsBlock) blocks.push({ html: '<div class="bs-composition-block">' + bsBlock + '</div>' });
 
   return paginateBlocks(no, title, blocks);
 }
@@ -802,7 +804,6 @@ function reportSections(){
    * Disclaimer and Dashboard, the other sheets in workbook order, and the Notes last. */
   const idx = md ? reportIndexSheet(md) : null;
   if (idx) sections.push({ id: 'index', title: isGenericTabName(idx) ? 'Summary' : cellText(idx), sheet: idx, index: true });
-  sections.push({ id: 'disc', title: 'Management Purpose Disclaimer' });
   if (md){
     sections.push({ id: 'dash', title: 'Analytical Dashboard' });
     /* Statements follow the uploaded workbook's tab order (user, 2026-09-30); Disclaimer and Dashboard first, Notes last. */
@@ -813,8 +814,9 @@ function reportSections(){
     statements.sort((a, b) => workbookIndex(a.sheet) - workbookIndex(b.sheet));
     sections.push(...statements);
   }
-  /* Notes are always the last section. */
+  /* Notes, then the Management Purpose Disclaimer on the last page (user, 2026-10-07). */
   sections.push({ id: 'notes', title: notesHeading(md) });
+  sections.push({ id: 'disc', title: 'Management Purpose Disclaimer' });
   return sections;
 }
 

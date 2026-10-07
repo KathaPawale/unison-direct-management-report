@@ -19,7 +19,7 @@ function check(label, condition){
 check('Row 44 PL name detection', /\b(pl|p&l|profit)/i.test(parser) && /detectRoles/.test(parser));
 check('Row 45 BS_Comparative regex', /bs.*comparative|bsComparative/i.test(parser));
 check('Row 46 TrialBalance role', /trial ?balance|role.*['"]tb['"]/i.test(parser) || /['"]tb['"]/.test(src));
-check('Row 46 tb tabColor', /tb:\s*['"]?[0-9A-F]{6}/i.test(src));
+check('Row 41/46 one tab colour (header navy) for every sheet', /ws\['!tabColor'\] = \{ rgb: XL\.navy \}/.test(src));
 check('Row 47 freeze row 5', /freezeRow\s*=\s*5|ySplit:\s*5/.test(src));
 check('Row 48/51 statement heading has no USD note', !/function tableSectionSub[\s\S]*?US Dollars[\s\S]*?\n}/.test(rep.slice(rep.indexOf('function tableSectionSub'), rep.indexOf('function pageFooter'))));
 check('Row 48/51 Excel heading row 3 uses the shared subtitle', /_wsSetCell\(ws, 2, 0, tableSectionSub\(sm\)/.test(src));

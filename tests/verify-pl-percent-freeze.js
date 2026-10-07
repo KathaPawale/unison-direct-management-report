@@ -103,7 +103,7 @@ for (const [name, sheets] of Object.entries(layouts)){
   /* Report order (user, 2026-09-30): Disclaimer, Dashboard, the statements in the uploaded workbook's tab order, Notes last. */
   const secsNow = api.reportSections().slice(2);
   const stmtSheets = secsNow.filter(x => x.sheet).map(x => x.sheet);
-  check(`${name}: report sections follow the workbook's tab order`, secsNow[0].id === 'disc' && secsNow[1].id === 'dash' && secsNow[secsNow.length - 1].id === 'notes' &&
+  check(`${name}: report sections follow the workbook's tab order`, secsNow[0].id === 'dash' && secsNow[secsNow.length - 2].id === 'notes' && secsNow[secsNow.length - 1].id === 'disc' &&
     stmtSheets.join('|') === [...stmtSheets].sort((a, b) => Object.keys(sheets).indexOf(a) - Object.keys(sheets).indexOf(b)).join('|'));
   const parts = api.reportTableParts(md.sheetModels[pctName], {});
   const net = parts.rows.find(r => /Net Income/.test(r.html));
@@ -328,11 +328,11 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
     api.state.sheets = sheets; api.state.client = 'Pluto Asset Recovery'; const md = api.parseWorkbook(sheets); api.state.model = md;
     const secs = api.reportSections();
     for (const [tab, title] of Object.entries(want)) check(`Heading from the sheet (${label}): "${tab}" is "${title}"`, secs.some(x => x.sheet === tab && x.title === title));
-    check(`Notes last in the PDF / TOC (${label})`, secs[secs.length - 1].id === 'notes');
+    check(`Notes, then the Disclaimer on the last page (${label})`, secs[secs.length - 2].id === 'notes' && secs[secs.length - 1].id === 'disc');
     downloads.length = 0; api.downloadReportExcel();
     const tabs = XLSX.read(downloads[0].bytes, { type: 'array' }).SheetNames;
     const notesTab = md.roles.notes || 'Notes';
-    check(`Notes last in the Excel tabs (${label}): "${notesTab}"`, tabs[tabs.length - 1] === notesTab);
+    check(`Excel tabs end with "${notesTab}", then the Disclaimer (${label})`, tabs[tabs.length - 2] === notesTab && tabs[tabs.length - 1] === 'Disclaimer');
   }
 }
 
@@ -404,10 +404,10 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
   const sheets = { 'BS': bsU, 'Monthly Note': [['Management Notes'], ['Sales — strong quarter']], 'P&L': plU };
   api.state.sheets = sheets; api.state.client = 'Pluto Asset Recovery'; const md = api.parseWorkbook(sheets); api.state.model = md;
   check('Uncategorized: the figures still include them (income 1,250, assets 600)', md.metrics.income === 1250 && md.metrics.assets === 600);
-  /* The PDF tables are built with hideUncategorized (paginateTableSection); the browser suite checks the rendered pages. */
-  const pdfText = ['P&L', 'BS'].map(n => api.reportTableParts(md.sheetModels[n], { forExport: true, hideUncategorized: true }).rows.map(r => r.html).join(' ')).join(' ').replace(/<[^>]+>/g, ' ');
-  check('Uncategorized: no "Uncategorized …" line in the PDF tables', !/Uncategori[sz]ed/i.test(pdfText) && /Sales/.test(pdfText) && /Checking/.test(pdfText));
-  check('Uncategorized: the PDF pages are built with hideUncategorized', /reportTableParts\(sm, \{ \.\.\.opts, cols, compact, hideUncategorized: true \}\)/.test(fs.readFileSync(path.join(root, 'src/report/report.js'), 'utf8')));
+  /* Uncategorized Income / Expenses are shown in the P&L (and every statement) in the PDF too (user, 2026-10-07). */
+  const pdfText = ['P&L', 'BS'].map(n => api.reportTableParts(md.sheetModels[n], { forExport: true }).rows.map(r => r.html).join(' ')).join(' ').replace(/<[^>]+>/g, ' ');
+  check('Uncategorized: Uncategorized Income / Expense / Asset lines are in the PDF statement tables', /Uncategorized Income/.test(pdfText) && /Uncategorized Expense/.test(pdfText) && /Uncategorized Asset/.test(pdfText));
+  check('Uncategorized: the PDF pages are not built with hideUncategorized', !/hideUncategorized: true/.test(fs.readFileSync(path.join(root, 'src/report/report.js'), 'utf8')));
   check('Uncategorized: shown on the app statement page', /Uncategorized Income/.test(api.reportTableParts(md.sheetModels['P&L'], {}).rows.map(r => r.html).join('')));
   downloads.length = 0; api.downloadReportExcel();
   const back = XLSX.read(downloads[0].bytes, { type: 'array' });
@@ -415,7 +415,7 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
   check('Uncategorized: kept in the Excel report with their values', cells('P&L').includes('Uncategorized Income') && cells('P&L').includes(250) &&
     cells('P&L').includes('Uncategorized Expense') && cells('BS').includes('Uncategorized Asset'));
   const stmts = back.SheetNames.filter(n => !['Cover', 'Disclaimer', 'Analytical Summary'].includes(n));
-  check('Excel tabs: statements in the workbook tab order (BS before P&L), notes last', stmts.indexOf('BS') < stmts.indexOf('P&L') && back.SheetNames[back.SheetNames.length - 1] === 'Monthly Note');
+  check('Excel tabs: statements in the workbook tab order (BS before P&L), notes, Disclaimer last', stmts.indexOf('BS') < stmts.indexOf('P&L') && back.SheetNames[back.SheetNames.length - 2] === 'Monthly Note' && back.SheetNames[back.SheetNames.length - 1] === 'Disclaimer');
   const order = api.reportSections().filter(x => x.sheet).map(x => x.sheet);
   check('PDF: statements in the workbook tab order (BS before P&L)', order.indexOf('BS') < order.indexOf('P&L'));
 }
