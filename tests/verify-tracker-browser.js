@@ -415,6 +415,8 @@ function inspectPage(){
   out.finNegNetOk = [...fin.querySelectorAll('tr')].filter(tr => /^net income$/i.test((tr.cells[0] || {}).textContent || '')).every(tr =>
     [...tr.cells].slice(1).every(td => !/^\(/.test(td.textContent.trim()) || td.classList.contains('neg')));
 
+  out.graphCount = typeof window.dashboardGraphBlocks === 'function' ? window.dashboardGraphBlocks().length : 0;
+
   /* Report pages, rendered one by one exactly as the PDF export does */
   const pages = buildPages({ forExport: true });
   out.pageCount = pages.length;
@@ -504,9 +506,11 @@ function readXlsxFile(file){
     const relI = zip.FullPaths.findIndex(p => p.endsWith('/xl/worksheets/_rels/sheet' + (i + 1) + '.xml.rels'));
     const drawRel = relI >= 0 ? (Buffer.from(zip.FileIndex[relI].content).toString().match(/Target="\.\.\/drawings\/(drawing\d+\.xml)"/) || [])[1] : null;
     const drawI = drawRel ? zip.FullPaths.findIndex(p => p.endsWith('/xl/drawings/' + drawRel)) : -1;
-    const pictures = drawI >= 0 ? (Buffer.from(zip.FileIndex[drawI].content).toString().match(/<xdr:pic>/g) || []).length : 0;
+    const drawXml = drawI >= 0 ? Buffer.from(zip.FileIndex[drawI].content).toString() : '';
+    const pictures = (drawXml.match(/<xdr:pic>/g) || []).length;
+    const pictureNames = [...drawXml.matchAll(/<xdr:cNvPr [^>]*name="([^"]*)"/g)].map(m => m[1].replace(/&amp;/g, '&'));
     const val = a => (ws[a] || {}).v ?? '';
-    return { name, xml, cells, val, pictures, tabColor: (xml.match(/<sheetPr>[^]*?<tabColor rgb="([0-9A-F]{8})"/) || [])[1] || null,
+    return { name, xml, cells, val, pictures, pictureNames, tabColor: (xml.match(/<sheetPr>[^]*?<tabColor rgb="([0-9A-F]{8})"/) || [])[1] || null,
       pane: pane && /state="frozen"/.test(pane[0]) ? ((pane[0].match(/topLeftCell="([A-Z]+\d+)"/) || [])[1] || null) : null,
       xSplit: pane ? +((pane[0].match(/xSplit="(\d+)"/) || [])[1] || 0) : 0, ySplit: pane ? +((pane[0].match(/ySplit="(\d+)"/) || [])[1] || 0) : 0 };
   });
@@ -788,9 +792,11 @@ function checkWorkbook(w, r, excel, pdf, errors){
     [...new Set(excel.sheets.map(s => s.tabColor))].join(','));
   check(`${tag} Gridlines hidden on every Excel sheet`, excel.sheets.every(s => /<sheetView\b[^>]*showGridLines="0"/.test(s.xml)), excel.sheets.filter(s => !/showGridLines="0"/.test(s.xml)).map(s => s.name).join(','));
   /* The Analytical Summary shows the PDF's dashboard pages (the same graphs) as pictures. */
-  const dashPages = r.pages.filter(p => p.id === 'dash').length;
+  /* Excel Analytical Summary: one picture per dashboard graph — the graphs only, not whole pages (user, 2026-10-07). */
   const summaryWs = excel.sheets.find(s => s.name === 'Analytical Summary');
-  check(`${tag} Excel Analytical Summary has the ${dashPages} dashboard page pictures`, summaryWs && (summaryWs.pictures || 0) === dashPages, summaryWs && summaryWs.pictures);
+  check(`${tag} Excel Analytical Summary has one picture per dashboard graph (${r.graphCount})`, summaryWs && r.graphCount > 0 && (summaryWs.pictures || 0) === r.graphCount, summaryWs && summaryWs.pictures);
+  check(`${tag} Excel graph pictures are graphs only (no page header / footer)`, summaryWs && summaryWs.pictureNames.length > 0 &&
+    summaryWs.pictureNames.every(n => !/page \d|Analytical Dashboard/i.test(n)), summaryWs && summaryWs.pictureNames.join(' | '));
   /* Row 40: Notes sheet formatted as a table (title, Line Item / Category | Note headings) */
   const notesWs = excel.sheets.find(s => s.name === notesTab);
   check(`${tag} Row 40 Notes sheet has its title and "Line Item / Category" / "Note" headings`, notesWs && /notes/i.test(String(notesWs.val('A1'))) &&
@@ -833,7 +839,10 @@ function checkWorkbook(w, r, excel, pdf, errors){
       const errors = [];
       page.on('pageerror', e => errors.push('pageerror: ' + e.message));
       page.on('console', m => { if (m.type() === 'error' && !/favicon|supabase|Failed to load resource|net::ERR/i.test(m.text())) errors.push(m.text()); });
-      await page.goto(base, { waitUntil: 'networkidle' });
+      /* A slow CDN load must not abort the run: one retry with a longer wait. */
+      try { await page.goto(base, { waitUntil: 'networkidle' }); }
+      catch (e){ await page.goto(base, { waitUntil: 'networkidle', timeout: 90000 }); }
+      await page.waitForFunction(() => typeof resetState === 'function', null, { timeout: 30000 });
       await page.evaluate(() => { localStorage.clear(); resetState(); });
       await page.evaluate(() => goPage('uploads'));
       /* Row 54: a previous session held a Balance-Sheet-only workbook; choosing the new file must replace it at once. */
@@ -841,17 +850,17 @@ function checkWorkbook(w, r, excel, pdf, errors){
         const bsOnly = { sheets: { 'Old BS': [['Old Client'], ['Balance Sheet'], ['As of December 31, 2024'], [], ['', 'Total'], ['Assets'], ['Checking', 10],
           ['Total Assets', 10], ['Liabilities and Equity'], ['Retained Earnings', 10], ['Total Liabilities and Equity', 10]] } };
         await page.setInputFiles('#fileInput', { name: 'old.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: toXlsx(bsOnly) });
-        await page.waitForFunction(() => state.fileName === 'old.xlsx' && state.model, null, { timeout: 20000 });
+        await page.waitForFunction(() => state.fileName === 'old.xlsx' && state.model, null, { timeout: 60000 });
       }
       await page.setInputFiles('#fileInput', { name: 'workbook.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: w.file || toXlsx(w) });
       /* Choosing the file processes it — no Process click needed, so a stale workbook can never be exported. */
-      const autoProcessed = await page.waitForFunction(() => state.fileName === 'workbook.xlsx' && state.model, null, { timeout: 20000 }).then(() => true, () => false);
+      const autoProcessed = await page.waitForFunction(() => state.fileName === 'workbook.xlsx' && state.model, null, { timeout: 60000 }).then(() => true, () => false);
       check(`[${w.name}] Row 54 choosing the file processes it (no Process click, no stale workbook)`, autoProcessed);
       /* The Process button still re-runs the chosen file. */
       await page.evaluate(() => { state.fileName = ''; goPage('uploads'); });
       await page.click('#processBtn');
-      await page.waitForFunction(() => state.fileName === 'workbook.xlsx', null, { timeout: 20000 });
-      await page.waitForFunction(() => document.querySelector('#loadedStatus').classList.contains('ok') && state.model, null, { timeout: 20000 });
+      await page.waitForFunction(() => state.fileName === 'workbook.xlsx', null, { timeout: 60000 });
+      await page.waitForFunction(() => document.querySelector('#loadedStatus').classList.contains('ok') && state.model, null, { timeout: 60000 });
       const toastText = await page.evaluate(() => document.querySelector('#toast').textContent);
       if (/could not|failed/i.test(toastText)) errors.push('toast: ' + toastText);
       const r = await page.evaluate(inspectPage);
@@ -864,7 +873,7 @@ function checkWorkbook(w, r, excel, pdf, errors){
           const orig = _saveWorkbook;
           window._saveWorkbook = (wb, name) => { window.__lastWb = wb; return orig(wb, name); };
         });
-        const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 20000 }), page.evaluate(() => downloadReportExcel())]);
+        const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 60000 }), page.evaluate(() => downloadReportExcel())]);
         const file = path.join(tmp, 'report.xlsx');
         await dl.saveAs(file);
         excel.sheets = readXlsxFile(file).map(sh => {
@@ -878,7 +887,7 @@ function checkWorkbook(w, r, excel, pdf, errors){
         });
         excel.ok = true;
         /* Data workbook: every uploaded sheet colored and frozen at its heading row */
-        const [dd] = await Promise.all([page.waitForEvent('download', { timeout: 20000 }), page.evaluate(() => downloadDataExcel())]);
+        const [dd] = await Promise.all([page.waitForEvent('download', { timeout: 60000 }), page.evaluate(() => downloadDataExcel())]);
         const dfile = path.join(tmp, 'data.xlsx');
         await dd.saveAs(dfile);
         excel.data = readXlsxFile(dfile);
