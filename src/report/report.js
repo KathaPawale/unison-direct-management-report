@@ -543,6 +543,7 @@ function dashboardBodies(no, title, opts = {}){
   const lt = liabilitiesTableHtml('report-mini-table');
   if (lt) blocks.push({ html: '<div class="report-section-title">Liabilities Bifurcation</div>' + lt, orphanGuard: true });
 
+  if (opts.blocksOnly) return blocks.map(b => typeof b === 'string' ? b : b.html);
   return paginateBlocks(no, title, blocks);
 }
 
@@ -815,6 +816,15 @@ function reportSections(){
   sections.push({ id: 'notes', title: notesHeading(md) });
   sections.push({ id: 'disc', title: 'Management Purpose Disclaimer' });
   return sections;
+}
+
+/* The dashboard's graphs only (each chart with its title and legend — no tiles, tables, headers or footers), for the
+ * Excel Analytical Summary. Includes the Balance Sheet Composition wherever the PDF places it. */
+function dashboardGraphBlocks(){
+  const md = state.model;
+  if (!md) return [];
+  return dashboardBodies(0, 'Analytical Dashboard', { blocksOnly: true, compositionOnBalanceSheet: false })
+    .filter(html => /<svg\b/.test(html) || /donut/.test(html));
 }
 
 /* The Balance Sheet Composition diagram (both donuts), as one block. */

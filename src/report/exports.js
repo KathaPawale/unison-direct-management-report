@@ -278,7 +278,7 @@ function _addSheetImages(zip, wb){
       rels.push(`<Relationship Id="rId${k + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image${img}.png"/>`);
       const cx = Math.round(widthPx * EMU), cy = Math.round(widthPx * it.h / it.w * EMU);
       anchors.push(`<xdr:oneCellAnchor><xdr:from><xdr:col>${spec.col || 0}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${rowAt}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>` +
-        `<xdr:ext cx="${cx}" cy="${cy}"/><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="${k + 2}" name="${(spec.names || [])[k] || 'Picture ' + (k + 1)}"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr>` +
+        `<xdr:ext cx="${cx}" cy="${cy}"/><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="${k + 2}" name="${String((spec.names || [])[k] || 'Picture ' + (k + 1)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')}"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr>` +
         `<xdr:blipFill><a:blip r:embed="rId${k + 1}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>` +
         `<xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:oneCellAnchor>`);
       rowAt += Math.ceil(widthPx * it.h / it.w / 20) + 2;            // ~20px rows: the next picture starts below this one
@@ -305,29 +305,27 @@ function _addSheetImages(zip, wb){
   return drawingNo > 0;
 }
 
-/* The Analytical Dashboard pages of the PDF, rendered as PNG pictures (the same graphs and tables) for the Excel
- * Analytical Summary. Empty when the page renderer is not available. */
+/* The dashboard graphs (Monthly Revenue vs Net Income, Net Margin, Expense Breakdown, Aging, Balance Sheet Composition),
+ * each rendered alone as a PNG picture — only the graph with its title and legend — for the Excel Analytical Summary
+ * (user, 2026-10-07: graphs only, not whole pages). Empty when the page renderer is not available. */
 async function _dashboardImages(){
   if (typeof window === 'undefined' || typeof window.html2canvas !== 'function') return [];
-  const pages = buildPages({ forExport: true }).filter(p => p.sectionId === 'dash');
+  const blocks = dashboardGraphBlocks();
   const host = document.createElement('div');
-  host.style.cssText = 'position:absolute;top:' + window.scrollY + 'px;left:-20000px;width:1056px;background:#fff';
+  host.style.cssText = 'position:absolute;top:' + window.scrollY + 'px;left:-20000px;background:#fff';
   document.body.appendChild(host);
   const out = [];
   try {
-    for (const p of pages){
-      const land = p.orientation === 'landscape';
-      host.style.width = (land ? PAGE_H : PAGE_W) + 'px';
-      host.innerHTML = p.html;
+    for (const html of blocks){
+      /* A report page's styles, without its page size, header or footer: just the graph. */
+      host.innerHTML = '<div class="report-page" style="width:' + PAGE_W + 'px;min-width:0;max-width:none;height:auto;min-height:0;padding:6px 24px 14px;box-shadow:none;margin:0;overflow:visible">' + html + '</div>';
       const el = host.firstElementChild;
-      if (!el) continue;
-      el.style.margin = '0'; el.style.boxShadow = 'none';
-      const canvas = await html2canvas(el, { scale: 1.25, useCORS: true, logging: false, backgroundColor: '#ffffff',
-        width: land ? PAGE_H : PAGE_W, height: land ? PAGE_W : PAGE_H, windowWidth: land ? PAGE_H : PAGE_W });
+      const title = (el.querySelector('.report-section-title') || {}).textContent || 'Graph';
+      const canvas = await html2canvas(el, { scale: 1.5, useCORS: true, logging: false, backgroundColor: '#ffffff', width: el.offsetWidth, height: el.offsetHeight, windowWidth: PAGE_W });
       const bin = atob(canvas.toDataURL('image/png').split(',')[1]);
       const bytes = new Uint8Array(bin.length);
       for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
-      out.push({ bytes, w: canvas.width, h: canvas.height });
+      out.push({ bytes, w: canvas.width, h: canvas.height, name: title.trim() });
     }
   } finally { host.remove(); }
   return out;
@@ -814,12 +812,12 @@ function downloadReportExcel(){
   /* … Notes, and the Disclaimer as the last tab (as on the last PDF page). */
   wb.SheetNames = ['Cover', ...(indexTab ? [indexTab] : []), 'Analytical Summary', ...statementTabs.filter(t => t !== indexTab), notesTab, 'Disclaimer'];
   const save = () => { if (_saveWorkbook(wb, _reportFileBase() + '-Management-Report.xlsx')) toast('Excel report downloaded'); };
-  /* The Analytical Summary also shows the PDF's dashboard pages (the same graphs), below its tables. */
+  /* The Analytical Summary also shows the PDF dashboard's graphs (each alone, no page), below its tables. */
   if (typeof window !== 'undefined' && typeof window.html2canvas === 'function'){
     return _dashboardImages().then(imgs => {
       if (imgs.length){
-        _wsSetCell(s, nextRow + 1, 0, 'Analytical Dashboard — as in the PDF report', XL_STYLES.section, null, { border: false });
-        s['!images'] = { row: nextRow + 2, col: 0, widthPx: 760, items: imgs, names: imgs.map((x, k) => 'Analytical Dashboard page ' + (k + 1)) };
+        _wsSetCell(s, nextRow + 1, 0, 'Graphs — as in the PDF Analytical Dashboard', XL_STYLES.section, null, { border: false });
+        s['!images'] = { row: nextRow + 2, col: 0, widthPx: 640, items: imgs, names: imgs.map(x => x.name) };
       }
       save();
     }).catch(e => { console.error('Dashboard pictures could not be added:', e); save(); });
