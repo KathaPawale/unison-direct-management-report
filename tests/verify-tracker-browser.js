@@ -224,11 +224,11 @@ function senecaWorkbook(){
         ap: 'AP Aging', ar: 'AR Aging' }, income: 100000, net: 28000,
       excelSheets: ['Summary', 'Profit and Loss(Comparative)', 'Profit and Loss(Monthly)', 'Profit and Loss(% of Income)', 'Balance Sheet', 'AP Aging', 'AR Aging',
         'Invoice required', 'Uncategorized Exp', 'Uncategorized Income'],
-      indexLinks: 9, listings: { 'Uncategorized Exp': 2, 'Uncategorized Income': 2, 'Invoice required': 2 }, pdfLacks: ['Uncategorized Expense', 'Choice Builder', 'Counter Credit'],
+      indexLinks: 9, listings: { 'Uncategorized Exp': 2, 'Uncategorized Income': 2, 'Invoice required': 2 }, pdfLacks: ['Choice Builder', 'Counter Credit'], pdfHas: ['Uncategorized Expense'],
       sections: ['index', 'plComparative', 'plMonthly', 'plPercent', 'bs', 'ap', 'ar'] } };
 }
 
-/* Uncategorized lines: counted in the figures, printed in the Excel report, left out of the PDF. */
+/* Uncategorized lines: counted in the figures and shown in the P&L / Balance Sheet in both the PDF and Excel. */
 function uncategorizedWorkbook(){
   const client = 'Harbor Uncategorized LLC', period = 'January-December 2025';
   const pl = [...T(client, 'Profit and Loss', period), ['', 'Total'], ['Income'], ['Sales', 9000], ['Uncategorized Income', 1000], ['Total Income', 10000],
@@ -236,9 +236,9 @@ function uncategorizedWorkbook(){
   const bs = [...T(client, 'Balance Sheet', 'As of December 31, 2025'), ['', 'Total'], ['Assets'], ['Checking', 8000], ['Uncategorized Asset', 200], ['Total Assets', 8200],
     ['Liabilities and Equity'], ['Accounts Payable', 1700], ['Total Liabilities', 1700], ['Equity'], ['Retained Earnings', 6500], ['Total Equity', 6500],
     ['Total Liabilities and Equity', 8200]];
-  return { name: 'Uncategorized lines (Excel only)', client, period, sheets: { 'BS': bs, 'P&L': pl },
+  return { name: 'Uncategorized lines (PDF and Excel)', client, period, sheets: { 'BS': bs, 'P&L': pl },
     expect: { roles: { bs: 'BS', pl: 'P&L' }, income: 10000, net: 6500, expenses: 3500, excelLines: ['Uncategorized Income', 'Uncategorized Expense', 'Uncategorized Asset'],
-      pdfLacks: ['Uncategorized Income', 'Uncategorized Expense', 'Uncategorized Asset'], sections: ['bs', 'pl'] } };
+      pdfHas: ['Uncategorized Income', 'Uncategorized Expense', 'Uncategorized Asset'], sections: ['bs', 'pl'] } };
 }
 
 /* Row 34: comparative P&L whose % of Income columns are whole percents (2.48 = 2.48%). */
@@ -498,8 +498,12 @@ function readXlsxFile(file){
       return { col: m[1], row: +m[2], numeric: t === 'n' && ws[m[1] + m[2]] && typeof ws[m[1] + m[2]].v === 'number', ...st };
     });
     const pane = xml.match(/<pane [^>]*\/>/);
+    const relI = zip.FullPaths.findIndex(p => p.endsWith('/xl/worksheets/_rels/sheet' + (i + 1) + '.xml.rels'));
+    const drawRel = relI >= 0 ? (Buffer.from(zip.FileIndex[relI].content).toString().match(/Target="\.\.\/drawings\/(drawing\d+\.xml)"/) || [])[1] : null;
+    const drawI = drawRel ? zip.FullPaths.findIndex(p => p.endsWith('/xl/drawings/' + drawRel)) : -1;
+    const pictures = drawI >= 0 ? (Buffer.from(zip.FileIndex[drawI].content).toString().match(/<xdr:pic>/g) || []).length : 0;
     const val = a => (ws[a] || {}).v ?? '';
-    return { name, xml, cells, val, tabColor: (xml.match(/<sheetPr>[^]*?<tabColor rgb="([0-9A-F]{8})"/) || [])[1] || null,
+    return { name, xml, cells, val, pictures, tabColor: (xml.match(/<sheetPr>[^]*?<tabColor rgb="([0-9A-F]{8})"/) || [])[1] || null,
       pane: pane && /state="frozen"/.test(pane[0]) ? ((pane[0].match(/topLeftCell="([A-Z]+\d+)"/) || [])[1] || null) : null,
       xSplit: pane ? +((pane[0].match(/xSplit="(\d+)"/) || [])[1] || 0) : 0, ySplit: pane ? +((pane[0].match(/ySplit="(\d+)"/) || [])[1] || 0) : 0 };
   });
@@ -553,12 +557,12 @@ function checkWorkbook(w, r, excel, pdf, errors){
   const pageIds = r.pages.map(p => p.id).filter((id, i, a) => !['cover', 'toc'].includes(id) && a.indexOf(id) === i);
   const stmtIds = pageIds.filter(id => r.roles[id]);
   const byWb = [...stmtIds].sort((a, b) => wbOrder.indexOf(tabOf(r.roles[a])) - wbOrder.indexOf(tabOf(r.roles[b])));
-  /* An uploaded index sheet ("Summary") opens the report, before the Disclaimer. */
+  /* Order (user, 2026-10-07): [uploaded Summary], Dashboard, statements in workbook order, Notes, Disclaimer on the last page. */
   const at = pageIds[0] === 'index' ? 1 : 0;
-  check(`${tag} Report order: [Summary], Disclaimer, Dashboard, statements in workbook order, Notes last`, pageIds[at] === 'disc' && pageIds[at + 1] === 'dash' &&
-    pageIds[pageIds.length - 1] === 'notes' && (process.env.TRACKER_XLSX || stmtIds.join(',') === byWb.join(',')), pageIds.join(','));
-  check(`${tag} Report order: Disclaimer first (after an uploaded Summary) and Notes last in the TOC`, toc.length && (/^1\. Management Purpose Disclaimer/.test(toc[0].text) || (/^1\. Summary/.test(toc[0].text) && /^2\. Management Purpose Disclaimer/.test((toc[1] || {}).text || ''))) && /Notes/i.test(toc[toc.length - 1].text) ,
-    toc.map(t => t.text).join(' | '));
+  check(`${tag} Report order: [Summary], Dashboard, statements in workbook order, Notes, Disclaimer last`, pageIds[at] === 'dash' &&
+    pageIds[pageIds.length - 2] === 'notes' && pageIds[pageIds.length - 1] === 'disc' && (process.env.TRACKER_XLSX || stmtIds.join(',') === byWb.join(',')), pageIds.join(','));
+  check(`${tag} Report order: Disclaimer is the last TOC entry and the last page`, toc.length && /Management Purpose Disclaimer/.test(toc[toc.length - 1].text) &&
+    /Notes/i.test((toc[toc.length - 2] || {}).text || '') && r.pages[r.pages.length - 1].id === 'disc', toc.map(t => t.text).join(' | '));
   /* Headings are the uploaded sheets' own ("Profit & Loss", "Statement of Activities"), so match any P&L / BS wording. */
   const BS_T = /balance sheet|financial position|financial condition|assets and liabilities|^b ?s\b|^bs[_ ]/i,
         PL_T = /profit|loss|income statement|activit|operations|earnings|^p ?& ?l|^pl\b|^pl[_ (]|soa\b/i;
@@ -683,7 +687,11 @@ function checkWorkbook(w, r, excel, pdf, errors){
 
   /* Uncategorized lines are never printed in the PDF (they stay in Excel and on the app pages). */
   for (const l of e.pdfLacks || []) check(`${tag} PDF leaves out "${l}"`, !content.some(p => p.text.includes(l)));
-  check(`${tag} No "Uncategorized …" line in the PDF`, !content.some(p => p.id !== 'dash' && /^\s*(total (for )?)?uncategori[sz]ed\b/im.test(p.text)));
+  for (const l of e.pdfHas || []) check(`${tag} PDF shows "${l}" in its statement`, content.some(p => p.id !== 'dash' && p.text.includes(l)));
+  /* Balance Sheet Composition and Liabilities Bifurcation on the same page */
+  const compPage = r.pages.find(p => /BALANCE SHEET COMPOSITION/i.test(p.text));
+  if (compPage && r.pages.some(p => /LIABILITIES BIFURCATION/i.test(p.text)))
+    check(`${tag} Balance Sheet Composition and Liabilities Bifurcation on the same page`, /LIABILITIES BIFURCATION/i.test(compPage.text));
 
   /* Row 37: zero rows left out of the PDF */
   for (const z of e.zeroRows || []) check(`${tag} Row 37 zero-balance ledger "${z}" left out of the PDF`, !content.some(p => p.id !== 'dash' && new RegExp('^\\s*' + z.replace(/[&]/g, '\\$&') + '\\s', 'm').test(p.text)));
@@ -744,8 +752,9 @@ function checkWorkbook(w, r, excel, pdf, errors){
   const tabs = excel.sheets.map(x => x.name);
   const stmtTabs = tabs.filter(t => !['Cover', 'Disclaimer', 'Analytical Summary', notesTab].includes(t));
   const wbTabs = Object.keys(w.sheets || {}).map(tabOf);
-  check(`${tag} Report order: Excel tabs Cover, Disclaimer, Summary, statements in workbook order, notes last`,
-    tabs.filter(t => !r.nonStatementTabs.includes(t) || t !== tabs[1]).slice(0, 3).join('|') === 'Cover|Disclaimer|Analytical Summary' && tabs[tabs.length - 1] === notesTab &&
+  check(`${tag} Report order: Excel tabs Cover, [Summary], Analytical Summary, statements in workbook order, notes, Disclaimer last`,
+    tabs[0] === 'Cover' && tabs.filter(t => t !== tabs[1] || !r.nonStatementTabs.includes(t)).slice(0, 2).join('|') === 'Cover|Analytical Summary' &&
+    tabs[tabs.length - 2] === notesTab && tabs[tabs.length - 1] === 'Disclaimer' &&
     (process.env.TRACKER_XLSX || stmtTabs.join('|') === [...stmtTabs].sort((a, b) => wbTabs.indexOf(a) - wbTabs.indexOf(b)).join('|')), tabs.join(' | '));
   for (const l of e.excelLines || [])
     check(`${tag} Excel keeps "${l}"`, stmts.some(s => s.cells.some(c => c.col === 'A' && String(s.val('A' + c.row)) === l)));
@@ -762,7 +771,14 @@ function checkWorkbook(w, r, excel, pdf, errors){
     stmts.filter(s => s.nonAccounting.length).map(s => s.name + ': ' + s.nonAccounting.slice(0, 3).join(', ')).join(' | '));
   const pctRowXl = stmts.flatMap(s => s.cells.filter(c => c.numeric && c.col !== 'A' && isPctLabel(s.val('A' + c.row))).map(c => s.name + '!' + c.col + c.row + ' ' + c.fmt));
   if (pctRowXl.length) check(`${tag} Row 52 Excel "Percentage of total" rows use a % format`, pctRowXl.every(x => /%/.test(x)), pctRowXl.slice(0, 4).join(' | '));
-  check(`${tag} Row 41 tab colours differ by statement type`, new Set(excel.sheets.map(s => s.tabColor)).size >= Math.min(3, excel.sheets.length));
+  /* One tab colour (the header navy) on every tab, no gridlines on any sheet (user, 2026-10-07). */
+  check(`${tag} Row 41 one tab colour on every Excel tab`, new Set(excel.sheets.map(s => s.tabColor)).size === 1 && excel.sheets[0].tabColor === 'FF0B2F59',
+    [...new Set(excel.sheets.map(s => s.tabColor))].join(','));
+  check(`${tag} Gridlines hidden on every Excel sheet`, excel.sheets.every(s => /<sheetView\b[^>]*showGridLines="0"/.test(s.xml)), excel.sheets.filter(s => !/showGridLines="0"/.test(s.xml)).map(s => s.name).join(','));
+  /* The Analytical Summary shows the PDF's dashboard pages (the same graphs) as pictures. */
+  const dashPages = r.pages.filter(p => p.id === 'dash').length;
+  const summaryWs = excel.sheets.find(s => s.name === 'Analytical Summary');
+  check(`${tag} Excel Analytical Summary has the ${dashPages} dashboard page pictures`, summaryWs && (summaryWs.pictures || 0) === dashPages, summaryWs && summaryWs.pictures);
   /* Row 40: Notes sheet formatted as a table (title, Line Item / Category | Note headings) */
   const notesWs = excel.sheets.find(s => s.name === notesTab);
   check(`${tag} Row 40 Notes sheet has its title and "Line Item / Category" / "Note" headings`, notesWs && /notes/i.test(String(notesWs.val('A1'))) &&
@@ -771,6 +787,13 @@ function checkWorkbook(w, r, excel, pdf, errors){
   /* Data workbook (as uploaded): every sheet has a tab colour; every sheet with columns freezes its heading rows and column A */
   const data = excel.data || [];
   check(`${tag} Row 41 every data-workbook sheet has a tab colour`, data.length && data.every(s => s.tabColor), data.filter(s => !s.tabColor).map(s => s.name).join(','));
+  check(`${tag} Data workbook: one tab colour, no gridlines`, new Set(data.map(s => s.tabColor)).size === 1 && data.every(s => /showGridLines="0"/.test(s.xml)));
+  /* Serial numbers (1, 2, 3 …) centred, as whole numbers, in both downloads */
+  if (e.indexLinks){
+    const idxR = excel.sheets.find(s => s.name === 'Summary'), idxD = data.find(s => s.name === 'Summary');
+    const centred = sh => sh && sh.cells.filter(c => c.col === 'A' && c.numeric).length >= 3 && sh.cells.filter(c => c.col === 'A' && c.numeric).every(c => c.horizontal === 'center' && !/\./.test(c.fmt));
+    check(`${tag} Serial numbers centred in the Summary (report and data workbook)`, centred(idxR) && centred(idxD));
+  }
   check(`${tag} Rows 42/47 every data-workbook sheet freezes its heading rows`, data.length && data.every(s => s.ySplit >= 1), data.filter(s => s.ySplit < 1).map(s => s.name).join(','));
 }
 

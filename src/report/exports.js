@@ -182,12 +182,8 @@ function _sheetNameSafe(wb, name){
 }
 
 function _decorateSheet(ws, sheetKind, freezeRow = 5, freezeCol = 1){
-  const tabColors = {
-    cover: '0B2F59', summary: '1D6FB8', bs: '0FA5A5', bsComparative: '0FA5A5', tb: '7A5FAA',
-    plMonthly: 'B54B8E', plComparative: 'B54B8E', pl: 'B54B8E', plPercent: 'B54B8E', plClass: 'B54B8E',
-    ar: 'E28C1B', ap: 'C93438', notes: '6D7887', disc: '2F4A6B'
-  };
-  ws['!tabColor'] = { rgb: tabColors[sheetKind] || '0B2F59' };
+  /* One tab colour for every sheet: the header navy (user, 2026-10-07). */
+  ws['!tabColor'] = { rgb: XL.navy };
   if (freezeRow || freezeCol){
     ws['!views'] = [{ xSplit: freezeCol, ySplit: freezeRow,
       topLeftCell: XLSX.utils.encode_cell({ r: freezeRow, c: freezeCol }),
@@ -246,6 +242,7 @@ function _verifySheetRules(bytes, wb){
     const at = zip.FullPaths.findIndex(p => p.endsWith('/xl/worksheets/sheet' + (i + 1) + '.xml'));
     const xml = at < 0 ? '' : new TextDecoder().decode(zip.FileIndex[at].content);
     if (!/<sheetPr>[^]*?<tabColor rgb="[0-9A-F]{8}"/.test(xml)) problems.push(name + ': no tab color');
+    if (!/<sheetView\b[^>]*showGridLines="0"/.test(xml)) problems.push(name + ': gridlines shown');
     if (!XL_UNFROZEN.has(name) && !/<pane [^>]*state="frozen"/.test(xml)) problems.push(name + ': headings not frozen');
     const ws = wb.Sheets[name], fz = ws['!freeze'];
     if (fz && fz.ySplit === 5 && fz.xSplit === 1 && ws['!particulars'] && !/<pane xSplit="1" ySplit="5" topLeftCell="B6"/.test(xml))
@@ -258,6 +255,82 @@ function _verifySheetRules(bytes, wb){
     }
   });
   if (problems.length) throw new Error('Excel formatting rules failed — ' + problems.join('; '));
+}
+
+/* Pictures on a sheet (ws['!images'] = { row, col, items: [{ bytes, w, h }] }, PNGs stacked downwards): written as an
+ * Excel drawing — xl/media, xl/drawings, the sheet's relationship and <drawing>, content types. */
+function _addSheetImages(zip, wb){
+  const file = p => { const i = zip.FullPaths.findIndex(x => x.endsWith('/' + p)); return i < 0 ? null : zip.FileIndex[i]; };
+  const text = e => new TextDecoder().decode(e.content);
+  const put = (p, str) => { const e = file(p); const bytes = typeof str === 'string' ? new TextEncoder().encode(str) : str;
+    if (e){ e.content = bytes; e.size = bytes.length; } else XLSX.CFB.utils.cfb_add(zip, p, bytes); };
+  let img = 0, drawingNo = 0;
+  wb.SheetNames.forEach((name, i) => {
+    const spec = wb.Sheets[name]['!images'];
+    if (!spec || !spec.items || !spec.items.length) return;
+    drawingNo++;
+    const EMU = 9525, widthPx = spec.widthPx || 760;
+    let rowAt = spec.row || 0;
+    const anchors = [], rels = [];
+    spec.items.forEach((it, k) => {
+      img++;
+      put(`xl/media/image${img}.png`, it.bytes);
+      rels.push(`<Relationship Id="rId${k + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image${img}.png"/>`);
+      const cx = Math.round(widthPx * EMU), cy = Math.round(widthPx * it.h / it.w * EMU);
+      anchors.push(`<xdr:oneCellAnchor><xdr:from><xdr:col>${spec.col || 0}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${rowAt}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>` +
+        `<xdr:ext cx="${cx}" cy="${cy}"/><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="${k + 2}" name="${(spec.names || [])[k] || 'Picture ' + (k + 1)}"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr>` +
+        `<xdr:blipFill><a:blip r:embed="rId${k + 1}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>` +
+        `<xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:oneCellAnchor>`);
+      rowAt += Math.ceil(widthPx * it.h / it.w / 20) + 2;            // ~20px rows: the next picture starts below this one
+    });
+    put(`xl/drawings/drawing${drawingNo}.xml`, '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+      anchors.join('') + '</xdr:wsDr>');
+    put(`xl/drawings/_rels/drawing${drawingNo}.xml.rels`, '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + rels.join('') + '</Relationships>');
+    const relPath = `xl/worksheets/_rels/sheet${i + 1}.xml.rels`, relEntry = file(relPath);
+    const rel = `<Relationship Id="rIdDrawing1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing${drawingNo}.xml"/>`;
+    put(relPath, relEntry ? text(relEntry).replace('</Relationships>', rel + '</Relationships>')
+      : '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + rel + '</Relationships>');
+    const sheetEntry = file(`xl/worksheets/sheet${i + 1}.xml`);
+    let xml = text(sheetEntry);
+    if (!/xmlns:r=/.test(xml)) xml = xml.replace(/<worksheet\b/, '<worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"');
+    xml = /<extLst/.test(xml) ? xml.replace('<extLst', '<drawing r:id="rIdDrawing1"/><extLst') : xml.replace('</worksheet>', '<drawing r:id="rIdDrawing1"/></worksheet>');
+    put(`xl/worksheets/sheet${i + 1}.xml`, xml);
+    const ct = file('[Content_Types].xml');
+    let c = text(ct);
+    if (!/Extension="png"/.test(c)) c = c.replace('<Default ', '<Default Extension="png" ContentType="image/png"/><Default ');
+    c = c.replace('</Types>', `<Override PartName="/xl/drawings/drawing${drawingNo}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/></Types>`);
+    put('[Content_Types].xml', c);
+  });
+  return drawingNo > 0;
+}
+
+/* The Analytical Dashboard pages of the PDF, rendered as PNG pictures (the same graphs and tables) for the Excel
+ * Analytical Summary. Empty when the page renderer is not available. */
+async function _dashboardImages(){
+  if (typeof window === 'undefined' || typeof window.html2canvas !== 'function') return [];
+  const pages = buildPages({ forExport: true }).filter(p => p.sectionId === 'dash');
+  const host = document.createElement('div');
+  host.style.cssText = 'position:absolute;top:' + window.scrollY + 'px;left:-20000px;width:1056px;background:#fff';
+  document.body.appendChild(host);
+  const out = [];
+  try {
+    for (const p of pages){
+      const land = p.orientation === 'landscape';
+      host.style.width = (land ? PAGE_H : PAGE_W) + 'px';
+      host.innerHTML = p.html;
+      const el = host.firstElementChild;
+      if (!el) continue;
+      el.style.margin = '0'; el.style.boxShadow = 'none';
+      const canvas = await html2canvas(el, { scale: 1.25, useCORS: true, logging: false, backgroundColor: '#ffffff',
+        width: land ? PAGE_H : PAGE_W, height: land ? PAGE_W : PAGE_H, windowWidth: land ? PAGE_H : PAGE_W });
+      const bin = atob(canvas.toDataURL('image/png').split(',')[1]);
+      const bytes = new Uint8Array(bin.length);
+      for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
+      out.push({ bytes, w: canvas.width, h: canvas.height });
+    }
+  } finally { host.remove(); }
+  return out;
 }
 
 function _workbookBytes(wb){
@@ -274,11 +347,12 @@ function _workbookBytes(wb){
   wb.SheetNames.forEach((name, i) => {
     const fz = wb.Sheets[name]['!freeze'], tab = wb.Sheets[name]['!tabColor'];
     const freeze = fz && (fz.xSplit || fz.ySplit);
-    if (!freeze && !(tab && tab.rgb) && !wb.Sheets[name]['!pageSetup']) return;
     const at = zip.FullPaths.findIndex(p => p.endsWith('/xl/worksheets/sheet' + (i + 1) + '.xml'));
     if (at < 0) throw new Error('Worksheet XML not found for ' + name);
     const entry = zip.FileIndex[at];
     let xml = new TextDecoder().decode(entry.content);
+    /* No gridlines on any sheet. */
+    xml = xml.replace(/<sheetView\b(?![^>]*showGridLines)/, '<sheetView showGridLines="0"');
     if (freeze){
       const next = xml.replace(/<sheetView\b([^>]*?)\/>/, (m, attrs) => '<sheetView' + attrs + '>' + _paneXml(fz) + '</sheetView>');
       if (next === xml) throw new Error('Could not freeze the heading rows of ' + name);
@@ -306,6 +380,7 @@ function _workbookBytes(wb){
     entry.size = entry.content.length;
     changed++;
   });
+  if (_addSheetImages(zip, wb)) changed++;
   const out = changed ? new Uint8Array(XLSX.CFB.write(zip, { type: 'array', fileType: 'zip' })) : bytes;
   _verifySheetRules(out, wb);
   return out;
@@ -407,6 +482,17 @@ function _modelSheetToWs(sm, title){
   return ws;
 }
 
+/* A serial-number column ("Sr No", "S.No", "No.", "#", or 1, 2, 3 … down the column): shown centred as whole numbers. */
+const SERIAL_HEAD_RE = /^(sr\.?\s*no\.?|s\.?\s*no\.?|sl\.?\s*no\.?|no\.?|#|serial(\s*no\.?)?|sr\.?)$/i;
+function _isSerialColumn(rows, c, headerRow){
+  if (headerRow >= 0 && SERIAL_HEAD_RE.test(cellText((rows[headerRow] || [])[c]))) return true;
+  const vals = rows.slice(headerRow + 1).map(r => (r || [])[c]).filter(v => cellText(v) !== '');
+  const nums = vals.map(v => typeof v === 'number' ? v : parseAmount(v)).filter(n => n !== null);
+  /* 1, 2, 3 … as whole numbers, making up most of the column (a "NOTE :" label below the list does not count). */
+  return nums.length >= 3 && nums.length >= vals.length * 0.6 && nums.every(n => Number.isInteger(n) && n >= 0 && n < 10000) && nums.every((n, i) => n === nums[0] + i);
+}
+const XL_SERIAL = { font: { sz: 10 }, numFmt: '0', alignment: { horizontal: 'center', vertical: 'top' } };
+
 /* The centred heading block shared by the generated sheets: company, heading, period (rows 1-3). */
 function _headingBlock(ws, heading, sub, lastCol){
   const center = { horizontal: 'center', vertical: 'center', wrapText: true };
@@ -430,7 +516,7 @@ function _indexSheetToWs(name, heading, tabOf){
     _wsSetCell(ws, 4, i, h, { ...XL_STYLES.headL, alignment: { horizontal: al, vertical: 'center' } }));
   let r = 5;
   for (const e of entries){
-    _wsSetCell(ws, r, 0, /^\d+$/.test(String(e.no).replace(/\.$/, '')) ? +String(e.no).replace(/\.$/, '') : e.no, { ...XL_STYLES.plain, alignment: { horizontal: 'center', vertical: 'center' } });
+    _wsSetCell(ws, r, 0, /^\d+$/.test(String(e.no).replace(/\.$/, '')) ? +String(e.no).replace(/\.$/, '') : e.no, { ...XL_SERIAL, alignment: { horizontal: 'center', vertical: 'center' } });
     _wsSetCell(ws, r, 1, e.label, { ...XL_STYLES.plain, alignment: { horizontal: 'left', vertical: 'center' } });
     const tab = tabOf(e.sheet);
     if (tab){
@@ -466,6 +552,7 @@ function _listingSheetToWs(name, heading, sm){
   const last = Math.max(width - 1, 1);
   _headingBlock(ws, heading, statementPeriodText(sm), last);
   const isDate = c => LISTING_DATE_HEAD_RE.test(header[c] || '');
+  const serial = new Set(Array.from({ length: width }, (_, c) => c).filter(c => _isSerialColumn(rows, c, hr)));
   const numeric = c => body.filter(r => parseAmount((r || [])[c]) !== null).length >= Math.max(1, body.filter(r => cellText((r || [])[c]) !== '').length * 0.6);
   for (let c = 0; c < width; c++) _wsSetCell(ws, 4, c, header[c] || '', { ...XL_STYLES.head, alignment: { horizontal: 'center', vertical: 'center', wrapText: true } });
   body.forEach((row, i) => {
@@ -473,7 +560,8 @@ function _listingSheetToWs(name, heading, sm){
     for (let c = 0; c < width; c++){
       const v = (row || [])[c];
       const n = typeof v === 'number' ? v : parseAmount(v);
-      if (isDate(c) && typeof v === 'number') _wsSetCell(ws, r, c, v, { ...XL_STYLES.plain, numFmt: 'mm/dd/yyyy', alignment: { horizontal: 'left', vertical: 'top' } });
+      if (serial.has(c) && (typeof v === 'number' || parseAmount(v) !== null)) _wsSetCell(ws, r, c, typeof v === 'number' ? v : parseAmount(v), XL_SERIAL);
+      else if (isDate(c) && typeof v === 'number') _wsSetCell(ws, r, c, v, { ...XL_STYLES.plain, numFmt: 'mm/dd/yyyy', alignment: { horizontal: 'left', vertical: 'top' } });
       else if (!isDate(c) && n !== null && numeric(c)) _wsSetCell(ws, r, c, n, { ...XL_STYLES.money, alignment: { horizontal: 'right', vertical: 'top' }, font: { sz: 10, ...(n < 0 ? { color: { rgb: 'C93438' } } : {}) } });
       else _wsSetCell(ws, r, c, cellText(v), XL_STYLES.wrap);
     }
@@ -494,9 +582,11 @@ function _rawSheetToWs(rows, modelHeaderRow = -1, role = null, sm = null){
   const pctRows = new Set(sm ? sm.lines.filter(l => isPercentRowLabel(l.label) && percentRowIsFraction(data[l.r] || [], valueIdx)).map(l => l.r) : []);
   const width = Math.max(1, ...data.map(row => (row || []).length));
   /* The parser's column-heading row (a "", "Total" row counts); otherwise the first row with two filled cells. */
-  const headerRow = modelHeaderRow >= 0 && modelHeaderRow < data.length ? modelHeaderRow :
+  /* An index sheet ("Summary": 1 | Profit and Loss … | Click here to view!) has no heading row. */
+  const headerRow = role === 'summary' ? -1 : modelHeaderRow >= 0 && modelHeaderRow < data.length ? modelHeaderRow :
     data.findIndex(row => (row || []).filter(v => cellText(v) !== '').length >= 2);
   const freezeRow = headerRow >= 0 ? headerRow + 1 : 1;
+  const serialCols = new Set(Array.from({ length: Math.max(1, ...data.map(row => (row || []).length)) }, (_, c) => c).filter(c => _isSerialColumn(data, c, headerRow)));
   data.forEach((row, r) => {
     for (let c = 0; c < width; c++){
       const value = (row || [])[c] ?? '';
@@ -506,7 +596,8 @@ function _rawSheetToWs(rows, modelHeaderRow = -1, role = null, sm = null){
       const asPct = n !== null && (pctCols.has(c) || (pctRows.has(r) && valueIdx.includes(c)));
       const style = isHeader ? (c === 0 ? XL_STYLES.headL : XL_STYLES.head) :
         asPct ? XL_STYLES.pctCell : n !== null ? XL_STYLES.money : XL_STYLES.wrap;
-      if (n !== null && !isHeader) _wsSetCell(ws, r, c, n, style);
+      if (n !== null && !isHeader && serialCols.has(c) && r > headerRow) _wsSetCell(ws, r, c, n, XL_SERIAL);
+      else if (n !== null && !isHeader) _wsSetCell(ws, r, c, n, style);
       else _wsSetCell(ws, r, c, text, style);
     }
   });
@@ -720,8 +811,20 @@ function downloadReportExcel(){
     .sort((a, b) => workbookIndex(wb.Sheets[a]['!source']) - workbookIndex(wb.Sheets[b]['!source']));
   /* The uploaded index sheet ("Summary") comes right after the Cover, as it opens the user's workbook. */
   const indexTab = statementTabs.find(t => indexSheet && wb.Sheets[t]['!source'] === indexSheet);
-  wb.SheetNames = ['Cover', ...(indexTab ? [indexTab] : []), 'Disclaimer', 'Analytical Summary', ...statementTabs.filter(t => t !== indexTab), notesTab];
-  if (_saveWorkbook(wb, _reportFileBase() + '-Management-Report.xlsx')) toast('Excel report downloaded');
+  /* … Notes, and the Disclaimer as the last tab (as on the last PDF page). */
+  wb.SheetNames = ['Cover', ...(indexTab ? [indexTab] : []), 'Analytical Summary', ...statementTabs.filter(t => t !== indexTab), notesTab, 'Disclaimer'];
+  const save = () => { if (_saveWorkbook(wb, _reportFileBase() + '-Management-Report.xlsx')) toast('Excel report downloaded'); };
+  /* The Analytical Summary also shows the PDF's dashboard pages (the same graphs), below its tables. */
+  if (typeof window !== 'undefined' && typeof window.html2canvas === 'function'){
+    return _dashboardImages().then(imgs => {
+      if (imgs.length){
+        _wsSetCell(s, nextRow + 1, 0, 'Analytical Dashboard — as in the PDF report', XL_STYLES.section, null, { border: false });
+        s['!images'] = { row: nextRow + 2, col: 0, widthPx: 760, items: imgs, names: imgs.map((x, k) => 'Analytical Dashboard page ' + (k + 1)) };
+      }
+      save();
+    }).catch(e => { console.error('Dashboard pictures could not be added:', e); save(); });
+  }
+  save();
 }
 
 /* ---------- raw data workbook (as-uploaded + edits) ---------- */
