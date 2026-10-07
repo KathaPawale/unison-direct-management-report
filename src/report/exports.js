@@ -82,6 +82,8 @@ async function savePdf(open = false){
         if (!pdf) pdf = new jsPDF({ unit: 'pt', format: 'letter', orientation });
         else pdf.addPage('letter', orientation);
         pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, land ? 792 : 612, land ? 612 : 792);
+        try { _pdfTextLayer(pdf, el, land ? 792 : 612, land ? 612 : 792); }
+        catch (txtErr){ console.error('PDF text layer skipped on page ' + (i + 1) + ':', txtErr); }
         const pdfPageIndex = pdf.internal.getNumberOfPages() - 1;
         if (sid && !sectionFirstPdfPage.has(sid)) sectionFirstPdfPage.set(sid, pdfPageIndex);
         if (sid === 'toc') tocPdfPage = pdfPageIndex;
@@ -190,6 +192,50 @@ function _decorateSheet(ws, sheetKind, freezeRow = 5, freezeCol = 1){
       activePane: 'bottomRight', state: 'frozen' }];
     ws['!freeze'] = { xSplit: freezeCol, ySplit: freezeRow };
   }
+}
+
+/* Searchable PDF: the page is a picture, so its words are also written as invisible text at the same places (as an
+ * OCR'd scan) — Ctrl+F, select and copy work, and the page looks unchanged. Words on one line are written together. */
+function _pdfTextLayer(pdf, el, pageWpt, pageHpt){
+  const box = el.getBoundingClientRect();
+  if (!box.width || !box.height) return 0;
+  const sx = pageWpt / box.width, sy = pageHpt / box.height;
+  const latin = t => t.replace(/[\u2013\u2014\u2212]/g, '-').replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"').replace(/\u00a0/g, ' ').replace(/[^\x20-\x7e\xa0-\xff]/g, '');
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  const range = document.createRange();
+  let written = 0;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()){
+    const text = node.nodeValue;
+    if (!text || !text.trim()) continue;
+    const parent = node.parentElement;
+    if (!parent) continue;
+    const cs = getComputedStyle(parent);
+    if (cs.visibility === 'hidden' || cs.display === 'none' || parseFloat(cs.opacity) === 0) continue;
+    /* Split the text node into its rendered lines: consecutive words with the same top. */
+    const words = [...text.matchAll(/\S+/g)];
+    let line = null;
+    const flush = () => {
+      if (!line) return;
+      const str = latin(line.words.join(' '));
+      if (str.trim()){
+        const fs = Math.max(1, (line.bottom - line.top) * sy * 0.8);
+        pdf.setFontSize(fs);
+        pdf.text(str, (line.left - box.left) * sx, (line.bottom - box.top) * sy - fs * 0.22, { renderingMode: 'invisible', baseline: 'alphabetic' });
+        written++;
+      }
+      line = null;
+    };
+    for (const w of words){
+      range.setStart(node, w.index); range.setEnd(node, w.index + w[0].length);
+      const r = range.getBoundingClientRect();
+      if (!r.width && !r.height) continue;
+      if (line && Math.abs(r.top - line.top) > r.height * 0.5) flush();
+      if (!line) line = { left: r.left, top: r.top, bottom: r.bottom, words: [] };
+      line.words.push(w[0]); line.bottom = Math.max(line.bottom, r.bottom);
+    }
+    flush();
+  }
+  return written;
 }
 
 /* xlsx-js-style (SheetJS 0.18.5) writes every sheet as a bare <sheetView/> and ignores '!views' / '!freeze' /
@@ -816,8 +862,10 @@ function downloadReportExcel(){
   if (typeof window !== 'undefined' && typeof window.html2canvas === 'function'){
     return _dashboardImages().then(imgs => {
       if (imgs.length){
-        _wsSetCell(s, nextRow + 1, 0, 'Graphs — as in the PDF Analytical Dashboard', XL_STYLES.section, null, { border: false });
-        s['!images'] = { row: nextRow + 2, col: 0, widthPx: 640, items: imgs, names: imgs.map(x => x.name) };
+        /* The summary tables stay as they are on the left; the graphs and diagrams go on the right side of them. */
+        const graphCol = (s['!cols'] || []).length + 1;
+        _wsSetCell(s, 2, graphCol, 'Graphs — as in the PDF Analytical Dashboard', XL_STYLES.section, null, { border: false });
+        s['!images'] = { row: 3, col: graphCol, widthPx: 560, items: imgs, names: imgs.map(x => x.name) };
       }
       save();
     }).catch(e => { console.error('Dashboard pictures could not be added:', e); save(); });

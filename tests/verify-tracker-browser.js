@@ -509,8 +509,9 @@ function readXlsxFile(file){
     const drawXml = drawI >= 0 ? Buffer.from(zip.FileIndex[drawI].content).toString() : '';
     const pictures = (drawXml.match(/<xdr:pic>/g) || []).length;
     const pictureNames = [...drawXml.matchAll(/<xdr:cNvPr [^>]*name="([^"]*)"/g)].map(m => m[1].replace(/&amp;/g, '&'));
+    const pictureCol = +((drawXml.match(/<xdr:from><xdr:col>(\d+)<\/xdr:col>/) || [])[1] ?? -1);
     const val = a => (ws[a] || {}).v ?? '';
-    return { name, xml, cells, val, pictures, pictureNames, tabColor: (xml.match(/<sheetPr>[^]*?<tabColor rgb="([0-9A-F]{8})"/) || [])[1] || null,
+    return { name, xml, cells, val, pictures, pictureNames, pictureCol, tabColor: (xml.match(/<sheetPr>[^]*?<tabColor rgb="([0-9A-F]{8})"/) || [])[1] || null,
       pane: pane && /state="frozen"/.test(pane[0]) ? ((pane[0].match(/topLeftCell="([A-Z]+\d+)"/) || [])[1] || null) : null,
       xSplit: pane ? +((pane[0].match(/xSplit="(\d+)"/) || [])[1] || 0) : 0, ySplit: pane ? +((pane[0].match(/ySplit="(\d+)"/) || [])[1] || 0) : 0 };
   });
@@ -736,6 +737,9 @@ function checkWorkbook(w, r, excel, pdf, errors){
 
   /* PDF file (row 34 save, row 39 links) */
   check(`${tag} Row 34 PDF saves with every page`, pdf.ok && pdf.pages === r.pageCount, pdf.error || (pdf.pages + ' of ' + r.pageCount));
+  /* Searchable PDF: the words of every page are in the file as text (invisible layer over the page picture). */
+  check(`${tag} PDF is searchable: its text is in the file`, pdf.invisibleText && pdf.text.includes(r.client) &&
+    /Table of Contents/.test(pdf.text) && /Management Purpose Disclaimer/.test(pdf.text), (pdf.text || '').slice(0, 120));
   check(`${tag} Row 39 PDF TOC entries are clickable links`, pdf.links >= toc.length && toc.length > 0, pdf.links + ' links, ' + toc.length + ' entries');
 
   /* Excel: rows 7, 25, 41, 42, 44-48, 52, 54 */
@@ -794,6 +798,8 @@ function checkWorkbook(w, r, excel, pdf, errors){
   /* The Analytical Summary shows the PDF's dashboard pages (the same graphs) as pictures. */
   /* Excel Analytical Summary: one picture per dashboard graph — the graphs only, not whole pages (user, 2026-10-07). */
   const summaryWs = excel.sheets.find(s => s.name === 'Analytical Summary');
+  check(`${tag} Excel graphs are on the right of the summary tables (tables unchanged on the left)`, summaryWs && summaryWs.pictureCol > 1 &&
+    summaryWs.cells.filter(c => c.col === 'A').length > 5 && String(summaryWs.val('A1')).includes('Analytical Summary'), summaryWs && summaryWs.pictureCol);
   check(`${tag} Excel Analytical Summary has one picture per dashboard graph (${r.graphCount})`, summaryWs && r.graphCount > 0 && (summaryWs.pictures || 0) === r.graphCount, summaryWs && summaryWs.pictures);
   check(`${tag} Excel graph pictures are graphs only (no page header / footer)`, summaryWs && summaryWs.pictureNames.length > 0 &&
     summaryWs.pictureNames.every(n => !/page \d|Analytical Dashboard/i.test(n)), summaryWs && summaryWs.pictureNames.join(' | '));
@@ -902,6 +908,8 @@ function checkWorkbook(w, r, excel, pdf, errors){
         const txt = fs.readFileSync(file).toString('latin1');
         pdf.pages = (txt.match(/\/Type \/Page\b(?!s)/g) || []).length;
         pdf.links = (txt.match(/\/Subtype \/Link/g) || []).length;
+        pdf.invisibleText = /\b3 Tr\b/.test(txt);
+        pdf.text = [...txt.matchAll(/\((?:[^()\\]|\\.)*\)\s*Tj/g)].map(m => m[0].slice(1, m[0].lastIndexOf(')')).replace(/\\(.)/g, '$1')).join(' ');
         pdf.ok = pdf.pages > 0;
       } catch (err){ pdf.error = String(err.message || err); }
 
