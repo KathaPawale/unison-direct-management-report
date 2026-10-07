@@ -454,6 +454,9 @@ function inspectPage(){
       centered: hc ? getComputedStyle(hc).textAlign === 'center' : null,
       netNegOk: netRows.every(tr => [...tr.cells].slice(1).every(td => !/^\(\$/.test(td.textContent.trim()) || td.classList.contains('neg') && getComputedStyle(td).color === 'rgb(201, 52, 56)')),
       tableRows: el.querySelectorAll('.report-table tbody tr').length,
+      freeBelow: fTop - contentBottom,
+      compH: (() => { const c = el.querySelector('.bs-composition-block'); if (!c) return null; const cs = getComputedStyle(c);
+        return c.getBoundingClientRect().height + (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0); })(),
       tableFs: (() => { const td = el.querySelector('.report-table tbody td.lbl'); return td ? parseFloat(getComputedStyle(td).fontSize) : null; })(),
       usedFraction: (contentBottom - r0.top) / (fTop - r0.top),
       watermark: (el.querySelector('.report-watermark') || {}).textContent || '',
@@ -688,10 +691,19 @@ function checkWorkbook(w, r, excel, pdf, errors){
   /* Uncategorized lines are never printed in the PDF (they stay in Excel and on the app pages). */
   for (const l of e.pdfLacks || []) check(`${tag} PDF leaves out "${l}"`, !content.some(p => p.text.includes(l)));
   for (const l of e.pdfHas || []) check(`${tag} PDF shows "${l}" in its statement`, content.some(p => p.id !== 'dash' && p.text.includes(l)));
-  /* Balance Sheet Composition and Liabilities Bifurcation on the same page */
-  const compPage = r.pages.find(p => /BALANCE SHEET COMPOSITION/i.test(p.text));
-  if (compPage && r.pages.some(p => /LIABILITIES BIFURCATION/i.test(p.text)))
-    check(`${tag} Balance Sheet Composition and Liabilities Bifurcation on the same page`, /LIABILITIES BIFURCATION/i.test(compPage.text));
+  /* Balance Sheet Composition (user, 2026-10-07): on the Balance Sheet page when it has room, otherwise on the dashboard —
+   * shown once; the Liabilities Bifurcation is never on the Balance Sheet page. */
+  const compPages = r.pages.filter(p => /BALANCE SHEET COMPOSITION/i.test(p.text));
+  const bsId = r.roles.bs ? 'bs' : r.roles.bsComparative ? 'bsComparative' : null;
+  if (compPages.length || bsId){
+    check(`${tag} Balance Sheet Composition shown once`, compPages.length <= 1, compPages.map(p => p.id).join(','));
+    const bsLast = bsId ? [...r.pages].reverse().find(p => p.id === bsId) : null;
+    if (bsLast) check(`${tag} Liabilities Bifurcation is not on the Balance Sheet page`, !r.pages.some(p => p.id === bsId && /LIABILITIES BIFURCATION/i.test(p.text)));
+    /* Measured on the rendered pages: on the dashboard only when the Balance Sheet's last page has less free space than the diagram. */
+    if (compPages.length && bsLast) check(`${tag} Balance Sheet Composition on the Balance Sheet page when it has room (else the dashboard)`,
+      compPages[0].id === bsId ? compPages[0] === bsLast && bsLast.overFooter <= 0.5 : (compPages[0].id === 'dash' && bsLast.freeBelow < compPages[0].compH),
+      compPages[0].id + ' / free ' + Math.round(bsLast.freeBelow) + 'px, diagram ' + Math.round(compPages[0].compH || 0) + 'px');
+  }
 
   /* Row 37: zero rows left out of the PDF */
   for (const z of e.zeroRows || []) check(`${tag} Row 37 zero-balance ledger "${z}" left out of the PDF`, !content.some(p => p.id !== 'dash' && new RegExp('^\\s*' + z.replace(/[&]/g, '\\$&') + '\\s', 'm').test(p.text)));

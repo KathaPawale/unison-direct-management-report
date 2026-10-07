@@ -473,7 +473,7 @@ function monthlyLabels(){
   return md.months.map(x => x.short);
 }
 
-function dashboardBodies(no, title){
+function dashboardBodies(no, title, opts = {}){
   const md = state.model, m = md.metrics;
   const blocks = [];
 
@@ -534,17 +534,14 @@ function dashboardBodies(no, title){
     blocks.push('<div class="report-section-title">Receivables &amp; Payables</div>' + svgHBars({ items, color: CHART_COLORS.teal, showPct: false }));
   }
 
-  /* Balance Sheet Composition (both donuts) and the Liabilities Bifurcation are one block: never split across pages. */
-  const lt = liabilitiesTableHtml('report-mini-table');
-  let bsBlock = '';
-  if (md.bsComposition.assets.length || md.bsComposition.liabEquity.length){
-    bsBlock += '<div class="report-section-title">Balance Sheet Composition</div><div class="donut-row">' +
-      (md.bsComposition.assets.length ? donutChart({ items: md.bsComposition.assets, title: 'Assets — ' + money(m.assets) }) : '') +
-      (md.bsComposition.liabEquity.length ? donutChart({ items: md.bsComposition.liabEquity, title: 'Liabilities & Equity — ' + money(m.totalLE ?? (m.liabilities + m.equity)) }) : '') +
-      '</div>';
+  /* Balance Sheet Composition: on the Balance Sheet page when that page has room (buildPages), else here. The Liabilities
+   * Bifurcation always stays on the dashboard. */
+  if (!opts.compositionOnBalanceSheet){
+    const comp = bsCompositionHtml(md);
+    if (comp) blocks.push({ html: comp });
   }
-  if (lt) bsBlock += '<div class="report-section-title">Liabilities Bifurcation</div>' + lt;
-  if (bsBlock) blocks.push({ html: '<div class="bs-composition-block">' + bsBlock + '</div>' });
+  const lt = liabilitiesTableHtml('report-mini-table');
+  if (lt) blocks.push({ html: '<div class="report-section-title">Liabilities Bifurcation</div>' + lt, orphanGuard: true });
 
   return paginateBlocks(no, title, blocks);
 }
@@ -820,11 +817,52 @@ function reportSections(){
   return sections;
 }
 
+/* The Balance Sheet Composition diagram (both donuts), as one block. */
+function bsCompositionHtml(md){
+  if (!md || !(md.bsComposition.assets.length || md.bsComposition.liabEquity.length)) return '';
+  const m = md.metrics;
+  return '<div class="bs-composition-block"><div class="report-section-title">Balance Sheet Composition</div><div class="donut-row">' +
+    (md.bsComposition.assets.length ? donutChart({ items: md.bsComposition.assets, title: 'Assets — ' + money(m.assets) }) : '') +
+    (md.bsComposition.liabEquity.length ? donutChart({ items: md.bsComposition.liabEquity, title: 'Liabilities & Equity — ' + money(m.totalLE ?? (m.liabilities + m.equity)) }) : '') +
+    '</div></div>';
+}
+
+/* Whether extra HTML fits below a page body: laid out on a full page with its footer, the content must end above the
+ * footer's rule (with a small gap) — the same test the report pages are held to (row 27: nothing runs into the footer). */
+function _fitsBelow(body, extra, orientation){
+  const shell = _measureShell(orientation);
+  shell.style.height = pageDims(orientation).h + 'px';
+  shell.style.minHeight = pageDims(orientation).h + 'px';
+  shell.innerHTML = body + extra + pageFooter(1, 1);
+  const footer = shell.querySelector('.report-footer');
+  const fTop = footer ? footer.getBoundingClientRect().top : shell.getBoundingClientRect().bottom;
+  const bottom = Math.max(...[...shell.children].filter(c => c !== footer).map(c => c.getBoundingClientRect().bottom));
+  $('#pdfMeasure').innerHTML = '';
+  return bottom <= fTop - 8;
+}
+
 function buildPages({ forExport = false } = {}){
   const sections = reportSections();
   const md = state.model;
   const reportFontPx = reportStatementFontPx(sections);   // one table font for the whole report
   const pages = [];   // {sectionNo, sectionId, title, body, orientation}
+
+  /* Balance Sheet Composition on the Balance Sheet page when its last page has the room (user, 2026-10-07); otherwise it
+   * stays on the dashboard. The Liabilities Bifurcation is never moved. */
+  let bsPlaced = null;   // { id, bodies } when the diagram goes onto the Balance Sheet
+  try {
+    const comp = bsCompositionHtml(md);
+    const bsSec = sections.find(s => s.id === 'bs') || sections.find(s => s.id === 'bsComparative');
+    if (comp && bsSec && md.sheetModels[bsSec.sheet]){
+      const no = sections.filter(s => s.id !== 'cover' && s.id !== 'toc').indexOf(bsSec) + 1;
+      const bodies = paginateTableSection(no, bsSec.title, md.sheetModels[bsSec.sheet], { forExport, fontPx: reportFontPx });
+      const last = bodies[bodies.length - 1];
+      if (last && _fitsBelow(last.body, comp, last.orientation || 'portrait')){
+        last.body += comp;
+        bsPlaced = { id: bsSec.id, bodies };
+      }
+    }
+  } catch (e){ console.error('Balance Sheet Composition placement:', e); bsPlaced = null; }
 
   let contentNo = 0;
   sections.forEach(sec => {
@@ -835,7 +873,7 @@ function buildPages({ forExport = false } = {}){
         case 'cover': bodies = [{ body: coverBody() }]; break;
         case 'toc':   bodies = [{ body: '__TOC__' }]; break;
         case 'dash':
-          bodies = md ? dashboardBodies(no, sec.title)
+          bodies = md ? dashboardBodies(no, sec.title, { compositionOnBalanceSheet: !!bsPlaced })
                       : [{ body: sectionHead(no, sec.title) + '<div class="report-empty">Upload a workbook to populate the analytical dashboard.</div>' }];
           break;
         case 'notes': bodies = paginateNotesSection(no, sec.title); break;
@@ -844,6 +882,7 @@ function buildPages({ forExport = false } = {}){
         default: {
           if (sec.aging){ bodies = [{ body: sectionHead(no, sec.title, md.bsAsOf || state.period) + `<div style="--aging-fs:${reportFontPx}px">` + agingTableHtml(sec.aging) + '</div>' }]; break; }
           const sm = md && md.sheetModels[sec.sheet];
+          if (bsPlaced && sec.id === bsPlaced.id){ bodies = bsPlaced.bodies; break; }
           bodies = sm ? paginateTableSection(no, sec.title, sm, { forExport, fontPx: reportFontPx })
                       : [{ body: sectionHead(no, sec.title) + '<div class="report-empty">No matching worksheet found.</div>' }];
         }
