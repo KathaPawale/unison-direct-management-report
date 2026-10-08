@@ -470,8 +470,16 @@ function inspectPage(){
       const cells = [...tr.cells].map(td => td.textContent.trim());
       pctCells[cells[0]] = cells.slice(1);
     }
+    /* Space above every section heading that follows other content on the page (the previous block's lowest edge). */
+    const headingGaps = [];
+    const blockEls = [...el.querySelectorAll('.rblock, .rblock *')];
+    for (const h of el.querySelectorAll('.report-section-title')){
+      const before = blockEls.filter(x => (x.compareDocumentPosition(h) & Node.DOCUMENT_POSITION_FOLLOWING) && !x.contains(h) && x.getBoundingClientRect().height);
+      if (!before.length) continue;
+      headingGaps.push({ text: h.textContent.trim(), gap: h.getBoundingClientRect().top - Math.max(...before.map(x => x.getBoundingClientRect().bottom)) });
+    }
     pageInfo.push({
-      id: p.sectionId, orientation: p.orientation, text: el.innerText, overFooter: contentBottom - fTop, rightOverflow, cutCells, headers, pctCells,
+      id: p.sectionId, orientation: p.orientation, text: el.innerText, overFooter: contentBottom - fTop, headingGaps, rightOverflow, cutCells, headers, pctCells,
       titleBold: tcs ? +tcs.fontWeight >= 700 : null, titleColor: tcs ? tcs.color : null, titleSize: tcs ? parseFloat(tcs.fontSize) : null,
       centered: hc ? getComputedStyle(hc).textAlign === 'center' : null,
       netNegOk: netRows.every(tr => [...tr.cells].slice(1).every(td => !/^\(\$/.test(td.textContent.trim()) || td.classList.contains('neg') && getComputedStyle(td).color === 'rgb(201, 52, 56)')),
@@ -712,6 +720,11 @@ function checkWorkbook(w, r, excel, pdf, errors){
   check(`${tag} Row 29 cover basis is Cash or Accrual, never currency text`, /Basis\s*(Cash|Accrual) Basis/i.test(cover.text.replace(/\n/g, ' ')), cover.text.slice(0, 300));
   check(`${tag} Row 30 "Confidential" appears once on the cover`, (cover.text.match(/confidential/gi) || []).length === 1);
   const disc = page('disc').map(p => p.text).join('\n');
+  /* Disclaimer text without quotation marks (user, 2026-10-08). */
+  check(`${tag} Disclaimer has no quotation marks around it`, disc.includes('The report we are submitting is for management purpose only.') && !/["“”]/.test(disc));
+  /* Section spacing (user, 2026-10-08): no section heading touches the section above it (24px or more of space). */
+  const tight = r.pages.flatMap(p => (p.headingGaps || []).filter(g => g.gap < 24).map(g => p.id + ': ' + g.text + ' ' + g.gap.toFixed(1) + 'px'));
+  check(`${tag} Every section heading has clear space above it (24px or more)`, !tight.length, tight.slice(0, 4).join(' | '));
   check(`${tag} Row 33 disclaimer sentence appears once`, (disc.match(/for management purpose only/gi) || []).length === 1);
 
   /* Uncategorized lines are never printed in the PDF (they stay in Excel and on the app pages). */

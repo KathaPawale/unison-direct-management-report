@@ -564,7 +564,7 @@ function disclaimerBody(no, title){
   const field = (label, v) =>
     `<div class="sig-field"><span>${label}:</span>${v ? `<b>${escapeHtml(v)}</b>` : '<i class="sig-blank"></i>'}</div>`;
   return sectionHead(no, title) +
-    `<div class="disclaimer-text">“${escapeHtml(REPORT_DISCLAIMER)}”</div>` +
+    `<div class="disclaimer-text">${escapeHtml(REPORT_DISCLAIMER)}</div>` +
     `<div class="signatory">
        <div class="signatory-title">Authorised Signatory</div>
        <div class="sig-line"></div>

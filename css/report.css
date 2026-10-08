@@ -13,9 +13,13 @@
 .report-heading-center .report-sub{text-align:center;margin-bottom:6px;font-size:12.5px;color:#5d6b7d}
 .report-company-center{text-align:center;font-size:13.5px;line-height:1.25;font-weight:800;color:#182330;margin-bottom:2px;overflow-wrap:anywhere}
 .report-rule{margin:6px 0 14px}
-.rblock{display:flow-root}
-.rblock .report-section-title:first-child{margin-top:12px}
-.report-section-title{font-size:12px;margin:14px 0 9px}
+/* Section spacing (user, 2026-10-08): every section heading has clear space above it (32px) so it never touches the
+ * previous section, and 12px below it before its content; only the first section under the page header stays close to
+ * the header rule. Blocks are never split across pages. */
+.rblock{display:flow-root;break-inside:avoid;page-break-inside:avoid}
+.report-section-title{font-size:12px;margin:32px 0 12px}
+.rblock .report-section-title:first-child{margin-top:32px}
+.rblock:not(.rblock + .rblock) .report-section-title:first-child{margin-top:12px}
 .chart-note{font-size:9.5px;color:#6d7887;margin:-4px 0 6px}
 .report-footer .footer-client{max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center}
 /* Statement tables: bold readable header, consistent widths, nothing cut off */
