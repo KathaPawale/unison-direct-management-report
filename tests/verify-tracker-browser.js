@@ -809,8 +809,10 @@ function checkWorkbook(w, r, excel, pdf, errors){
   const compOnBs = !!(bsTabX && r.hasComposition);
   check(`${tag} Excel Analytical Summary has one picture per dashboard graph (${r.graphCount}${compOnBs ? ', composition on the Balance Sheet tab' : ''})`,
     summaryWs && r.graphCount > 0 && (summaryWs.pictures || 0) === r.graphCount - (compOnBs ? 1 : 0), summaryWs && summaryWs.pictures);
-  if (compOnBs) check(`${tag} Excel Balance Sheet tab shows the Balance Sheet Composition diagram to the right of the statement`,
-    bsTabX.pictures === 1 && /Balance Sheet Composition/i.test(bsTabX.pictureNames[0] || '') && bsTabX.pictureCol > 1, bsTabX.pictures + ' ' + bsTabX.pictureNames.join(','));
+  const bsLastRow = bsTabX ? Math.max(...bsTabX.cells.map(c => c.row)) : 0;
+  if (compOnBs) check(`${tag} Excel Balance Sheet tab shows the Balance Sheet Composition diagram right after the statement`,
+    bsTabX.pictures === 1 && /Balance Sheet Composition/i.test(bsTabX.pictureNames[0] || '') && bsTabX.pictureCol === 0 && bsTabX.pictureRow >= bsLastRow && bsTabX.pictureRow <= bsLastRow + 3,
+    bsTabX.pictures + ' at col ' + bsTabX.pictureCol + ' row ' + bsTabX.pictureRow + ' (statement ends row ' + bsLastRow + ')');
   check(`${tag} Excel pictures start below the frozen heading rows (never cut by the freeze line)`,
     excel.sheets.filter(x => x.pictures).every(x => x.pictureRow >= 5), excel.sheets.filter(x => x.pictures).map(x => x.name + ':' + x.pictureRow).join(','));
   check(`${tag} Excel graph pictures are graphs only (no page header / footer)`, summaryWs && summaryWs.pictureNames.length > 0 &&
