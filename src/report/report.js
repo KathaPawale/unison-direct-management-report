@@ -827,13 +827,14 @@ function dashboardGraphBlocks(){
     .filter(html => /<svg\b/.test(html) || /donut/.test(html));
 }
 
-/* The Balance Sheet Composition diagram (both donuts), as one block. */
-function bsCompositionHtml(md){
+/* The Balance Sheet Composition diagram (both donuts), as one block. compact: smaller circles and tighter spacing, to fit
+ * the space left at the foot of the Balance Sheet page. */
+function bsCompositionHtml(md, { compact = false } = {}){
   if (!md || !(md.bsComposition.assets.length || md.bsComposition.liabEquity.length)) return '';
-  const m = md.metrics;
-  return '<div class="bs-composition-block"><div class="report-section-title">Balance Sheet Composition</div><div class="donut-row">' +
-    (md.bsComposition.assets.length ? donutChart({ items: md.bsComposition.assets, title: 'Assets — ' + money(m.assets) }) : '') +
-    (md.bsComposition.liabEquity.length ? donutChart({ items: md.bsComposition.liabEquity, title: 'Liabilities & Equity — ' + money(m.totalLE ?? (m.liabilities + m.equity)) }) : '') +
+  const m = md.metrics, size = compact ? 104 : 168;
+  return `<div class="bs-composition-block${compact ? ' compact' : ''}"><div class="report-section-title">Balance Sheet Composition</div><div class="donut-row">` +
+    (md.bsComposition.assets.length ? donutChart({ items: md.bsComposition.assets, size, title: 'Assets — ' + money(m.assets) }) : '') +
+    (md.bsComposition.liabEquity.length ? donutChart({ items: md.bsComposition.liabEquity, size, title: 'Liabilities & Equity — ' + money(m.totalLE ?? (m.liabilities + m.equity)) }) : '') +
     '</div></div>';
 }
 
@@ -857,18 +858,23 @@ function buildPages({ forExport = false } = {}){
   const reportFontPx = reportStatementFontPx(sections);   // one table font for the whole report
   const pages = [];   // {sectionNo, sectionId, title, body, orientation}
 
-  /* Balance Sheet Composition on the Balance Sheet page when its last page has the room (user, 2026-10-07); otherwise it
-   * stays on the dashboard. The Liabilities Bifurcation is never moved. */
-  let bsPlaced = null;   // { id, bodies } when the diagram goes onto the Balance Sheet
+  /* Balance Sheet Composition always goes with the Balance Sheet (user, 2026-10-08): in the space at the foot of its last
+   * page — full size if it fits, else a compact size — and, when even that does not fit, on a continuation page of the
+   * Balance Sheet. Only a workbook with no Balance Sheet keeps it on the dashboard. The Liabilities Bifurcation is never
+   * moved. */
+  let bsPlaced = null;   // { id, bodies } when the diagram goes with the Balance Sheet
   try {
-    const comp = bsCompositionHtml(md);
+    const comp = bsCompositionHtml(md), compSmall = bsCompositionHtml(md, { compact: true });
     const bsSec = sections.find(s => s.id === 'bs') || sections.find(s => s.id === 'bsComparative');
     if (comp && bsSec && md.sheetModels[bsSec.sheet]){
       const no = sections.filter(s => s.id !== 'cover' && s.id !== 'toc').indexOf(bsSec) + 1;
       const bodies = paginateTableSection(no, bsSec.title, md.sheetModels[bsSec.sheet], { forExport, fontPx: reportFontPx });
       const last = bodies[bodies.length - 1];
-      if (last && _fitsBelow(last.body, comp, last.orientation || 'portrait')){
-        last.body += comp;
+      if (last){
+        const orientation = last.orientation || 'portrait';
+        if (_fitsBelow(last.body, comp, orientation)) last.body += comp;
+        else if (_fitsBelow(last.body, compSmall, orientation)) last.body += compSmall;
+        else bodies.push({ orientation: 'portrait', body: sectionHead(no, bsSec.title, tableSectionSub(md.sheetModels[bsSec.sheet]), true) + comp });
         bsPlaced = { id: bsSec.id, bodies };
       }
     }

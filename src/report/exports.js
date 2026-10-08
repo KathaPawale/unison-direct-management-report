@@ -861,7 +861,7 @@ function downloadReportExcel(){
   /* The Analytical Summary also shows the PDF dashboard's graphs (each alone, no page), below its tables. */
   if (typeof window !== 'undefined' && typeof window.html2canvas === 'function'){
     return _dashboardImages().then(imgs => {
-      /* The Balance Sheet Composition diagram goes in the Balance Sheet tab's extra space (right of the statement), as in
+      /* The Balance Sheet Composition diagram goes in the Balance Sheet tab's extra space, right after the statement, as in
        * the PDF; the other graphs stay on the Analytical Summary. Pictures start below the frozen heading rows (1-5) so
        * the freeze line never cuts through them, all the same width, one under another. */
       const isComp = x => /balance sheet composition/i.test(x.name);
@@ -876,9 +876,10 @@ function downloadReportExcel(){
         s['!images'] = { row: 6, col: graphCol, widthPx: 520, gapRows: 1, items: graphs, names: graphs.map(x => x.name) };
       }
       if (bsTab && comp){
+        /* Right after the Balance Sheet is complete: two rows below its last line, from column A — as in the PDF. */
         const bws = wb.Sheets[bsTab];
-        const col = (bws['!cols'] || []).length + 1;
-        bws['!images'] = { row: 5, col, widthPx: 520, items: [comp], names: [comp.name] };
+        const lastRow = bws['!ref'] ? XLSX.utils.decode_range(bws['!ref']).e.r : 5;
+        bws['!images'] = { row: lastRow + 2, col: 0, widthPx: 520, items: [comp], names: [comp.name] };
       }
       save();
     }).catch(e => { console.error('Dashboard pictures could not be added:', e); save(); });

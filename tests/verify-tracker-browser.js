@@ -706,10 +706,10 @@ function checkWorkbook(w, r, excel, pdf, errors){
     check(`${tag} Balance Sheet Composition shown once`, compPages.length <= 1, compPages.map(p => p.id).join(','));
     const bsLast = bsId ? [...r.pages].reverse().find(p => p.id === bsId) : null;
     if (bsLast) check(`${tag} Liabilities Bifurcation is not on the Balance Sheet page`, !r.pages.some(p => p.id === bsId && /LIABILITIES BIFURCATION/i.test(p.text)));
-    /* Measured on the rendered pages: on the dashboard only when the Balance Sheet's last page has less free space than the diagram. */
-    if (compPages.length && bsLast) check(`${tag} Balance Sheet Composition on the Balance Sheet page when it has room (else the dashboard)`,
-      compPages[0].id === bsId ? compPages[0] === bsLast && bsLast.overFooter <= 0.5 : (compPages[0].id === 'dash' && bsLast.freeBelow < compPages[0].compH),
-      compPages[0].id + ' / free ' + Math.round(bsLast.freeBelow) + 'px, diagram ' + Math.round(compPages[0].compH || 0) + 'px');
+    /* Always with the Balance Sheet (full size, compact, or a Balance Sheet continuation page) — never the dashboard when
+     * there is a Balance Sheet — and never into the footer. */
+    if (bsLast) check(`${tag} Balance Sheet Composition is on a Balance Sheet page`, compPages.length === 1 && compPages[0].id === bsId && compPages[0].overFooter <= 0.5,
+      compPages.map(p => p.id + (p.overFooter > 0.5 ? ' over footer' : '')).join(',') || 'not shown');
   }
 
   /* Row 37: zero rows left out of the PDF */
@@ -809,8 +809,10 @@ function checkWorkbook(w, r, excel, pdf, errors){
   const compOnBs = !!(bsTabX && r.hasComposition);
   check(`${tag} Excel Analytical Summary has one picture per dashboard graph (${r.graphCount}${compOnBs ? ', composition on the Balance Sheet tab' : ''})`,
     summaryWs && r.graphCount > 0 && (summaryWs.pictures || 0) === r.graphCount - (compOnBs ? 1 : 0), summaryWs && summaryWs.pictures);
-  if (compOnBs) check(`${tag} Excel Balance Sheet tab shows the Balance Sheet Composition diagram to the right of the statement`,
-    bsTabX.pictures === 1 && /Balance Sheet Composition/i.test(bsTabX.pictureNames[0] || '') && bsTabX.pictureCol > 1, bsTabX.pictures + ' ' + bsTabX.pictureNames.join(','));
+  const bsLastRow = bsTabX ? Math.max(...bsTabX.cells.map(c => c.row)) : 0;
+  if (compOnBs) check(`${tag} Excel Balance Sheet tab shows the Balance Sheet Composition diagram right after the statement`,
+    bsTabX.pictures === 1 && /Balance Sheet Composition/i.test(bsTabX.pictureNames[0] || '') && bsTabX.pictureCol === 0 && bsTabX.pictureRow >= bsLastRow && bsTabX.pictureRow <= bsLastRow + 3,
+    bsTabX.pictures + ' at col ' + bsTabX.pictureCol + ' row ' + bsTabX.pictureRow + ' (statement ends row ' + bsLastRow + ')');
   check(`${tag} Excel pictures start below the frozen heading rows (never cut by the freeze line)`,
     excel.sheets.filter(x => x.pictures).every(x => x.pictureRow >= 5), excel.sheets.filter(x => x.pictures).map(x => x.name + ':' + x.pictureRow).join(','));
   check(`${tag} Excel graph pictures are graphs only (no page header / footer)`, summaryWs && summaryWs.pictureNames.length > 0 &&
