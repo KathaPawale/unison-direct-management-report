@@ -72,16 +72,22 @@ async function savePdf(open = false){
             };
           });
         }
-        let canvas;
-        try {
-          canvas = await html2canvas(el, { scale: 1.6, useCORS: true, logging: false, backgroundColor: '#ffffff', width: land ? PAGE_H : PAGE_W, height: land ? PAGE_W : PAGE_H, windowWidth: land ? PAGE_H : PAGE_W });
-        } catch (e1){
-          canvas = await html2canvas(el, { scale: 1.0, useCORS: true, logging: false, backgroundColor: '#ffffff', width: land ? PAGE_H : PAGE_W, height: land ? PAGE_W : PAGE_H, windowWidth: land ? PAGE_H : PAGE_W });
+        /* High quality (user, 2026-10-08: the PDF looked blurred): each page is drawn at 3x (about 288 dpi) and stored
+         * losslessly, so text and lines stay sharp when zoomed or printed; a smaller scale only if the browser cannot
+         * hold the larger canvas. */
+        let canvas = null, lastErr = null;
+        for (const scale of [3, 2, 1]){
+          try {
+            canvas = await html2canvas(el, { scale, useCORS: true, logging: false, backgroundColor: '#ffffff', width: land ? PAGE_H : PAGE_W, height: land ? PAGE_W : PAGE_H, windowWidth: land ? PAGE_H : PAGE_W });
+            if (canvas && canvas.width && canvas.height) break;
+            canvas = null;
+          } catch (e){ lastErr = e; canvas = null; }
         }
+        if (!canvas) throw lastErr || new Error('page could not be drawn');
         const orientation = land ? 'landscape' : 'portrait';
         if (!pdf) pdf = new jsPDF({ unit: 'pt', format: 'letter', orientation });
         else pdf.addPage('letter', orientation);
-        pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, land ? 792 : 612, land ? 612 : 792);
+        pdf.addImage(canvas, 'PNG', 0, 0, land ? 792 : 612, land ? 612 : 792, undefined, 'FAST');
         try { _pdfTextLayer(pdf, el, land ? 792 : 612, land ? 612 : 792); }
         catch (txtErr){ console.error('PDF text layer skipped on page ' + (i + 1) + ':', txtErr); }
         const pdfPageIndex = pdf.internal.getNumberOfPages() - 1;
@@ -861,25 +867,14 @@ function downloadReportExcel(){
   /* The Analytical Summary also shows the PDF dashboard's graphs (each alone, no page), below its tables. */
   if (typeof window !== 'undefined' && typeof window.html2canvas === 'function'){
     return _dashboardImages().then(imgs => {
-      /* The Balance Sheet Composition diagram goes in the Balance Sheet tab's extra space, right after the statement, as in
-       * the PDF; the other graphs stay on the Analytical Summary. Pictures start below the frozen heading rows (1-5) so
-       * the freeze line never cuts through them, all the same width, one under another. */
-      const isComp = x => /balance sheet composition/i.test(x.name);
-      const bsSource = md.roles.bs || md.roles.bsComparative;
-      const bsTab = bsSource ? wb.SheetNames.find(t => wb.Sheets[t]['!source'] === bsSource) : null;
-      const comp = imgs.find(isComp);
-      const graphs = bsTab && comp ? imgs.filter(x => !isComp(x)) : imgs;
+      /* The Balance Sheet Composition diagram is shown in the PDF only (user, 2026-10-08) — not in the Excel file. The
+       * other graphs go on the Analytical Summary, right of its tables, below the frozen heading rows. */
+      const graphs = imgs.filter(x => !/balance sheet composition/i.test(x.name));
       if (graphs.length){
-        /* The summary tables stay as they are on the left; the graphs and diagrams go on the right side of them. */
+        /* The summary tables stay as they are on the left; the graphs go on the right side of them. */
         const graphCol = (s['!cols'] || []).length + 1;
         _wsSetCell(s, 5, graphCol, 'Graphs — as in the PDF Analytical Dashboard', XL_STYLES.section, null, { border: false });
         s['!images'] = { row: 6, col: graphCol, widthPx: 520, gapRows: 1, items: graphs, names: graphs.map(x => x.name) };
-      }
-      if (bsTab && comp){
-        /* Right after the Balance Sheet is complete: two rows below its last line, from column A — as in the PDF. */
-        const bws = wb.Sheets[bsTab];
-        const lastRow = bws['!ref'] ? XLSX.utils.decode_range(bws['!ref']).e.r : 5;
-        bws['!images'] = { row: lastRow + 2, col: 0, widthPx: 520, items: [comp], names: [comp.name] };
       }
       save();
     }).catch(e => { console.error('Dashboard pictures could not be added:', e); save(); });

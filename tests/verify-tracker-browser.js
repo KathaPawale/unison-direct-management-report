@@ -418,6 +418,20 @@ function inspectPage(){
   out.graphCount = typeof window.dashboardGraphBlocks === 'function' ? window.dashboardGraphBlocks().length : 0;
   out.hasComposition = typeof window.dashboardGraphBlocks === 'function' && window.dashboardGraphBlocks().some(h => /Balance Sheet Composition/.test(h));
 
+  /* Balance Sheet statements (comparative tab, or any tab whose lines are a Balance Sheet) and whether the compact
+   * diagram would fit in the space at the foot of each one's last page. */
+  out.bsSections = [];
+  try {
+    const secs = reportSections(), numbered = secs.filter(s => s.id !== 'cover' && s.id !== 'toc');
+    for (const sec of secs){
+      const sm = state.model.sheetModels[sec.sheet];
+      if (!sm || !(sec.id === 'bs' || sec.id === 'bsComparative' || (/^extra\d+$/.test(sec.id) && _isBalanceSheetModel(sm)))) continue;
+      const bodies = paginateTableSection(numbered.indexOf(sec) + 1, sec.title, sm, { forExport: true, fontPx: reportStatementFontPx(secs) });
+      const last = bodies[bodies.length - 1];
+      out.bsSections.push({ id: sec.id, title: sec.title, room: !!last && _fitsBelow(last.body, bsCompositionHtml(state.model, { compact: true }), last.orientation || 'portrait') });
+    }
+  } catch (e){ out.bsSectionsError = String(e); }
+
   /* Report pages, rendered one by one exactly as the PDF export does */
   const pages = buildPages({ forExport: true });
   out.pageCount = pages.length;
@@ -698,19 +712,22 @@ function checkWorkbook(w, r, excel, pdf, errors){
   /* Uncategorized lines are never printed in the PDF (they stay in Excel and on the app pages). */
   for (const l of e.pdfLacks || []) check(`${tag} PDF leaves out "${l}"`, !content.some(p => p.text.includes(l)));
   for (const l of e.pdfHas || []) check(`${tag} PDF shows "${l}" in its statement`, content.some(p => p.id !== 'dash' && p.text.includes(l)));
-  /* Balance Sheet Composition (user, 2026-10-07): on the Balance Sheet page when it has room, otherwise on the dashboard —
-   * shown once; the Liabilities Bifurcation is never on the Balance Sheet page. */
+  /* Balance Sheet Composition (user, 2026-10-08): always with the main Balance Sheet (full size, compact, or a Balance
+   * Sheet continuation page), and in the empty space of every other Balance Sheet statement where it fits — never on the
+   * dashboard when there is a Balance Sheet, never into the footer; the Liabilities Bifurcation never moves. */
   const compPages = r.pages.filter(p => /BALANCE SHEET COMPOSITION/i.test(p.text));
   const bsId = r.roles.bs ? 'bs' : r.roles.bsComparative ? 'bsComparative' : null;
-  if (compPages.length || bsId){
-    check(`${tag} Balance Sheet Composition shown once`, compPages.length <= 1, compPages.map(p => p.id).join(','));
-    const bsLast = bsId ? [...r.pages].reverse().find(p => p.id === bsId) : null;
-    if (bsLast) check(`${tag} Liabilities Bifurcation is not on the Balance Sheet page`, !r.pages.some(p => p.id === bsId && /LIABILITIES BIFURCATION/i.test(p.text)));
-    /* Always with the Balance Sheet (full size, compact, or a Balance Sheet continuation page) — never the dashboard when
-     * there is a Balance Sheet — and never into the footer. */
-    if (bsLast) check(`${tag} Balance Sheet Composition is on a Balance Sheet page`, compPages.length === 1 && compPages[0].id === bsId && compPages[0].overFooter <= 0.5,
-      compPages.map(p => p.id + (p.overFooter > 0.5 ? ' over footer' : '')).join(',') || 'not shown');
-  }
+  if (r.bsSectionsError) check(`${tag} Balance Sheet sections measured`, false, r.bsSectionsError);
+  if (bsId && r.hasComposition){
+    check(`${tag} Balance Sheet Composition is on the main Balance Sheet`, compPages.some(p => p.id === bsId), compPages.map(p => p.id).join(',') || 'not shown');
+    check(`${tag} Balance Sheet Composition not on the dashboard when there is a Balance Sheet`, !compPages.some(p => p.id === 'dash'));
+    check(`${tag} Balance Sheet Composition at most once per Balance Sheet, never into the footer`,
+      new Set(compPages.map(p => p.id)).size === compPages.length && compPages.every(p => p.overFooter <= 0.5),
+      compPages.map(p => p.id + (p.overFooter > 0.5 ? ' over footer' : '')).join(','));
+    for (const b of r.bsSections || []) if (b.id !== bsId && b.room)
+      check(`${tag} Balance Sheet Composition fills the empty space of "${b.title}"`, compPages.some(p => p.id === b.id), compPages.map(p => p.id).join(','));
+    check(`${tag} Liabilities Bifurcation is not on a Balance Sheet page`, !r.pages.some(p => (r.bsSections || []).some(b => b.id === p.id) && /LIABILITIES BIFURCATION/i.test(p.text)));
+  } else if (compPages.length) check(`${tag} Balance Sheet Composition shown once (no Balance Sheet)`, compPages.length === 1);
 
   /* Row 37: zero rows left out of the PDF */
   for (const z of e.zeroRows || []) check(`${tag} Row 37 zero-balance ledger "${z}" left out of the PDF`, !content.some(p => p.id !== 'dash' && new RegExp('^\\s*' + z.replace(/[&]/g, '\\$&') + '\\s', 'm').test(p.text)));
@@ -743,6 +760,9 @@ function checkWorkbook(w, r, excel, pdf, errors){
   /* Searchable PDF: the words of every page are in the file as text (invisible layer over the page picture). */
   check(`${tag} PDF is searchable: its text is in the file`, pdf.invisibleText && pdf.text.includes(r.client) &&
     /Table of Contents/.test(pdf.text) && /Management Purpose Disclaimer/.test(pdf.text), (pdf.text || '').slice(0, 120));
+  if (pdf.ok) check(`${tag} PDF is high quality: every page drawn at 3x (2448 px or more across) and stored losslessly`,
+    pdf.imageWidths.length >= pdf.pages && pdf.imageWidths.every(w => w >= 2448) && !pdf.jpeg,
+    'widths ' + [...new Set(pdf.imageWidths)].join(',') + (pdf.jpeg ? ', JPEG' : ''));
   check(`${tag} Row 39 PDF TOC entries are clickable links`, pdf.links >= toc.length && toc.length > 0, pdf.links + ' links, ' + toc.length + ' entries');
   }
 
@@ -804,15 +824,12 @@ function checkWorkbook(w, r, excel, pdf, errors){
   const summaryWs = excel.sheets.find(s => s.name === 'Analytical Summary');
   check(`${tag} Excel graphs are on the right of the summary tables (tables unchanged on the left)`, summaryWs && summaryWs.pictureCol > 1 &&
     summaryWs.cells.filter(c => c.col === 'A').length > 5 && String(summaryWs.val('A1')).includes('Analytical Summary'), summaryWs && summaryWs.pictureCol);
-  /* The Balance Sheet Composition diagram sits in the Balance Sheet tab's extra space (when there is a Balance Sheet). */
-  const bsTabX = excel.sheets.find(x => x.name === tabOf(r.roles.bs || r.roles.bsComparative));
-  const compOnBs = !!(bsTabX && r.hasComposition);
-  check(`${tag} Excel Analytical Summary has one picture per dashboard graph (${r.graphCount}${compOnBs ? ', composition on the Balance Sheet tab' : ''})`,
-    summaryWs && r.graphCount > 0 && (summaryWs.pictures || 0) === r.graphCount - (compOnBs ? 1 : 0), summaryWs && summaryWs.pictures);
-  const bsLastRow = bsTabX ? Math.max(...bsTabX.cells.map(c => c.row)) : 0;
-  if (compOnBs) check(`${tag} Excel Balance Sheet tab shows the Balance Sheet Composition diagram right after the statement`,
-    bsTabX.pictures === 1 && /Balance Sheet Composition/i.test(bsTabX.pictureNames[0] || '') && bsTabX.pictureCol === 0 && bsTabX.pictureRow >= bsLastRow && bsTabX.pictureRow <= bsLastRow + 3,
-    bsTabX.pictures + ' at col ' + bsTabX.pictureCol + ' row ' + bsTabX.pictureRow + ' (statement ends row ' + bsLastRow + ')');
+  /* The Balance Sheet Composition diagram is in the PDF only (user, 2026-10-08): not on any Excel sheet. */
+  const compGraphs = r.hasComposition ? 1 : 0;
+  check(`${tag} Excel Analytical Summary has one picture per dashboard graph except the Balance Sheet Composition (${r.graphCount - compGraphs})`,
+    summaryWs && (summaryWs.pictures || 0) === r.graphCount - compGraphs, summaryWs && summaryWs.pictures);
+  check(`${tag} No Balance Sheet Composition picture anywhere in the Excel file`,
+    excel.sheets.every(x => !(x.pictureNames || []).some(n => /Balance Sheet Composition/i.test(n))), excel.sheets.filter(x => x.pictures).map(x => x.name + ':' + x.pictureNames.join('/')).join(' | '));
   check(`${tag} Excel pictures start below the frozen heading rows (never cut by the freeze line)`,
     excel.sheets.filter(x => x.pictures).every(x => x.pictureRow >= 5), excel.sheets.filter(x => x.pictures).map(x => x.name + ':' + x.pictureRow).join(','));
   check(`${tag} Excel graph pictures are graphs only (no page header / footer)`, summaryWs && summaryWs.pictureNames.length > 0 &&
@@ -925,6 +942,9 @@ function checkWorkbook(w, r, excel, pdf, errors){
         pdf.pages = (txt.match(/\/Type \/Page\b(?!s)/g) || []).length;
         pdf.links = (txt.match(/\/Subtype \/Link/g) || []).length;
         pdf.invisibleText = /\b3 Tr\b/.test(txt);
+        /* Page pictures: their pixel widths and whether any is stored as JPEG (blurred text). */
+        pdf.imageWidths = [...txt.matchAll(/\/Subtype \/Image[^>]*?\/Width (\d+)/g)].map(m => +m[1]);
+        pdf.jpeg = /\/DCTDecode/.test(txt);
         pdf.text = [...txt.matchAll(/\((?:[^()\\]|\\.)*\)\s*Tj/g)].map(m => m[0].slice(1, m[0].lastIndexOf(')')).replace(/\\(.)/g, '$1')).join(' ');
         pdf.ok = pdf.pages > 0;
       } catch (err){ pdf.error = String(err.message || err); }
