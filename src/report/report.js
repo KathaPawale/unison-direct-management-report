@@ -534,8 +534,8 @@ function dashboardBodies(no, title, opts = {}){
     blocks.push('<div class="report-section-title">Receivables &amp; Payables</div>' + svgHBars({ items, color: CHART_COLORS.teal, showPct: false }));
   }
 
-  /* Balance Sheet Composition: always on the dashboard with the other analytical diagrams (user, 2026-10-08), and also in
-   * the empty space of the Balance Sheet pages (buildPages). The Liabilities Bifurcation always stays on the dashboard. */
+  /* Balance Sheet Composition: only on the Analytical Dashboard with the other analytical diagrams, never on the Balance
+   * Sheet pages (user, 2026-10-08). The Liabilities Bifurcation always stays on the dashboard. */
   const comp = bsCompositionHtml(md);
   if (comp) blocks.push({ html: comp });
   const lt = liabilitiesTableHtml('report-mini-table');
@@ -825,38 +825,14 @@ function dashboardGraphBlocks(){
     .filter(html => /<svg\b/.test(html) || /donut/.test(html));
 }
 
-/* The Balance Sheet Composition diagram (both donuts), as one block. compact: smaller circles and tighter spacing, to fit
- * the space left at the foot of the Balance Sheet page. */
-function bsCompositionHtml(md, { compact = false } = {}){
+/* The Balance Sheet Composition diagram (both donuts), as one block — shown only on the Analytical Dashboard. */
+function bsCompositionHtml(md){
   if (!md || !(md.bsComposition.assets.length || md.bsComposition.liabEquity.length)) return '';
-  const m = md.metrics, size = compact ? 104 : 168;
-  return `<div class="bs-composition-block${compact ? ' compact' : ''}"><div class="report-section-title">Balance Sheet Composition</div><div class="donut-row">` +
+  const m = md.metrics, size = 168;
+  return `<div class="bs-composition-block"><div class="report-section-title">Balance Sheet Composition</div><div class="donut-row">` +
     (md.bsComposition.assets.length ? donutChart({ items: md.bsComposition.assets, size, title: 'Assets — ' + money(m.assets) }) : '') +
     (md.bsComposition.liabEquity.length ? donutChart({ items: md.bsComposition.liabEquity, size, title: 'Liabilities & Equity — ' + money(m.totalLE ?? (m.liabilities + m.equity)) }) : '') +
     '</div></div>';
-}
-
-/* A sheet whose own lines read as a Balance Sheet (Total Assets and Total Liabilities / Equity anchors outweighing any P&L
- * lines, not a cash-flow statement) — the same content fingerprint the detection uses. A "Net Profit (Loss)" / "Net Income"
- * line inside Equity / Capital does not make it a P&L. */
-function _isBalanceSheetModel(sm){
-  if (!sm || !sm.lines || typeof statementFingerprint !== 'function') return false;
-  const fp = statementFingerprint(sm.lines.map(l => l.mkey ?? labelKey(l.label)));
-  return !fp.cashFlow && fp.bsAnchors >= 2 && fp.bs + fp.bsAnchors > fp.pl + fp.plAnchors;
-}
-
-/* Whether extra HTML fits below a page body: laid out on a full page with its footer, the content must end above the
- * footer's rule (with a small gap) — the same test the report pages are held to (row 27: nothing runs into the footer). */
-function _fitsBelow(body, extra, orientation){
-  const shell = _measureShell(orientation);
-  shell.style.height = pageDims(orientation).h + 'px';
-  shell.style.minHeight = pageDims(orientation).h + 'px';
-  shell.innerHTML = body + extra + pageFooter(1, 1);
-  const footer = shell.querySelector('.report-footer');
-  const fTop = footer ? footer.getBoundingClientRect().top : shell.getBoundingClientRect().bottom;
-  const bottom = Math.max(...[...shell.children].filter(c => c !== footer).map(c => c.getBoundingClientRect().bottom));
-  $('#pdfMeasure').innerHTML = '';
-  return bottom <= fTop - 8;
 }
 
 function buildPages({ forExport = false } = {}){
@@ -864,34 +840,6 @@ function buildPages({ forExport = false } = {}){
   const md = state.model;
   const reportFontPx = reportStatementFontPx(sections);   // one table font for the whole report
   const pages = [];   // {sectionNo, sectionId, title, body, orientation}
-
-  /* Balance Sheet Composition always goes with the Balance Sheet (user, 2026-10-08): in the space at the foot of its last
-   * page — full size if it fits, else a compact size — and, when even that does not fit, on a continuation page of the
-   * Balance Sheet. Every other Balance Sheet statement (the comparative tab, or another tab whose lines are a Balance
-   * Sheet) shows it too in the empty space at its foot when it fits there (user, 2026-10-08). The dashboard always shows it
-   * as well, with the other analytical diagrams. The Liabilities Bifurcation is never moved. */
-  const bsPlaced = new Map();   // section id -> bodies, for each Balance Sheet that carries the diagram
-  try {
-    const comp = bsCompositionHtml(md), compSmall = bsCompositionHtml(md, { compact: true });
-    const numbered = sections.filter(s => s.id !== 'cover' && s.id !== 'toc');
-    const primary = sections.find(s => s.id === 'bs') || sections.find(s => s.id === 'bsComparative');
-    const others = sections.filter(s => s !== primary && md && md.sheetModels[s.sheet] &&
-      (s.id === 'bsComparative' || (/^extra\d+$/.test(s.id) && _isBalanceSheetModel(md.sheetModels[s.sheet]))));
-    if (comp && primary && md.sheetModels[primary.sheet]){
-      for (const sec of [primary, ...others]){
-        const no = numbered.indexOf(sec) + 1;
-        const bodies = paginateTableSection(no, sec.title, md.sheetModels[sec.sheet], { forExport, fontPx: reportFontPx });
-        const last = bodies[bodies.length - 1];
-        if (!last) continue;
-        const orientation = last.orientation || 'portrait';
-        if (_fitsBelow(last.body, comp, orientation)) last.body += comp;
-        else if (_fitsBelow(last.body, compSmall, orientation)) last.body += compSmall;
-        else if (sec === primary) bodies.push({ orientation: 'portrait', body: sectionHead(no, sec.title, tableSectionSub(md.sheetModels[sec.sheet]), true) + comp });
-        else continue;
-        bsPlaced.set(sec.id, bodies);
-      }
-    }
-  } catch (e){ console.error('Balance Sheet Composition placement:', e); bsPlaced.clear(); }
 
   let contentNo = 0;
   sections.forEach(sec => {
@@ -911,7 +859,6 @@ function buildPages({ forExport = false } = {}){
         default: {
           if (sec.aging){ bodies = [{ body: sectionHead(no, sec.title, md.bsAsOf || state.period) + `<div style="--aging-fs:${reportFontPx}px">` + agingTableHtml(sec.aging) + '</div>' }]; break; }
           const sm = md && md.sheetModels[sec.sheet];
-          if (bsPlaced.has(sec.id)){ bodies = bsPlaced.get(sec.id); break; }
           bodies = sm ? paginateTableSection(no, sec.title, sm, { forExport, fontPx: reportFontPx })
                       : [{ body: sectionHead(no, sec.title) + '<div class="report-empty">No matching worksheet found.</div>' }];
         }
