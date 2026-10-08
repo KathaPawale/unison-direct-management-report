@@ -534,12 +534,10 @@ function dashboardBodies(no, title, opts = {}){
     blocks.push('<div class="report-section-title">Receivables &amp; Payables</div>' + svgHBars({ items, color: CHART_COLORS.teal, showPct: false }));
   }
 
-  /* Balance Sheet Composition: on the Balance Sheet page when that page has room (buildPages), else here. The Liabilities
-   * Bifurcation always stays on the dashboard. */
-  if (!opts.compositionOnBalanceSheet){
-    const comp = bsCompositionHtml(md);
-    if (comp) blocks.push({ html: comp });
-  }
+  /* Balance Sheet Composition: always on the dashboard with the other analytical diagrams (user, 2026-10-08), and also in
+   * the empty space of the Balance Sheet pages (buildPages). The Liabilities Bifurcation always stays on the dashboard. */
+  const comp = bsCompositionHtml(md);
+  if (comp) blocks.push({ html: comp });
   const lt = liabilitiesTableHtml('report-mini-table');
   if (lt) blocks.push({ html: '<div class="report-section-title">Liabilities Bifurcation</div>' + lt, orphanGuard: true });
 
@@ -823,7 +821,7 @@ function reportSections(){
 function dashboardGraphBlocks(){
   const md = state.model;
   if (!md) return [];
-  return dashboardBodies(0, 'Analytical Dashboard', { blocksOnly: true, compositionOnBalanceSheet: false })
+  return dashboardBodies(0, 'Analytical Dashboard', { blocksOnly: true })
     .filter(html => /<svg\b/.test(html) || /donut/.test(html));
 }
 
@@ -838,12 +836,13 @@ function bsCompositionHtml(md, { compact = false } = {}){
     '</div></div>';
 }
 
-/* A sheet whose own lines read as a Balance Sheet (Total Assets and Total Liabilities / Equity anchors, no P&L bottom
- * line, not a cash-flow statement) — the same content fingerprint the detection uses. */
+/* A sheet whose own lines read as a Balance Sheet (Total Assets and Total Liabilities / Equity anchors outweighing any P&L
+ * lines, not a cash-flow statement) — the same content fingerprint the detection uses. A "Net Profit (Loss)" / "Net Income"
+ * line inside Equity / Capital does not make it a P&L. */
 function _isBalanceSheetModel(sm){
   if (!sm || !sm.lines || typeof statementFingerprint !== 'function') return false;
   const fp = statementFingerprint(sm.lines.map(l => l.mkey ?? labelKey(l.label)));
-  return !fp.cashFlow && fp.bsAnchors >= 2 && fp.plAnchors === 0;
+  return !fp.cashFlow && fp.bsAnchors >= 2 && fp.bs + fp.bsAnchors > fp.pl + fp.plAnchors;
 }
 
 /* Whether extra HTML fits below a page body: laid out on a full page with its footer, the content must end above the
@@ -869,8 +868,8 @@ function buildPages({ forExport = false } = {}){
   /* Balance Sheet Composition always goes with the Balance Sheet (user, 2026-10-08): in the space at the foot of its last
    * page — full size if it fits, else a compact size — and, when even that does not fit, on a continuation page of the
    * Balance Sheet. Every other Balance Sheet statement (the comparative tab, or another tab whose lines are a Balance
-   * Sheet) shows it too in the empty space at its foot when it fits there (user, 2026-10-08). Only a workbook with no
-   * Balance Sheet keeps it on the dashboard. The Liabilities Bifurcation is never moved. */
+   * Sheet) shows it too in the empty space at its foot when it fits there (user, 2026-10-08). The dashboard always shows it
+   * as well, with the other analytical diagrams. The Liabilities Bifurcation is never moved. */
   const bsPlaced = new Map();   // section id -> bodies, for each Balance Sheet that carries the diagram
   try {
     const comp = bsCompositionHtml(md), compSmall = bsCompositionHtml(md, { compact: true });
@@ -903,7 +902,7 @@ function buildPages({ forExport = false } = {}){
         case 'cover': bodies = [{ body: coverBody() }]; break;
         case 'toc':   bodies = [{ body: '__TOC__' }]; break;
         case 'dash':
-          bodies = md ? dashboardBodies(no, sec.title, { compositionOnBalanceSheet: bsPlaced.size > 0 })
+          bodies = md ? dashboardBodies(no, sec.title)
                       : [{ body: sectionHead(no, sec.title) + '<div class="report-empty">Upload a workbook to populate the analytical dashboard.</div>' }];
           break;
         case 'notes': bodies = paginateNotesSection(no, sec.title); break;
