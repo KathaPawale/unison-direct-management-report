@@ -281,6 +281,25 @@ function halfYearCashWorkbook(){
       sections: ['bs', 'plMonthly'] } };
 }
 
+/* Three Balance Sheet tabs (BS, BS_Comparative and a third "Balance Sheet" tab) with "Net Profit (Loss)" inside Capital:
+ * every one shows the Balance Sheet Composition in its empty space (user, 2026-10-08). */
+function threeBalanceSheetsWorkbook(){
+  const client = 'ML Jones LLC', period = 'For the Years Ended December 31, 2025 and 2024';
+  const bs = [[client], ['Balance Sheet'], ['As of December 31, 2025 and 2024'], [], ['Particulars', '2024', '2025'],
+    ['ASSETS'], ['Current Assets'], ['Checking', 160000, 202000], ['Accounts Receivable (A/R)', 90000, 110000], ['Prepaid Expenses', 5779.27, 11813.08],
+    ['Total Current Assets', 255779.27, 323813.08], ['Fixed Assets'], ['Equipment', 100000, 100000], ['Total Fixed Assets', 100000, 100000],
+    ['TOTAL ASSETS', 355779.27, 423813.08], ['LIABILITIES AND CAPITAL'], ['Liabilities'], ['Current Liabilities'],
+    ['Accounts Payable (A/P)', 221753.85, 191124.20], ['Loan from Owner', 1200000, 1200000], ['Total Current Liabilities', 1421753.85, 1391124.20],
+    ['Total Liabilities', 1421753.85, 1391124.20], ['Capital'], ['Retained Earnings', -1131750.66, -1063974.58], ['Owner draws', -3000, -3167],
+    ['ML Jones Contributed Capital', 1000, 1000], ['Net Profit (Loss)', 67776.08, 98830.46], ['Total Capital', -1065974.58, -967311.12],
+    ['Total Liabilities & Capital', 355779.27, 423813.08], [], ['Note : Supporting Ledger detail is available for all line items in the Notes section.']];
+  const pl = [[client], ['Profit and Loss'], [period], [], ['Particulars', '2024', '2025'], ['Income'], ['Sales', 600000, 700000],
+    ['Total Income', 600000, 700000], ['Expenses'], ['Rent', 120000, 130000], ['Wages', 412223.92, 471169.54], ['Total Expenses', 532223.92, 601169.54],
+    ['Net Profit (Loss)', 67776.08, 98830.46]];
+  return { name: 'Three Balance Sheet tabs (composition on each)', client, period, sheets: { 'BS': bs, 'BS_Comparative': bs, 'Balance Sheet': bs, 'Profit and Loss': pl },
+    expect: {} };
+}
+
 function fixtureWorkbooks(){
   const fx = JSON.parse(fs.readFileSync(path.join(root, 'tests/calc-fixtures.json'), 'utf8'));
   const exp = fx.expected || {};
@@ -425,11 +444,13 @@ function inspectPage(){
     const secs = reportSections(), numbered = secs.filter(s => s.id !== 'cover' && s.id !== 'toc');
     for (const sec of secs){
       const sm = state.model.sheetModels[sec.sheet];
-      if (!sm || !(sec.id === 'bs' || sec.id === 'bsComparative' || (/^extra\d+$/.test(sec.id) && _isBalanceSheetModel(sm)))) continue;
+      if (!sm || !(sec.id === 'bs' || sec.id === 'bsComparative' || (/^extra\d+$/.test(sec.id) && (_isBalanceSheetModel(sm) || /^(bs|balance ?sheet)\b/i.test(sec.title))))) continue;
       const bodies = paginateTableSection(numbered.indexOf(sec) + 1, sec.title, sm, { forExport: true, fontPx: reportStatementFontPx(secs) });
       const last = bodies[bodies.length - 1];
       out.bsSections.push({ id: sec.id, title: sec.title, room: !!last && _fitsBelow(last.body, bsCompositionHtml(state.model, { compact: true }), last.orientation || 'portrait') });
     }
+    /* Every detected Balance Sheet reads as one (a Net Income / Net Profit line in Equity must not hide it). */
+    out.bsNotRecognised = ['bs', 'bsComparative'].map(k => state.model.roles[k]).filter(n => n && state.model.sheetModels[n] && !_isBalanceSheetModel(state.model.sheetModels[n]));
   } catch (e){ out.bsSectionsError = String(e); }
 
   /* Report pages, rendered one by one exactly as the PDF export does */
@@ -712,22 +733,23 @@ function checkWorkbook(w, r, excel, pdf, errors){
   /* Uncategorized lines are never printed in the PDF (they stay in Excel and on the app pages). */
   for (const l of e.pdfLacks || []) check(`${tag} PDF leaves out "${l}"`, !content.some(p => p.text.includes(l)));
   for (const l of e.pdfHas || []) check(`${tag} PDF shows "${l}" in its statement`, content.some(p => p.id !== 'dash' && p.text.includes(l)));
-  /* Balance Sheet Composition (user, 2026-10-08): always with the main Balance Sheet (full size, compact, or a Balance
-   * Sheet continuation page), and in the empty space of every other Balance Sheet statement where it fits — never on the
-   * dashboard when there is a Balance Sheet, never into the footer; the Liabilities Bifurcation never moves. */
+  /* Balance Sheet Composition (user, 2026-10-08): on the dashboard with the other analytical diagrams, always with the main
+   * Balance Sheet (full size, compact, or a Balance Sheet continuation page), and in the empty space of every other Balance
+   * Sheet statement where it fits — never into the footer; the Liabilities Bifurcation never moves. */
   const compPages = r.pages.filter(p => /BALANCE SHEET COMPOSITION/i.test(p.text));
   const bsId = r.roles.bs ? 'bs' : r.roles.bsComparative ? 'bsComparative' : null;
   if (r.bsSectionsError) check(`${tag} Balance Sheet sections measured`, false, r.bsSectionsError);
+  check(`${tag} Every Balance Sheet tab is recognised as a Balance Sheet for the composition diagram`, !(r.bsNotRecognised || []).length, (r.bsNotRecognised || []).join(', '));
   if (bsId && r.hasComposition){
     check(`${tag} Balance Sheet Composition is on the main Balance Sheet`, compPages.some(p => p.id === bsId), compPages.map(p => p.id).join(',') || 'not shown');
-    check(`${tag} Balance Sheet Composition not on the dashboard when there is a Balance Sheet`, !compPages.some(p => p.id === 'dash'));
+    check(`${tag} Balance Sheet Composition is on the PDF dashboard with the other analytical diagrams`, compPages.filter(p => p.id === 'dash').length === 1);
     check(`${tag} Balance Sheet Composition at most once per Balance Sheet, never into the footer`,
       new Set(compPages.map(p => p.id)).size === compPages.length && compPages.every(p => p.overFooter <= 0.5),
       compPages.map(p => p.id + (p.overFooter > 0.5 ? ' over footer' : '')).join(','));
     for (const b of r.bsSections || []) if (b.id !== bsId && b.room)
       check(`${tag} Balance Sheet Composition fills the empty space of "${b.title}"`, compPages.some(p => p.id === b.id), compPages.map(p => p.id).join(','));
     check(`${tag} Liabilities Bifurcation is not on a Balance Sheet page`, !r.pages.some(p => (r.bsSections || []).some(b => b.id === p.id) && /LIABILITIES BIFURCATION/i.test(p.text)));
-  } else if (compPages.length) check(`${tag} Balance Sheet Composition shown once (no Balance Sheet)`, compPages.length === 1);
+  } else if (r.hasComposition) check(`${tag} Balance Sheet Composition on the PDF dashboard`, compPages.length === 1 && compPages[0].id === 'dash');
 
   /* Row 37: zero rows left out of the PDF */
   for (const z of e.zeroRows || []) check(`${tag} Row 37 zero-balance ledger "${z}" left out of the PDF`, !content.some(p => p.id !== 'dash' && new RegExp('^\\s*' + z.replace(/[&]/g, '\\$&') + '\\s', 'm').test(p.text)));
@@ -866,7 +888,7 @@ function checkWorkbook(w, r, excel, pdf, errors){
     ? [{ name: path.basename(process.env.TRACKER_XLSX), file: fs.readFileSync(process.env.TRACKER_XLSX),
          /* TRACKER_EXPECT=expect.json adds the figures to check: { client, expect: { income, net, roles, periods, … } } */
          ...(process.env.TRACKER_EXPECT ? JSON.parse(fs.readFileSync(process.env.TRACKER_EXPECT, 'utf8')) : { expect: {} }) }]
-    : [row54Workbook(), plutoWorkbook(), plutoClientWorkbook(), uncategorizedWorkbook(), senecaWorkbook(), comparativePctWorkbook(), halfYearCashWorkbook(), ...fixtureWorkbooks()])
+    : [row54Workbook(), plutoWorkbook(), plutoClientWorkbook(), uncategorizedWorkbook(), senecaWorkbook(), comparativePctWorkbook(), halfYearCashWorkbook(), threeBalanceSheetsWorkbook(), ...fixtureWorkbooks()])
     .filter(w => !process.env.TRACKER_ONLY || w.name.includes(process.env.TRACKER_ONLY));   // e.g. TRACKER_ONLY="Row 54"
   if (!books.length) throw new Error('No workbook matches TRACKER_ONLY=' + process.env.TRACKER_ONLY);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'udmr-'));
