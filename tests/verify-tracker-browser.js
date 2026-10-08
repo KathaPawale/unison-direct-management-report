@@ -725,6 +725,10 @@ function checkWorkbook(w, r, excel, pdf, errors){
       compPages.length === 1 && compPages[0].id === 'dash' && compPages[0].overFooter <= 0.5, compPages.map(p => p.id).join(',') || 'not shown');
     check(`${tag} Balance Sheet Composition is not on the Balance Sheet pages`, !compPages.some(p => p.id !== 'dash'), compPages.map(p => p.id).join(','));
   }
+  if (r.hasComposition && r.pages.some(p => /LIABILITIES BIFURCATION/i.test(p.text)))
+    check(`${tag} Balance Sheet Composition is on the same dashboard page as the Liabilities Bifurcation, above it`,
+      compPages.some(p => /LIABILITIES BIFURCATION/i.test(p.text) && p.text.search(/BALANCE SHEET COMPOSITION/i) < p.text.search(/LIABILITIES BIFURCATION/i)),
+      compPages.map(p => p.id + ' page ' + r.pages.indexOf(p)).join(','));
   check(`${tag} Liabilities Bifurcation stays on the dashboard`, !r.pages.some(p => p.id !== 'dash' && /LIABILITIES BIFURCATION/i.test(p.text)));
 
   /* Row 37: zero rows left out of the PDF */
