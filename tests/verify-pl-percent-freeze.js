@@ -39,7 +39,7 @@ const files = ['src/core/util.js', 'src/core/state.js', 'src/core/parser.js', 's
   'src/report/charts.js', 'src/report/report.js', 'src/report/exports.js'];
 vm.runInContext(files.map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n;\n') +
   '\n;toast = m => __toasts.push(m);' +
-  '\n;globalThis.__api = { parseWorkbook, state, reportSections, reportTableParts, downloadReportExcel, downloadDataExcel, _workbookBytes, _verifySheetRules, reportExtraSheets };', Object.assign(ctx, { __toasts: toasts }));
+  '\n;globalThis.__api = { parseWorkbook, state, reportSections, reportNotesText, reportTableParts, downloadReportExcel, downloadDataExcel, _workbookBytes, _verifySheetRules, reportExtraSheets };', Object.assign(ctx, { __toasts: toasts }));
 const api = ctx.__api;
 
 const head = t => [['Pluto Asset Recovery'], [t], ['January-December 2025'], []];
@@ -103,7 +103,7 @@ for (const [name, sheets] of Object.entries(layouts)){
   /* Report order (user, 2026-09-30): Disclaimer, Dashboard, the statements in the uploaded workbook's tab order, Notes last. */
   const secsNow = api.reportSections().slice(2);
   const stmtSheets = secsNow.filter(x => x.sheet).map(x => x.sheet);
-  check(`${name}: report sections follow the workbook's tab order`, secsNow[0].id === 'dash' && secsNow[secsNow.length - 2].id === 'notes' && secsNow[secsNow.length - 1].id === 'disc' &&
+  check(`${name}: report sections follow the workbook's tab order`, secsNow[0].id === 'dash' && (api.reportNotesText().trim() ? secsNow[secsNow.length - 2].id === 'notes' : !secsNow.some(x => x.id === 'notes')) && secsNow[secsNow.length - 1].id === 'disc' &&
     stmtSheets.join('|') === [...stmtSheets].sort((a, b) => Object.keys(sheets).indexOf(a) - Object.keys(sheets).indexOf(b)).join('|'));
   const parts = api.reportTableParts(md.sheetModels[pctName], {});
   const net = parts.rows.find(r => /Net Income/.test(r.html));
@@ -328,11 +328,14 @@ for (const [tab, title] of [['TB_July', 'Trial Balance'], ['Trial Balance Summar
     api.state.sheets = sheets; api.state.client = 'Pluto Asset Recovery'; const md = api.parseWorkbook(sheets); api.state.model = md;
     const secs = api.reportSections();
     for (const [tab, title] of Object.entries(want)) check(`Heading from the sheet (${label}): "${tab}" is "${title}"`, secs.some(x => x.sheet === tab && x.title === title));
-    check(`Notes, then the Disclaimer on the last page (${label})`, secs[secs.length - 2].id === 'notes' && secs[secs.length - 1].id === 'disc');
+    /* Notes only when the workbook has notes (user, 2026-10-08) — never an automatic empty Notes section. */
+    check(`${md.roles.notes ? 'Notes, then the' : 'No Notes section (no notes sheet);'} Disclaimer on the last page (${label})`,
+      (md.roles.notes ? secs[secs.length - 2].id === 'notes' : !secs.some(x => x.id === 'notes')) && secs[secs.length - 1].id === 'disc');
     downloads.length = 0; api.downloadReportExcel();
     const tabs = XLSX.read(downloads[0].bytes, { type: 'array' }).SheetNames;
     const notesTab = md.roles.notes || 'Notes';
-    check(`Excel tabs end with "${notesTab}", then the Disclaimer (${label})`, tabs[tabs.length - 2] === notesTab && tabs[tabs.length - 1] === 'Disclaimer');
+    check(md.roles.notes ? `Excel tabs end with "${notesTab}", then the Disclaimer (${label})` : `Excel has no Notes tab without notes; Disclaimer last (${label})`,
+      (md.roles.notes ? tabs[tabs.length - 2] === notesTab : !tabs.includes('Notes')) && tabs[tabs.length - 1] === 'Disclaimer');
   }
 }
 

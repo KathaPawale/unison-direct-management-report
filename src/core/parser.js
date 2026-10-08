@@ -701,8 +701,16 @@ function detectRoles(sheets, sheetModels){
   const free = x => !Object.values(roles).includes(x.n);
   /* An index sheet ("Summary": 1 | Profit and Loss(Comparative) | Click here to view!) lists the other sheets. It is never a
    * statement — its mentions of "AP Aging" / "Balance Sheet" made it look like one — so it takes the summary role first. */
+  /* A tab named "Notes" / "Comments" (or titled "Notes to Financial Statements") is the notes sheet first — its notes name
+   * the other tabs and mention receivables, payables or the trial balance, which made it look like an index or a statement
+   * (user, 2026-10-08). Only a real statement — amount columns and P&L / Balance Sheet lines — keeps it a statement; note
+   * text alone ("Retained earnings agree…", "Fixed assets are shown at cost…") is not. */
   for (const x of info){
-    if (!roles.summary && isIndexLikeSheet(x.n, sheets[x.n] || [], names)) roles.summary = x.n;
+    const amountCols = x.sm.cols.filter(c => c.type !== 'label' && c.type !== 'comment').length;
+    if (!roles.notes && x.notes && !(amountCols && (x.plContent || x.bsContent))) roles.notes = x.n;
+  }
+  for (const x of info){
+    if (!roles.summary && free(x) && isIndexLikeSheet(x.n, sheets[x.n] || [], names)) roles.summary = x.n;
   }
 
   for (const x of info){
