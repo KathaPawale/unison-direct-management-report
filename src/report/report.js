@@ -534,12 +534,16 @@ function dashboardBodies(no, title, opts = {}){
     blocks.push('<div class="report-section-title">Receivables &amp; Payables</div>' + svgHBars({ items, color: CHART_COLORS.teal, showPct: false }));
   }
 
-  /* Balance Sheet Composition: only on the Analytical Dashboard with the other analytical diagrams, never on the Balance
-   * Sheet pages (user, 2026-10-08). The Liabilities Bifurcation always stays on the dashboard. */
+  /* Balance Sheet Composition: only on the Analytical Dashboard, never on the Balance Sheet pages (user, 2026-10-08), and on
+   * the same page as the Liabilities Bifurcation, directly above it — the two move to a new page together. */
   const comp = bsCompositionHtml(md);
-  if (comp) blocks.push({ html: comp });
   const lt = liabilitiesTableHtml('report-mini-table');
-  if (lt) blocks.push({ html: '<div class="report-section-title">Liabilities Bifurcation</div>' + lt, orphanGuard: true });
+  const ltHtml = lt ? '<div class="report-section-title">Liabilities Bifurcation</div>' + lt : '';
+  if (comp && ltHtml && !opts.blocksOnly) blocks.push({ html: comp + ltHtml, orphanGuard: true });
+  else {
+    if (comp) blocks.push({ html: comp });
+    if (ltHtml) blocks.push({ html: ltHtml, orphanGuard: true });
+  }
 
   if (opts.blocksOnly) return blocks.map(b => typeof b === 'string' ? b : b.html);
   return paginateBlocks(no, title, blocks);
