@@ -416,6 +416,7 @@ function inspectPage(){
     [...tr.cells].slice(1).every(td => !/^\(/.test(td.textContent.trim()) || td.classList.contains('neg')));
 
   out.graphCount = typeof window.dashboardGraphBlocks === 'function' ? window.dashboardGraphBlocks().length : 0;
+  out.hasComposition = typeof window.dashboardGraphBlocks === 'function' && window.dashboardGraphBlocks().some(h => /Balance Sheet Composition/.test(h));
 
   /* Report pages, rendered one by one exactly as the PDF export does */
   const pages = buildPages({ forExport: true });
@@ -510,8 +511,9 @@ function readXlsxFile(file){
     const pictures = (drawXml.match(/<xdr:pic>/g) || []).length;
     const pictureNames = [...drawXml.matchAll(/<xdr:cNvPr [^>]*name="([^"]*)"/g)].map(m => m[1].replace(/&amp;/g, '&'));
     const pictureCol = +((drawXml.match(/<xdr:from><xdr:col>(\d+)<\/xdr:col>/) || [])[1] ?? -1);
+    const pictureRow = Math.min(...[...drawXml.matchAll(/<xdr:row>(\d+)<\/xdr:row>/g)].map(m => +m[1]), 1e9);
     const val = a => (ws[a] || {}).v ?? '';
-    return { name, xml, cells, val, pictures, pictureNames, pictureCol, tabColor: (xml.match(/<sheetPr>[^]*?<tabColor rgb="([0-9A-F]{8})"/) || [])[1] || null,
+    return { name, xml, cells, val, pictures, pictureNames, pictureCol, pictureRow, tabColor: (xml.match(/<sheetPr>[^]*?<tabColor rgb="([0-9A-F]{8})"/) || [])[1] || null,
       pane: pane && /state="frozen"/.test(pane[0]) ? ((pane[0].match(/topLeftCell="([A-Z]+\d+)"/) || [])[1] || null) : null,
       xSplit: pane ? +((pane[0].match(/xSplit="(\d+)"/) || [])[1] || 0) : 0, ySplit: pane ? +((pane[0].match(/ySplit="(\d+)"/) || [])[1] || 0) : 0 };
   });
@@ -736,11 +738,13 @@ function checkWorkbook(w, r, excel, pdf, errors){
   for (const s of e.sections || []) check(`${tag} Rows 44-54 PDF has the ${s} section`, r.pages.some(p => p.id === s));
 
   /* PDF file (row 34 save, row 39 links) */
+  if (!pdf.skipped){
   check(`${tag} Row 34 PDF saves with every page`, pdf.ok && pdf.pages === r.pageCount, pdf.error || (pdf.pages + ' of ' + r.pageCount));
   /* Searchable PDF: the words of every page are in the file as text (invisible layer over the page picture). */
   check(`${tag} PDF is searchable: its text is in the file`, pdf.invisibleText && pdf.text.includes(r.client) &&
     /Table of Contents/.test(pdf.text) && /Management Purpose Disclaimer/.test(pdf.text), (pdf.text || '').slice(0, 120));
   check(`${tag} Row 39 PDF TOC entries are clickable links`, pdf.links >= toc.length && toc.length > 0, pdf.links + ' links, ' + toc.length + ' entries');
+  }
 
   /* Excel: rows 7, 25, 41, 42, 44-48, 52, 54 */
   check(`${tag} Excel downloads`, excel.ok, excel.error);
@@ -800,7 +804,15 @@ function checkWorkbook(w, r, excel, pdf, errors){
   const summaryWs = excel.sheets.find(s => s.name === 'Analytical Summary');
   check(`${tag} Excel graphs are on the right of the summary tables (tables unchanged on the left)`, summaryWs && summaryWs.pictureCol > 1 &&
     summaryWs.cells.filter(c => c.col === 'A').length > 5 && String(summaryWs.val('A1')).includes('Analytical Summary'), summaryWs && summaryWs.pictureCol);
-  check(`${tag} Excel Analytical Summary has one picture per dashboard graph (${r.graphCount})`, summaryWs && r.graphCount > 0 && (summaryWs.pictures || 0) === r.graphCount, summaryWs && summaryWs.pictures);
+  /* The Balance Sheet Composition diagram sits in the Balance Sheet tab's extra space (when there is a Balance Sheet). */
+  const bsTabX = excel.sheets.find(x => x.name === tabOf(r.roles.bs || r.roles.bsComparative));
+  const compOnBs = !!(bsTabX && r.hasComposition);
+  check(`${tag} Excel Analytical Summary has one picture per dashboard graph (${r.graphCount}${compOnBs ? ', composition on the Balance Sheet tab' : ''})`,
+    summaryWs && r.graphCount > 0 && (summaryWs.pictures || 0) === r.graphCount - (compOnBs ? 1 : 0), summaryWs && summaryWs.pictures);
+  if (compOnBs) check(`${tag} Excel Balance Sheet tab shows the Balance Sheet Composition diagram to the right of the statement`,
+    bsTabX.pictures === 1 && /Balance Sheet Composition/i.test(bsTabX.pictureNames[0] || '') && bsTabX.pictureCol > 1, bsTabX.pictures + ' ' + bsTabX.pictureNames.join(','));
+  check(`${tag} Excel pictures start below the frozen heading rows (never cut by the freeze line)`,
+    excel.sheets.filter(x => x.pictures).every(x => x.pictureRow >= 5), excel.sheets.filter(x => x.pictures).map(x => x.name + ':' + x.pictureRow).join(','));
   check(`${tag} Excel graph pictures are graphs only (no page header / footer)`, summaryWs && summaryWs.pictureNames.length > 0 &&
     summaryWs.pictureNames.every(n => !/page \d|Analytical Dashboard/i.test(n)), summaryWs && summaryWs.pictureNames.join(' | '));
   /* Row 40: Notes sheet formatted as a table (title, Line Item / Category | Note headings) */
@@ -828,7 +840,8 @@ function checkWorkbook(w, r, excel, pdf, errors){
   const server = await serve();
   /* TRACKER_URL=https://… runs the checks against a deployed site instead of this checkout. */
   const base = process.env.TRACKER_URL || 'http://127.0.0.1:' + server.address().port + '/index.html';
-  const browser = await chromium.launch({ executablePath: exe });
+  /* Containers often give /dev/shm only 64 MB, which crashes Chromium on large pages ("Target crashed"). */
+  const browser = await chromium.launch({ executablePath: exe, args: ['--disable-dev-shm-usage', '--disable-gpu'] });
   /* TRACKER_XLSX=path/to/client.xlsx runs every check on a real client workbook instead of the built-in set. */
   const books = (process.env.TRACKER_XLSX
     ? [{ name: path.basename(process.env.TRACKER_XLSX), file: fs.readFileSync(process.env.TRACKER_XLSX),
@@ -900,8 +913,9 @@ function checkWorkbook(w, r, excel, pdf, errors){
       } catch (err){ excel.error = String(err.message || err); }
 
       /* PDF: save through the app's own savePdf and read the file back */
-      const pdf = { ok: false };
-      try {
+      const pdf = { ok: false, skipped: !!process.env.TRACKER_SKIP_PDF };
+      /* TRACKER_SKIP_PDF=1 skips saving the PDF file (memory-constrained machines); every rendered page is still checked. */
+      if (!pdf.skipped) try {
         const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 180000 }), page.evaluate(() => savePdf(false))]);
         const file = path.join(tmp, 'report.pdf');
         await dl.saveAs(file);

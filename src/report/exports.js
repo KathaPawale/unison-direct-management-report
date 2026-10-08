@@ -327,7 +327,7 @@ function _addSheetImages(zip, wb){
         `<xdr:ext cx="${cx}" cy="${cy}"/><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="${k + 2}" name="${String((spec.names || [])[k] || 'Picture ' + (k + 1)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')}"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr>` +
         `<xdr:blipFill><a:blip r:embed="rId${k + 1}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>` +
         `<xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:oneCellAnchor>`);
-      rowAt += Math.ceil(widthPx * it.h / it.w / 20) + 2;            // ~20px rows: the next picture starts below this one
+      rowAt += Math.ceil(widthPx * it.h / it.w / 20) + (spec.gapRows ?? 2);   // ~20px rows: the next picture starts below this one
     });
     put(`xl/drawings/drawing${drawingNo}.xml`, '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
       '<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
@@ -861,11 +861,24 @@ function downloadReportExcel(){
   /* The Analytical Summary also shows the PDF dashboard's graphs (each alone, no page), below its tables. */
   if (typeof window !== 'undefined' && typeof window.html2canvas === 'function'){
     return _dashboardImages().then(imgs => {
-      if (imgs.length){
+      /* The Balance Sheet Composition diagram goes in the Balance Sheet tab's extra space (right of the statement), as in
+       * the PDF; the other graphs stay on the Analytical Summary. Pictures start below the frozen heading rows (1-5) so
+       * the freeze line never cuts through them, all the same width, one under another. */
+      const isComp = x => /balance sheet composition/i.test(x.name);
+      const bsSource = md.roles.bs || md.roles.bsComparative;
+      const bsTab = bsSource ? wb.SheetNames.find(t => wb.Sheets[t]['!source'] === bsSource) : null;
+      const comp = imgs.find(isComp);
+      const graphs = bsTab && comp ? imgs.filter(x => !isComp(x)) : imgs;
+      if (graphs.length){
         /* The summary tables stay as they are on the left; the graphs and diagrams go on the right side of them. */
         const graphCol = (s['!cols'] || []).length + 1;
-        _wsSetCell(s, 2, graphCol, 'Graphs — as in the PDF Analytical Dashboard', XL_STYLES.section, null, { border: false });
-        s['!images'] = { row: 3, col: graphCol, widthPx: 560, items: imgs, names: imgs.map(x => x.name) };
+        _wsSetCell(s, 5, graphCol, 'Graphs — as in the PDF Analytical Dashboard', XL_STYLES.section, null, { border: false });
+        s['!images'] = { row: 6, col: graphCol, widthPx: 520, gapRows: 1, items: graphs, names: graphs.map(x => x.name) };
+      }
+      if (bsTab && comp){
+        const bws = wb.Sheets[bsTab];
+        const col = (bws['!cols'] || []).length + 1;
+        bws['!images'] = { row: 5, col, widthPx: 520, items: [comp], names: [comp.name] };
       }
       save();
     }).catch(e => { console.error('Dashboard pictures could not be added:', e); save(); });
