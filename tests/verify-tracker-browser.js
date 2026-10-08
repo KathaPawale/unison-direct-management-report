@@ -706,10 +706,10 @@ function checkWorkbook(w, r, excel, pdf, errors){
     check(`${tag} Balance Sheet Composition shown once`, compPages.length <= 1, compPages.map(p => p.id).join(','));
     const bsLast = bsId ? [...r.pages].reverse().find(p => p.id === bsId) : null;
     if (bsLast) check(`${tag} Liabilities Bifurcation is not on the Balance Sheet page`, !r.pages.some(p => p.id === bsId && /LIABILITIES BIFURCATION/i.test(p.text)));
-    /* Measured on the rendered pages: on the dashboard only when the Balance Sheet's last page has less free space than the diagram. */
-    if (compPages.length && bsLast) check(`${tag} Balance Sheet Composition on the Balance Sheet page when it has room (else the dashboard)`,
-      compPages[0].id === bsId ? compPages[0] === bsLast && bsLast.overFooter <= 0.5 : (compPages[0].id === 'dash' && bsLast.freeBelow < compPages[0].compH),
-      compPages[0].id + ' / free ' + Math.round(bsLast.freeBelow) + 'px, diagram ' + Math.round(compPages[0].compH || 0) + 'px');
+    /* Always with the Balance Sheet (full size, compact, or a Balance Sheet continuation page) — never the dashboard when
+     * there is a Balance Sheet — and never into the footer. */
+    if (bsLast) check(`${tag} Balance Sheet Composition is on a Balance Sheet page`, compPages.length === 1 && compPages[0].id === bsId && compPages[0].overFooter <= 0.5,
+      compPages.map(p => p.id + (p.overFooter > 0.5 ? ' over footer' : '')).join(',') || 'not shown');
   }
 
   /* Row 37: zero rows left out of the PDF */
