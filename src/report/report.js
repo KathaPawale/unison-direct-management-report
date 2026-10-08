@@ -572,8 +572,14 @@ function disclaimerBody(no, title){
      </div>`;
 }
 
+/* The notes the report prints: the notes entered or edited in the app, else the notes imported from the workbook. */
+function reportNotesText(){
+  if (state.notesManual) return state.notes || '';
+  return state.notes || (state.model && state.model.importedNotes) || '';
+}
+
 function paginateNotesSection(no, title){
-  const text = state.notes || '';
+  const text = reportNotesText();
   const paras = text ? text.split(/\n/) : [];
   const lineHtml = p => {
     const t = p.trim();
@@ -678,11 +684,18 @@ function reportStatementTitles(md){
 }
 
 function _roleSection(md, role, title){
-  if (!md.roles[role] || skipReportSection(md, role)) return null;
+  if (!md.roles[role] || skipReportSection(md, role) || emptyStatementSheet(md, role)) return null;
   if ((role === 'ar' && md.suppressAR) || (role === 'ap' && md.suppressAP)) return null;
   const ag = role === 'ar' ? md.arAging : role === 'ap' ? md.apAging : null;
   title = reportStatementTitles(md)[role] || title;
   return { id: role, title, sheet: md.roles[role], ...(role === 'ar' || role === 'ap' ? { aging: ag && ag.fromDetail ? ag : null } : {}) };
+}
+
+/* A statement sheet with no statement lines is left out of the report (PDF, Table of Contents, Excel) — never an empty
+ * "No statement lines were found" page (user, 2026-10-08). An aging report with no open items still says so. */
+function emptyStatementSheet(md, role){
+  const sm = md.sheetModels[md.roles[role]];
+  return !!sm && !sm.lines.length && role !== 'ar' && role !== 'ap';
 }
 
 /* A full-period P&L next to the "% of Income" statement repeats its amounts (the data checks confirm they agree),
@@ -815,7 +828,9 @@ function reportSections(){
     sections.push(...statements);
   }
   /* Notes, then the Management Purpose Disclaimer on the last page (user, 2026-10-07). */
-  sections.push({ id: 'notes', title: notesHeading(md) });
+  /* One Notes section, only when there are notes (the workbook's notes sheet, or notes entered in the app) — never an
+   * automatic empty "Notes to Financial Statements" section (user, 2026-10-08). */
+  if (reportNotesText().trim()) sections.push({ id: 'notes', title: notesHeading(md) });
   sections.push({ id: 'disc', title: 'Management Purpose Disclaimer' });
   return sections;
 }

@@ -525,7 +525,7 @@ function detectClientPeriod(sheets, model){
 
 /* ---------- notes ---------- */
 
-function extractWorkbookNotes(sheets, model){
+function extractWorkbookNotes(sheets, model, client){
   const out = [];
   const seen = new Set();
   const push = line => { const k = normLabel(line); if (!k || seen.has(k)) return; seen.add(k); out.push(line); };
@@ -546,6 +546,8 @@ function extractWorkbookNotes(sheets, model){
       const cleaned = joined.replace(/#?'[^']*'![A-Z]{1,3}\d+(:[A-Z]{1,3}\d+)?/g, '').replace(/#?[A-Za-z0-9_.]+![A-Z]{1,3}\d+(:[A-Z]{1,3}\d+)?/g, '')
         .replace(/https?:\/\/\S+/g, '').replace(/(\s—\s*)+$/, '').trim();
       if (/^notes? to (the )?(financial statements?|accounts)$/i.test(cleaned)) continue;
+      /* The sheet's own title rows and column headings (company name, "Notes", "Sr. No. — Notes") are not notes. */
+      if (/^(notes?|comments?)$/i.test(cleaned) || (client && normLabel(cleaned) === normLabel(client)) || /^(sr|s|serial)\.? ?(no|num|number)\.?( — | )(notes?|comments?|particulars|description)$/i.test(cleaned)) continue;
       push(cleaned);
     }
   }
@@ -707,7 +709,7 @@ function analyzeFinancials(model, sheets){
   }
   if (!period) period = cp.bsPeriod;
 
-  const notesText = extractWorkbookNotes(sheets, model);
+  const notesText = extractWorkbookNotes(sheets, model, cp.client);
 
   return Object.assign(model, {
     months,

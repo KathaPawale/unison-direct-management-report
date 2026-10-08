@@ -748,7 +748,7 @@ function downloadReportExcel(){
   for (const [role, stdTitle] of [...REPORT_STATEMENT_ORDER, ...REPORT_TRAILING_ORDER]){
     const title = titles[role] || stdTitle;
     const name = md.roles[role];
-    if (!name || skipReportSection(md, role)) continue;
+    if (!name || skipReportSection(md, role) || emptyStatementSheet(md, role)) continue;
     if ((role === 'ar' && md.suppressAR) || (role === 'ap' && md.suppressAP)) continue;
     const ag = role === 'ar' ? md.arAging : role === 'ap' ? md.apAging : null;
     if (ag && ag.fromDetail){
@@ -813,7 +813,7 @@ function downloadReportExcel(){
   _wsSetCell(notes, 1, 1, '', {});
   _wsSetCell(notes, 3, 0, 'Line Item / Category', XL_STYLES.headL);
   _wsSetCell(notes, 3, 1, 'Note', XL_STYLES.head);
-  const noteLines = (state.notes || '').split('\n').map(line => line.trim()).filter(Boolean);
+  const noteLines = reportNotesText().split('\n').map(line => line.trim()).filter(Boolean);
   const isHeading = line => !/ — /.test(line) && line.length < 70 &&
     /(comments|^notes? to|^(assets|liabilities|equity|income|expenses|receivables|payables|bank accounts|current assets|fixed assets|current liabilities|long.?term liabilities))/i.test(line);
   let rr = 4;
@@ -839,9 +839,9 @@ function downloadReportExcel(){
   notes['!cols'] = [{ wch: 34 }, { wch: 78 }];
   notes['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }];
   _decorateSheet(notes, 'notes', 5, 1);
-  /* The uploaded notes sheet's tab name (e.g. "Notes to FS"), else "Notes". */
-  const notesTab = md.roles.notes && !isGenericTabName(md.roles.notes) ? _sheetNameSafe(wb, md.roles.notes) : _sheetNameSafe(wb, 'Notes');
-  XLSX.utils.book_append_sheet(wb, notes, notesTab);
+  /* The uploaded notes sheet's tab name (e.g. "Notes to FS"), else "Notes" — only when there are notes, as in the PDF. */
+  const notesTab = noteLines.length ? (md.roles.notes && !isGenericTabName(md.roles.notes) ? _sheetNameSafe(wb, md.roles.notes) : _sheetNameSafe(wb, 'Notes')) : null;
+  if (notesTab) XLSX.utils.book_append_sheet(wb, notes, notesTab);
 
   const disc = {};
   _wsSetCell(disc, 0, 0, 'Management Purpose Disclaimer', XL_STYLES.title);
@@ -862,7 +862,7 @@ function downloadReportExcel(){
   /* The uploaded index sheet ("Summary") comes right after the Cover, as it opens the user's workbook. */
   const indexTab = statementTabs.find(t => indexSheet && wb.Sheets[t]['!source'] === indexSheet);
   /* … Notes, and the Disclaimer as the last tab (as on the last PDF page). */
-  wb.SheetNames = ['Cover', ...(indexTab ? [indexTab] : []), 'Analytical Summary', ...statementTabs.filter(t => t !== indexTab), notesTab, 'Disclaimer'];
+  wb.SheetNames = ['Cover', ...(indexTab ? [indexTab] : []), 'Analytical Summary', ...statementTabs.filter(t => t !== indexTab), ...(notesTab ? [notesTab] : []), 'Disclaimer'];
   const save = () => { if (_saveWorkbook(wb, _reportFileBase() + '-Management-Report.xlsx')) toast('Excel report downloaded'); };
   /* The Analytical Summary also shows the PDF dashboard's graphs (each alone, no page), below its tables. */
   if (typeof window !== 'undefined' && typeof window.html2canvas === 'function'){

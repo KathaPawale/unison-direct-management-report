@@ -300,6 +300,33 @@ function threeBalanceSheetsWorkbook(){
     expect: {} };
 }
 
+/* Alfaro layout (user, 2026-10-08): one "Notes" tab (Sr. No. | Notes) whose notes name the other tabs and use Balance
+ * Sheet words — it is the one Notes section (text), never an index or a statement, and no "Notes to Financial Statements". */
+function notesTabWorkbook(){
+  const client = "Alfaro's Industrial Services LLC", period = 'January - September, 2026';
+  const pl = [[client], ['Profit and Loss'], [period], [], ['', 'Jan 2026', 'Feb 2026', 'Mar 2026', 'Total'], ['Income'], ['Sales', 1000000, 1100000, 1200000, 3300000],
+    ['Total Income', 1000000, 1100000, 1200000, 3300000], ['Expenses'], ['Wages', 600000, 650000, 700000, 1950000], ['Rent', 100000, 100000, 100000, 300000],
+    ['Total Expenses', 700000, 750000, 800000, 2250000], ['Net Income', 300000, 350000, 400000, 1050000]];
+  const bs = [[client], ['Balance Sheet'], ['As of September 30, 2026'], [], ['', 'Total'], ['ASSETS'], ['Checking', 8458.07], ['Accounts Receivable (A/R)', 1165780.79],
+    ['Total Current Assets', 1174238.86], ['Equipment', 1000000], ['Total Fixed Assets', 1000000], ['TOTAL ASSETS', 2174238.86], ['LIABILITIES AND EQUITY'],
+    ['Accounts Payable (A/P)', 349168.28], ['Total Current Liabilities', 349168.28], ['Notes Payable', 500000], ['Total Long-Term Liabilities', 500000],
+    ['Total Liabilities', 849168.28], ['Retained Earnings', 275070.58], ['Net Income', 1050000], ['Total Equity', 1325070.58], ['TOTAL LIABILITIES AND EQUITY', 2174238.86]];
+  const ar = [[client], ['A/R Aging Summary'], ['As of September 30, 2026'], [], ['', 'Current', '1 - 30', '31 - 60', '61 - 90', '91 and over', 'Total'],
+    ['Customer A', 300000, 80000, 20000, 60000, 705780.79, 1165780.79], ['TOTAL', 300000, 80000, 20000, 60000, 705780.79, 1165780.79]];
+  const ap = [[client], ['A/P Aging Summary'], ['As of September 30, 2026'], [], ['', 'Current', '1 - 30', '31 - 60', '61 - 90', '91 and over', 'Total'],
+    ['Vendor A', 10000, 20000, 15000, 54168.28, 250000, 349168.28], ['TOTAL', 10000, 20000, 15000, 54168.28, 250000, 349168.28]];
+  const notes = [[client], ['Notes'], [], ['Sr. No.', 'Notes'],
+    ...['Bank balances agree with the bank statements as of September 30, 2026.', 'Account Receivable aging over 90 days is under follow-up with customers.',
+      'Account Payable includes vendor bills recorded on accrual basis.', 'Trial balance has been reviewed and reconciled.',
+      'Fixed assets are shown at cost less accumulated depreciation.', 'Long-term loan balance confirmed with the lender statement.',
+      'Payroll liabilities were paid after month end.', 'Sales tax payable reconciled to filed returns.', 'Prepaid insurance amortised monthly.',
+      'Owner draws recorded under equity.', 'Balance sheet and Profit & Loss reviewed with the client.', 'Profit & Loss figures are unaudited.'].map((t, i) => [i + 1, t]),
+    [], ['Balance Sheet Comments'], [1, 'Retained earnings agree with the prior year closing balance.'], [2, 'Credit card balances agree with statements.']];
+  return { name: 'Alfaro Notes tab (one Notes section)', client, period, sheets: { 'Profit & Loss': pl, 'Balance sheet': bs, 'Account Receivable': ar, 'Account Payable': ap, 'Notes': notes },
+    expect: { roles: { notes: 'Notes' }, notes: ['Bank balances agree with the bank statements', 'Profit & Loss figures are unaudited', 'Balance Sheet Comments', 'Credit card balances agree'],
+      notesLack: [client, 'Notes', 'Sr. No. — Notes'] } };
+}
+
 function fixtureWorkbooks(){
   const fx = JSON.parse(fs.readFileSync(path.join(root, 'tests/calc-fixtures.json'), 'utf8'));
   const exp = fx.expected || {};
@@ -434,6 +461,8 @@ function inspectPage(){
   out.finNegNetOk = [...fin.querySelectorAll('tr')].filter(tr => /^net income$/i.test((tr.cells[0] || {}).textContent || '')).every(tr =>
     [...tr.cells].slice(1).every(td => !/^\(/.test(td.textContent.trim()) || td.classList.contains('neg')));
 
+  out.hasNotes = !!(state.notes || '').trim();
+  out.notesText = state.notes || '';
   out.graphCount = typeof window.dashboardGraphBlocks === 'function' ? window.dashboardGraphBlocks().length : 0;
   out.hasComposition = typeof window.dashboardGraphBlocks === 'function' && window.dashboardGraphBlocks().some(h => /Balance Sheet Composition/.test(h));
 
@@ -597,9 +626,9 @@ function checkWorkbook(w, r, excel, pdf, errors){
   /* Order (user, 2026-10-07): [uploaded Summary], Dashboard, statements in workbook order, Notes, Disclaimer on the last page. */
   const at = pageIds[0] === 'index' ? 1 : 0;
   check(`${tag} Report order: [Summary], Dashboard, statements in workbook order, Notes, Disclaimer last`, pageIds[at] === 'dash' &&
-    pageIds[pageIds.length - 2] === 'notes' && pageIds[pageIds.length - 1] === 'disc' && (process.env.TRACKER_XLSX || stmtIds.join(',') === byWb.join(',')), pageIds.join(','));
+    (r.hasNotes ? pageIds[pageIds.length - 2] === 'notes' : !pageIds.includes('notes')) && pageIds[pageIds.length - 1] === 'disc' && (process.env.TRACKER_XLSX || stmtIds.join(',') === byWb.join(',')), pageIds.join(','));
   check(`${tag} Report order: Disclaimer is the last TOC entry and the last page`, toc.length && /Management Purpose Disclaimer/.test(toc[toc.length - 1].text) &&
-    /Notes/i.test((toc[toc.length - 2] || {}).text || '') && r.pages[r.pages.length - 1].id === 'disc', toc.map(t => t.text).join(' | '));
+    (!r.hasNotes || /Notes/i.test((toc[toc.length - 2] || {}).text || '')) && r.pages[r.pages.length - 1].id === 'disc', toc.map(t => t.text).join(' | '));
   /* Headings are the uploaded sheets' own ("Profit & Loss", "Statement of Activities"), so match any P&L / BS wording. */
   const BS_T = /balance sheet|financial position|financial condition|assets and liabilities|^b ?s\b|^bs[_ ]/i,
         PL_T = /profit|loss|income statement|activit|operations|earnings|^p ?& ?l|^pl\b|^pl[_ (]|soa\b/i;
@@ -687,9 +716,16 @@ function checkWorkbook(w, r, excel, pdf, errors){
   if (r.roles.ar && !r.suppressAR) check(`${tag} Row 13 A/R aging in PDF and Excel`, r.pages.some(p => p.id === 'ar') && excel.sheets.some(s => s.name === tabOf(r.roles.ar)));
   if (r.roles.ap && !r.pages.every(p => p.id !== 'ap')) check(`${tag} Row 13 A/P aging in Excel`, excel.sheets.some(s => s.name === tabOf(r.roles.ap)));
 
+  /* Notes (user, 2026-10-08): one Notes section, only when the workbook has notes (or notes were entered) — never an
+   * automatic "Notes to Financial Statements" section; no sheet prints "No statement lines were found". */
+  check(`${tag} At most one Notes entry in the report and Table of Contents`, toc.filter(t => /\bnotes?\b/i.test(t.text)).length <= 1 && toc.filter(t => /\bnotes?\b/i.test(t.text)).length === (r.hasNotes ? 1 : 0),
+    toc.map(t => t.text).join(' | '));
+  check(`${tag} No "No statement lines were found" page`, !r.pages.some(p => /No statement lines were found/i.test(p.text)), r.pages.filter(p => /No statement lines/i.test(p.text)).map(p => p.id).join(','));
+  check(`${tag} No empty "No notes were found" page`, !r.pages.some(p => /No notes were found/i.test(p.text)));
   /* Row 16 / 40: notes */
   for (const n of e.notes || []) check(`${tag} Row 16 note "${n}" in the report`, page('notes').some(p => p.text.includes(n)));
   if (w.fixture === 'D') check(`${tag} Row 16 imported notes reach the report`, page('notes').length && !/No notes were found/.test(page('notes')[0].text));
+  for (const n of e.notesLack || []) check(`${tag} Notes leave out the sheet's title / heading line "${n}"`, !r.notesText.split('\n').some(l => l.trim() === n), r.notesText.split('\n').slice(0, 3).join(' | '));
 
   /* Rows 21, 27, 43: nothing cut off or over the footer */
   check(`${tag} Row 21 no amount or heading cut off in any table`, content.every(p => !p.cutCells.length), content.flatMap(p => p.cutCells).slice(0, 3).join(' | '));
@@ -813,7 +849,7 @@ function checkWorkbook(w, r, excel, pdf, errors){
   const wbTabs = Object.keys(w.sheets || {}).map(tabOf);
   check(`${tag} Report order: Excel tabs Cover, [Summary], Analytical Summary, statements in workbook order, notes, Disclaimer last`,
     tabs[0] === 'Cover' && tabs.filter(t => t !== tabs[1] || !r.nonStatementTabs.includes(t)).slice(0, 2).join('|') === 'Cover|Analytical Summary' &&
-    tabs[tabs.length - 2] === notesTab && tabs[tabs.length - 1] === 'Disclaimer' &&
+    (r.hasNotes ? tabs[tabs.length - 2] === notesTab : !tabs.includes(notesTab)) && tabs[tabs.length - 1] === 'Disclaimer' &&
     (process.env.TRACKER_XLSX || stmtTabs.join('|') === [...stmtTabs].sort((a, b) => wbTabs.indexOf(a) - wbTabs.indexOf(b)).join('|')), tabs.join(' | '));
   for (const l of e.excelLines || [])
     check(`${tag} Excel keeps "${l}"`, stmts.some(s => s.cells.some(c => c.col === 'A' && String(s.val('A' + c.row)) === l)));
@@ -851,9 +887,9 @@ function checkWorkbook(w, r, excel, pdf, errors){
     summaryWs.pictureNames.every(n => !/page \d|Analytical Dashboard/i.test(n)), summaryWs && summaryWs.pictureNames.join(' | '));
   /* Row 40: Notes sheet formatted as a table (title, Line Item / Category | Note headings) */
   const notesWs = excel.sheets.find(s => s.name === notesTab);
-  check(`${tag} Row 40 Notes sheet has its title and "Line Item / Category" / "Note" headings`, notesWs && /notes/i.test(String(notesWs.val('A1'))) &&
+  if (r.hasNotes) check(`${tag} Row 40 Notes sheet has its title and "Line Item / Category" / "Note" headings`, notesWs && /notes/i.test(String(notesWs.val('A1'))) &&
     notesWs.val('A4') === 'Line Item / Category' && notesWs.val('B4') === 'Note', notesWs && [notesWs.val('A1'), notesWs.val('A4'), notesWs.val('B4')].join(' | '));
-  for (const n of e.notes || []) check(`${tag} Row 40 note "${n}" in the Excel Notes sheet`, notesWs && /<v>[^<]*/.test(notesWs.xml) && notesWs.xml.includes(n));
+  for (const n of e.notes || []) check(`${tag} Row 40 note "${n}" in the Excel Notes sheet`, notesWs && /<v>[^<]*/.test(notesWs.xml) && (notesWs.xml.includes(n) || notesWs.xml.includes(n.replace(/&/g, '&amp;'))));
   /* Data workbook (as uploaded): every sheet has a tab colour; every sheet with columns freezes its heading rows and column A */
   const data = excel.data || [];
   check(`${tag} Row 41 every data-workbook sheet has a tab colour`, data.length && data.every(s => s.tabColor), data.filter(s => !s.tabColor).map(s => s.name).join(','));
@@ -881,7 +917,7 @@ function checkWorkbook(w, r, excel, pdf, errors){
     ? [{ name: path.basename(process.env.TRACKER_XLSX), file: fs.readFileSync(process.env.TRACKER_XLSX),
          /* TRACKER_EXPECT=expect.json adds the figures to check: { client, expect: { income, net, roles, periods, … } } */
          ...(process.env.TRACKER_EXPECT ? JSON.parse(fs.readFileSync(process.env.TRACKER_EXPECT, 'utf8')) : { expect: {} }) }]
-    : [row54Workbook(), plutoWorkbook(), plutoClientWorkbook(), uncategorizedWorkbook(), senecaWorkbook(), comparativePctWorkbook(), halfYearCashWorkbook(), threeBalanceSheetsWorkbook(), ...fixtureWorkbooks()])
+    : [row54Workbook(), plutoWorkbook(), plutoClientWorkbook(), uncategorizedWorkbook(), senecaWorkbook(), comparativePctWorkbook(), halfYearCashWorkbook(), threeBalanceSheetsWorkbook(), notesTabWorkbook(), ...fixtureWorkbooks()])
     .filter(w => !process.env.TRACKER_ONLY || w.name.includes(process.env.TRACKER_ONLY));   // e.g. TRACKER_ONLY="Row 54"
   if (!books.length) throw new Error('No workbook matches TRACKER_ONLY=' + process.env.TRACKER_ONLY);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'udmr-'));
