@@ -76,6 +76,3 @@
 .report-page .aging-summary-table th,.report-page .aging-summary-table td{font-size:var(--aging-fs,12px)}
 
 /* Compact Balance Sheet Composition (fits the space at the foot of the Balance Sheet page). */
-.report-page .bs-composition-block.compact .report-section-title{margin:10px 0 6px}
-.report-page .bs-composition-block.compact .donut-title{font-size:10.5px;margin-bottom:4px}
-.report-page .bs-composition-block.compact .donut-legend{font-size:9.5px;gap:3px}
