@@ -30,7 +30,10 @@ function reportBasis(){
 
 function watermarkHtml(){
   const t = String((state.settings && state.settings.watermark) || '').trim();
-  return t ? `<div class="report-watermark">${escapeHtml(t)}</div>` : '';
+  if (!t) return '';
+  /* Longer text is set smaller so the whole watermark stays on the page; the same size on every page. */
+  const fs = t.length <= 14 ? 64 : t.length <= 22 ? 52 : t.length <= 32 ? 40 : 30;
+  return `<div class="report-watermark" style="font-size:${fs}px">${escapeHtml(t)}</div>`;
 }
 
 /* Centered heading: company name, section title, period. */

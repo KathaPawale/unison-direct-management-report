@@ -1046,6 +1046,29 @@ function checkWorkbook(w, r, excel, pdf, errors){
         check('[watermark] no watermark by default', r.pages.every(p => !p.watermark));
         const wm = await page.evaluate(() => { state.settings.watermark = 'DRAFT FOR BANK'; const p = buildPages({ forExport: true }); state.settings.watermark = ''; return p.filter(x => x.sectionId !== 'cover').every(x => x.html.includes('DRAFT FOR BANK')); });
         check('[watermark] custom watermark text printed on every content page', wm);
+        /* Clearly visible (user, 2026-10-14): drawn over tables and charts (not hidden behind their backgrounds), at a
+         * visible but see-through opacity, inside the page, with the same look on every page. */
+        const wv = await page.evaluate(() => {
+          state.settings.watermark = 'DRAFT FOR BANK — CONFIDENTIAL COPY';
+          const ps = buildPages({ forExport: true }).filter(x => x.sectionId !== 'cover');
+          state.settings.watermark = '';
+          const host = document.createElement('div'); host.style.cssText = 'position:absolute;left:0;top:0;width:816px'; document.body.appendChild(host);
+          const looks = new Set(); let onTop = true, alphaOk = true, inside = true;
+          for (const p of ps.slice(0, 6)){
+            host.style.width = (p.orientation === 'landscape' ? 1056 : 816) + 'px'; host.innerHTML = p.html;
+            const pg = host.firstElementChild, w = pg.querySelector('.report-watermark'), cs = getComputedStyle(w);
+            const content = [...pg.children].filter(c => c !== w && !c.classList.contains('report-footer'));
+            onTop = onTop && content.every(c => (parseInt(getComputedStyle(c).zIndex) || 0) < (parseInt(cs.zIndex) || 0));
+            const a = +((cs.color.match(/rgba?\(([^)]+)\)/) || [])[1] || '').split(',')[3]; alphaOk = alphaOk && a >= 0.1 && a <= 0.2;
+            const wr = w.getBoundingClientRect(), pr = pg.getBoundingClientRect();
+            inside = inside && wr.left >= pr.left - 1 && wr.right <= pr.right + 1;
+            looks.add([cs.fontSize, cs.transform, cs.color, Math.round((wr.left + wr.width / 2 - pr.left) / pr.width * 100), Math.round((wr.top + wr.height / 2 - pr.top) / pr.height * 100)].join('|'));
+          }
+          host.remove();
+          return { onTop, alphaOk, inside, same: looks.size === 1 };
+        });
+        check('[watermark] drawn over tables and charts (not hidden behind them), see-through (10–20% opacity)', wv.onTop && wv.alphaOk, JSON.stringify(wv));
+        check('[watermark] long text stays inside the page; same size, angle and position on every page', wv.inside && wv.same, JSON.stringify(wv));
       }
       await context.close();
     }
