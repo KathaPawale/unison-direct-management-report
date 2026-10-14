@@ -578,19 +578,44 @@ function reportNotesText(){
   return state.notes || (state.model && state.model.importedNotes) || '';
 }
 
+/* Notes list style (user, 2026-10-14): 'numbered' (1, 2, 3 — the default) or 'bullets' (•), from Report Options. */
+function notesListStyle(){
+  return (state.settings && state.settings.notesListStyle) === 'bullets' ? 'bullets' : 'numbered';
+}
+
+/* A notes heading ("Balance Sheet Comments", "Notes to the Accounts", "Assets") — not a list item. */
+function isNotesHeading(t){
+  return !/ — /.test(t) && t.length < 70 &&
+    /comments$|^notes? to|^(assets|liabilities|equity|income|expenses|receivables|payables|bank accounts|current assets|fixed assets|current liabilities|long.?term liabilities)$/i.test(t);
+}
+
+/* The notes as headings and list items in the chosen style: any numbering or bullet typed in the notes ("1 —", "2.", "(3)",
+ * "•", "-") is replaced, items are numbered 1, 2, 3 … in order — so the numbers stay right when notes are added or
+ * deleted — and numbering restarts under each heading. Blank lines are kept as spacing. The note text is never changed. */
+function notesListItems(text, style = notesListStyle()){
+  const out = [];
+  let n = 0;
+  for (const raw of String(text || '').split('\n')){
+    const t = raw.trim();
+    if (!t){ out.push({ kind: 'blank' }); continue; }
+    if (isNotesHeading(t)){ out.push({ kind: 'heading', text: t }); n = 0; continue; }
+    const body = t.replace(/^(?:\(?\d{1,3}\)?(?:[.)](?!\d)|\s*[—–:-](?!\d))|[•▪●·*–-](?!\d))\s*/, '').trim() || t;
+    n++;
+    out.push({ kind: 'item', marker: style === 'bullets' ? '•' : n + '.', text: body });
+  }
+  return out;
+}
+
 function paginateNotesSection(no, title){
   const text = reportNotesText();
   const paras = text ? text.split(/\n/) : [];
-  const lineHtml = p => {
-    const t = p.trim();
-    if (!t) return '<div class="report-note-line">&nbsp;</div>';
-    const heading = !/ — /.test(t) && t.length < 70 && /comments$|^notes? to|^(assets|liabilities|equity|income|expenses)$/i.test(t);
-    return `<div class="report-note-line${heading ? ' note-heading' : ''}">${escapeHtml(t)}</div>`;
-  };
+  const lineHtml = it => it.kind === 'blank' ? '<div class="report-note-line">&nbsp;</div>'
+    : it.kind === 'heading' ? `<div class="report-note-line note-heading">${escapeHtml(it.text)}</div>`
+    : `<div class="report-note-line note-item"><span class="note-marker">${escapeHtml(it.marker)}</span><span class="note-text">${escapeHtml(it.text)}</span></div>`;
   if (!paras.some(p => p.trim())){
     return [{ orientation: 'portrait', body: sectionHead(no, title) + '<div class="report-empty">No notes were found in the workbook and none have been entered.</div>' }];
   }
-  const blocks = paras.map(lineHtml);
+  const blocks = notesListItems(text).map(lineHtml);
   const shell = _measureShell('portrait');
   shell.innerHTML = `<div class="mh1">${sectionHead(no, title)}</div><div class="report-notes">${blocks.join('')}</div>`;
   const h1 = _outerHeight(shell.querySelector('.mh1'));
@@ -967,8 +992,9 @@ function renderReport(){
 
 /* Basis + watermark controls on the Report Preview page. */
 function renderReportOptions(){
-  const sel = $('#basisSelect'), wm = $('#watermarkInput'), hint = $('#basisHint');
+  const sel = $('#basisSelect'), wm = $('#watermarkInput'), hint = $('#basisHint'), ls = $('#notesListStyle');
   if (!sel || !wm) return;
+  if (ls && document.activeElement !== ls) ls.value = notesListStyle();
   if (document.activeElement !== sel) sel.value = state.basisOverride || '';
   if (document.activeElement !== wm) wm.value = (state.settings && state.settings.watermark) || '';
   const det = state.model && state.model.basisDetected;

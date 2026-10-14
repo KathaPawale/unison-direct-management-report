@@ -813,25 +813,25 @@ function downloadReportExcel(){
   _wsSetCell(notes, 1, 1, '', {});
   _wsSetCell(notes, 3, 0, 'Line Item / Category', XL_STYLES.headL);
   _wsSetCell(notes, 3, 1, 'Note', XL_STYLES.head);
-  const noteLines = reportNotesText().split('\n').map(line => line.trim()).filter(Boolean);
-  const isHeading = line => !/ — /.test(line) && line.length < 70 &&
-    /(comments|^notes? to|^(assets|liabilities|equity|income|expenses|receivables|payables|bank accounts|current assets|fixed assets|current liabilities|long.?term liabilities))/i.test(line);
+  /* Same list style as the PDF (Report Options): the number or bullet in column A, the note in column B. */
+  const noteItems = notesListItems(reportNotesText()).filter(it => it.kind !== 'blank');
+  const noteLines = noteItems;
   let rr = 4;
   if (noteLines.length === 0){
     _wsSetCell(notes, rr, 0, 'No notes were found in the workbook.', XL_STYLES.wrap);
     _wsSetCell(notes, rr, 1, '', XL_STYLES.wrap);
   } else {
-    for (const line of noteLines){
-      if (isHeading(line)){
-        _wsSetCell(notes, rr, 0, line, XL_STYLES.headL);
+    for (const it of noteItems){
+      if (it.kind === 'heading'){
+        _wsSetCell(notes, rr, 0, it.text, XL_STYLES.headL);
         _wsSetCell(notes, rr, 1, '', XL_STYLES.head);
-      } else if (line.includes(' — ')){
-        const [label, ...rest] = line.split(' — ');
-        _wsSetCell(notes, rr, 0, label.trim(), XL_STYLES.wrap);
+      } else if (it.text.includes(' — ')){
+        const [label, ...rest] = it.text.split(' — ');
+        _wsSetCell(notes, rr, 0, it.marker + ' ' + label.trim(), XL_STYLES.wrap);
         _wsSetCell(notes, rr, 1, rest.join(' — ').trim(), XL_STYLES.wrap);
       } else {
-        _wsSetCell(notes, rr, 0, '', XL_STYLES.wrap);
-        _wsSetCell(notes, rr, 1, line, XL_STYLES.wrap);
+        _wsSetCell(notes, rr, 0, it.marker, { ...XL_STYLES.wrap, alignment: { ...(XL_STYLES.wrap.alignment || {}), horizontal: 'center' } });
+        _wsSetCell(notes, rr, 1, it.text, XL_STYLES.wrap);
       }
       rr++;
     }

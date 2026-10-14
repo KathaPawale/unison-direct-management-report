@@ -23,8 +23,8 @@ check('TOC links target one-based PDF pages', exportsSource.includes('pageNumber
 check('TOC page indexes are recorded after PDF pages render', exportsSource.indexOf('pdf.addImage(') < exportsSource.indexOf('const pdfPageIndex = pdf.internal.getNumberOfPages() - 1'));
 check('Notes use a title row', exportsSource.includes('Notes to Financial Statements'));
 check('Notes have line item and note columns', exportsSource.includes("'Line Item / Category'") && exportsSource.includes("'Note'"));
-check('Notes classify headings', exportsSource.includes('const isHeading = line =>'));
-check('Notes split labels from details', exportsSource.includes("const [label, ...rest] = line.split(' — ');"));
+check('Notes classify headings', exportsSource.includes('notesListItems(') && exportsSource.includes("it.kind === 'heading'"));
+check('Notes split labels from details', exportsSource.includes("const [label, ...rest] = it.text.split(' — ');"));
 check('Monthly pagination supports 20 columns', report.includes('const MAX_COLS_PER_PAGE = 20'));
 check('Monthly P&L forces landscape', report.includes("sm.role === 'plMonthly' || all.length >= 12"));
 check('Monthly table is marked roomy', report.includes("cols.length <= 4 || forceLandscape ? ' roomy'"));

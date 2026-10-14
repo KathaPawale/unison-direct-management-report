@@ -1003,6 +1003,44 @@ function checkWorkbook(w, r, excel, pdf, errors){
       console.log(`• ${w.name}: ${r.pageCount} pages`);
       checkWorkbook(w, r, excel, pdf, errors);
 
+      /* Notes list style (user, 2026-10-14): Numbered List (default) or Bullet Points from Report Options — numbering in
+       * order, restarting under each heading, renumbered when a note is deleted; text kept when switching; the watermark on
+       * every Notes page; the same markers in the Excel Notes tab. */
+      if (/Alfaro/.test(w.name)){
+        const ls = await page.evaluate(async () => {
+          const notesPages = () => buildPages({ forExport: true }).filter(p => p.sectionId === 'notes');
+          const read = () => { const h = document.createElement('div'); h.innerHTML = notesPages().map(p => p.html).join('');
+            return { markers: [...h.querySelectorAll('.note-item .note-marker')].map(e => e.textContent), texts: [...h.querySelectorAll('.note-item .note-text')].map(e => e.textContent),
+              headings: [...h.querySelectorAll('.note-heading')].map(e => e.textContent), raw: [...h.querySelectorAll('.report-note-line')].map(e => e.textContent).join('\n') }; };
+          const hasControl = !!document.querySelector('#notesListStyle option[value="bullets"]') && !!document.querySelector('#notesListStyle option[value="numbered"]');
+          const before = { ...state.settings }, notesBefore = state.notes, manualBefore = state.notesManual;
+          state.settings.notesListStyle = 'numbered'; const num = read();
+          state.settings.notesListStyle = 'bullets'; const bul = read();
+          state.settings.watermark = 'CONFIDENTIAL DRAFT';
+          const wmAll = notesPages().every(p => p.html.includes('CONFIDENTIAL DRAFT'));
+          state.settings.notesListStyle = 'numbered';
+          const lines = reportNotesText().split('\n'); state.notesManual = true;
+          state.notes = lines.filter(l => !/Fixed assets are shown/.test(l)).join('\n'); const del = read();
+          state.notes = notesBefore; state.notesManual = manualBefore; Object.assign(state.settings, before);
+          return { hasControl, num, bul, wmAll, del };
+        });
+        const firstRun = ls.num.markers.slice(0, 12).join(','), want12 = Array.from({ length: 12 }, (_, i) => (i + 1) + '.').join(',');
+        check(`[${w.name}] Notes list style: Report Options has a Numbered List / Bullet Points dropdown`, ls.hasControl);
+        check(`[${w.name}] Notes list style: numbered 1–12, then restarts at 1 under "Balance Sheet Comments"`, firstRun === want12 &&
+          ls.num.markers.slice(12).join(',') === '1.,2.' && ls.num.headings.some(h => /Balance Sheet Comments/.test(h)), ls.num.markers.join(','));
+        check(`[${w.name}] Notes list style: the uploaded "1 —" numbering is replaced, not doubled`, ls.num.texts.length >= 14 && !ls.num.texts.some(t => /^\d+\s*[—.-]/.test(t)) && !/(^|\n)\s*1\s*—\s*Bank/.test(ls.num.raw), ls.num.texts.slice(0, 2).join(' | '));
+        check(`[${w.name}] Notes list style: Bullet Points shows • for every item, same text`, ls.bul.markers.length >= 14 && ls.bul.markers.length === ls.num.markers.length && ls.bul.markers.every(m => m === '•') &&
+          ls.bul.texts.join('|') === ls.num.texts.join('|'));
+        check(`[${w.name}] Notes list style: deleting a note renumbers the rest (1–11)`, ls.del.markers.slice(0, 11).join(',') === Array.from({ length: 11 }, (_, i) => (i + 1) + '.').join(',') &&
+          !ls.del.texts.some(t => /Fixed assets are shown/.test(t)), ls.del.markers.join(','));
+        check(`[${w.name}] Watermark on every Notes page (with the numbered list)`, ls.wmAll);
+        if (excel.ok){
+          const nws = excel.sheets.find(x => x.name === 'Notes');
+          check(`[${w.name}] Excel Notes tab: numbers in column A, note text in column B`, nws && nws.val('A5') === '1.' && /Bank balances agree/.test(String(nws.val('B5'))),
+            nws && [nws.val('A5'), nws.val('B5')].join(' | '));
+        }
+      }
+
       /* Watermark (row after 30): none by default, customisable text when entered */
       if (w === books[0]){
         check('[watermark] no watermark by default', r.pages.every(p => !p.watermark));
