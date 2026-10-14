@@ -535,6 +535,12 @@ function wireGlobal(){
 
   const basisSel = $('#basisSelect');
   if (basisSel) basisSel.onchange = () => { state.basisOverride = basisSel.value; persist(); renderReport(); toast('Report basis updated'); };
+  const listSel = $('#notesListStyle');
+  if (listSel) listSel.onchange = () => {
+    state.settings.notesListStyle = listSel.value === 'bullets' ? 'bullets' : 'numbered';
+    saveSettings(); renderReport();
+    toast(state.settings.notesListStyle === 'bullets' ? 'Notes shown as bullet points' : 'Notes shown as a numbered list');
+  };
   const wmInput = $('#watermarkInput');
   if (wmInput) wmInput.onchange = () => {
     state.settings.watermark = wmInput.value.trim();

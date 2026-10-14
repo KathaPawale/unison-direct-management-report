@@ -56,6 +56,11 @@
 .report-page .donut-legend-item i{width:9px;height:9px;border-radius:2px;flex-shrink:0}
 .report-page .donut-legend-item b{margin-left:auto;padding-left:8px}
 .report-note-line.note-heading{font-weight:800;color:#0b2f59;margin-top:8px}
+/* Notes list items (Report Options: Numbered List or Bullet Points): the number / bullet in a fixed column, wrapped lines
+ * indented under the text. */
+.report-note-line.note-item{display:flex;align-items:baseline;gap:6px}
+.report-note-line .note-marker{flex:0 0 26px;text-align:right;font-weight:700;color:#0b2f59;white-space:nowrap}
+.report-note-line .note-text{flex:1;min-width:0;overflow-wrap:anywhere}
 .disclaimer-text{margin-top:70px}
 .pdf-measure .report-page.landscape{height:auto;min-height:0}
 .report-page .donut-legend-item span{max-width:none;white-space:normal;overflow:visible;text-overflow:clip;color:#4b5a6e;line-height:1.2}

@@ -8,7 +8,8 @@ const DEFAULT_SETTINGS = {
   groqKey: '',
   groqModel: 'llama-3.3-70b-versatile',
   aiEnabled: true,
-  watermark: ''          // optional background watermark text for report pages (blank = none)
+  watermark: '',         // optional background watermark text for report pages (blank = none)
+  notesListStyle: 'numbered'   // Notes page list style: 'numbered' (1, 2, 3) or 'bullets' (•)
 };
 
 const state = {
