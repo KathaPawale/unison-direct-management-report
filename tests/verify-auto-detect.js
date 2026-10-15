@@ -85,5 +85,24 @@ for (const [name, [sheets, want]] of Object.entries(cases)){
   }
 }
 
+{
+  const sheets = {
+    '1. P&L': [['', 'Jan-Jun 2026'], ...plBody(one)],
+    '2. P&Lmonthly': [['', ...MON.map(m => m + ' 2026'), 'Total'], ...plBody(mon)],
+    '3. P&L income': [['', 'Jan-Jun 2026', '% of Income'], ...plBody(v => [v, v / 12000])]
+  };
+  api.state.sheets = sheets;
+  const md = api.parseWorkbook(sheets);
+  api.state.model = md;
+  const reportSheets = api.reportSections().filter(s => s.sheet).map(s => s.sheet);
+  check('three named P&L worksheets are all included in the report', reportSheets.join('|') === Object.keys(sheets).join('|'));
+
+  downloads.length = 0;
+  api.downloadReportExcel();
+  const reportWorkbook = downloads[0] && XLSX.read(downloads[0].bytes, { type: 'array' });
+  check('three named P&L worksheets are all included in the Excel report',
+    !!reportWorkbook && Object.keys(sheets).every(name => reportWorkbook.SheetNames.includes(name)));
+}
+
 console.log(`${pass + fail} auto-detect assertions, ${pass} pass, ${fail} fail`);
 process.exitCode = fail ? 1 : 0;

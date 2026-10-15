@@ -135,8 +135,8 @@ for (const [name, sheets] of Object.entries(layouts)){
     check(`${name}: "${tab}" has a tab color`, /^<\?xml[^>]*>\s*<worksheet\b[^>]*><sheetPr><tabColor rgb="FF[0-9A-F]{6}"\/>(<pageSetUpPr [^>]*\/>)?<\/sheetPr>/.test(xml));
   if (sheets.TrialBalance){
     check(`${name}: every uploaded sheet is captured`, Object.keys(sheets).every(n => Object.values(md.roles).includes(n)));
-    /* The full-period "Profit and Loss" repeats the % of Income statement's amounts, so only the latter is printed. */
-    check(`${name}: no duplicate full-period "PL" sheet next to "PL (% Income)"`, !('PL' in xmls) && 'PL (% Income)' in xmls);
+    check(`${name}: full-period "PL" and "% of Income" sheets are both printed`,
+      'PL' in xmls && 'PL (% Income)' in xmls && api.reportSections().some(s => s.sheet === 'PL'));
     for (const t of ['TrialBalance', 'PL (% Income)', 'PL_MoM', 'PL_Comparative', 'BS_Comparative'])
       check(`${name}: Excel has "${t}"`, t in xmls);
   }

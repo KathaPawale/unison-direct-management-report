@@ -712,7 +712,7 @@ function reportStatementTitles(md){
 }
 
 function _roleSection(md, role, title){
-  if (!md.roles[role] || skipReportSection(md, role) || emptyStatementSheet(md, role)) return null;
+  if (!md.roles[role] || emptyStatementSheet(md, role)) return null;
   if ((role === 'ar' && md.suppressAR) || (role === 'ap' && md.suppressAP)) return null;
   const ag = role === 'ar' ? md.arAging : role === 'ap' ? md.apAging : null;
   title = reportStatementTitles(md)[role] || title;
@@ -724,12 +724,6 @@ function _roleSection(md, role, title){
 function emptyStatementSheet(md, role){
   const sm = md.sheetModels[md.roles[role]];
   return !!sm && !sm.lines.length && role !== 'ar' && role !== 'ap';
-}
-
-/* A full-period P&L next to the "% of Income" statement repeats its amounts (the data checks confirm they agree),
- * so the report prints the % of Income statement only (row 38: fewer pages). */
-function skipReportSection(md, role){
-  return role === 'pl' && !!md.roles.plPercent;
 }
 
 /* Strict rule: every uploaded worksheet with figures reaches the report. A sheet that is not one of the standard

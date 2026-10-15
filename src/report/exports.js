@@ -748,7 +748,7 @@ function downloadReportExcel(){
   for (const [role, stdTitle] of [...REPORT_STATEMENT_ORDER, ...REPORT_TRAILING_ORDER]){
     const title = titles[role] || stdTitle;
     const name = md.roles[role];
-    if (!name || skipReportSection(md, role) || emptyStatementSheet(md, role)) continue;
+    if (!name || emptyStatementSheet(md, role)) continue;
     if ((role === 'ar' && md.suppressAR) || (role === 'ap' && md.suppressAP)) continue;
     const ag = role === 'ar' ? md.arAging : role === 'ap' ? md.apAging : null;
     if (ag && ag.fromDetail){
