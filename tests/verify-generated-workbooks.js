@@ -71,9 +71,9 @@ function makeAccounts(names, n, lo, hi, { refunds = false, subs = false } = {}){
 }
 const total = (nodes, n) => nodes.reduce((s, x) => sumv(s, x.children ? total(x.children, n) : x.vals), zeros(n));
 
-const INCOME = ['Sales', 'Service Revenue', 'Consulting Income', 'Rental Income', 'Product Sales', 'Commission Income', 'Management Fees'];
+const INCOME = ['Uncategorized Income', 'Sales', 'Service Revenue', 'Consulting Income', 'Rental Income', 'Product Sales', 'Commission Income', 'Management Fees'];
 const COGS = ['Materials', 'Parts', 'Direct Labor', 'Freight In', 'Subcontractors - COS'];
-const EXP = ['Rent', 'Payroll Expenses', 'Insurance', 'Utilities', 'Office Supplies', 'Advertising', 'Legal & Professional Fees', 'Bank Service Charges', 'Repairs and Maintenance', 'Travel', 'Meals', 'Telephone', 'Software', 'Depreciation', 'Dues and Subscriptions', 'Interest Expense', 'Taxes and Licenses'];
+const EXP = ['Uncategorized Expense', 'Rent', 'Payroll Expenses', 'Insurance', 'Utilities', 'Office Supplies', 'Advertising', 'Legal & Professional Fees', 'Bank Service Charges', 'Repairs and Maintenance', 'Travel', 'Meals', 'Telephone', 'Software', 'Depreciation', 'Dues and Subscriptions', 'Interest Expense', 'Taxes and Licenses'];
 const OINC = ['Interest Income', 'Gain on Sale', 'Miscellaneous Income'];
 const OEXP = ['Penalties', 'Loss on Disposal', 'Other Miscellaneous Expense'];
 
@@ -273,7 +273,7 @@ function makeCase(id){
     }
     if (extra.length){
       const numbered = xr() < 0.5;
-      const mainName = numbered ? (layout === 'monthly' ? xpick(['P&L monthly', 'P&L Monthly', 'PL_MoM']) : layout === 'comparative' ? xpick(['P&L comparative', 'PL_Comparative']) : xpick(['P&L', 'Profit and Loss'])) : plTitle;
+      const mainName = numbered ? (layout === 'monthly' ? xpick(['P&L monthly', 'P&L Monthly', 'PL_MoM', 'Profit and Loss(Monthly)']) : layout === 'comparative' ? xpick(['P&L comparative', 'PL_Comparative']) : xpick(['P&L', 'Profit and Loss'])) : plTitle;
       const tabs = [[mainName, plRows], ...extra.map(x => [xpick(x.names), x.rows, x])];
       for (let k = tabs.length - 1; k > 0; k--){ const j = Math.floor(xr() * (k + 1)); [tabs[k], tabs[j]] = [tabs[j], tabs[k]]; }
       const used = new Set(); sheets = {};
@@ -283,6 +283,14 @@ function makeCase(id){
         used.add(name); sheets[name] = rows; if (x) x.tab = name; else extra.mainTab = name;
       });
       sheets['Balance Sheet'] = bsRows;
+      /* Greenwood layout (user, 2026-10-21): "Uncategorized" transaction tabs and Uncategorized lines in the P&L, so the P&L
+       * names three other tabs — it must stay the P&L, never be taken for the workbook's index. */
+      if (xr() < 0.5){
+        const LH = ['Transaction date', 'Transaction type', 'Name', 'Description', 'Amount'];
+        sheets['Uncategorized Income'] = [[client], ['Transaction Report'], [], LH, ['03/25/2026', 'Deposit', 'Tenant', 'Deposit', 100]];
+        sheets['Uncategorized Exp'] = [[client], ['Transaction Report'], [], LH, ['02/04/2026', 'Expense', 'Vendor', 'Card', 50]];
+        extra.uncategorizedTabs = true;
+      }
     }
   }
   /* Hidden tabs (user, 2026-10-21: a hidden "Uncategorized" list and an old P&L copy were printed and replaced the real
@@ -294,7 +302,7 @@ function makeCase(id){
       ['Old PL', () => junk(987654.32)], ['P&L (old)', () => junk(123456.78)],
       ['Uncategorized Exp', () => [['Client'], ['Uncategorized Expenses'], [], ['Transaction date', 'Type', 'Name', 'Description', 'Amount'], ['01/05/2026', 'Expense', 'Vendor', 'Card', 250]]],
       ['BS old', () => [['Old'], ['Balance Sheet'], ['', 'Total'], ['Checking', 5], ['Total Assets', 5], ['Total Liabilities', 0], ['Retained Earnings', 5], ['Total Equity', 5], ['Total Liabilities and Equity', 5]]]];
-    for (const [nm, mk] of opts) if (xr() < 0.5) hidden[nm] = { rows: mk(), level: xr() < 0.5 ? 1 : 2 };
+    for (const [nm, mk] of opts) if (xr() < 0.5 && !sheets[nm]) hidden[nm] = { rows: mk(), level: xr() < 0.5 ? 1 : 2 };
   }
   return { id, style, layout, months, basis, sheets, PT, BT, pl, extra, hidden };
 }
@@ -311,6 +319,7 @@ for (let i = 1; i <= COUNT; i++){
   if (process.env.WRITE) written.push({ id: i, style: tc.style, layout: tc.layout, sheets: tc.sheets });
   const tag = `#${i} ${tc.style}/${tc.layout}${tc.layout === 'monthly' ? tc.months : ''}/${tc.basis || 'no-basis'}`;
   stats[tc.style + '/' + tc.layout] = (stats[tc.style + '/' + tc.layout] || 0) + 1;
+  if (tc.extra && tc.extra.uncategorizedTabs) stats['+Uncategorized tabs'] = (stats['+Uncategorized tabs'] || 0) + 1;
   if (Object.keys(tc.hidden).length) stats['+hidden tabs'] = (stats['+hidden tabs'] || 0) + 1;
   if (tc.extra && tc.extra.length){ stats['+companion P&L tabs'] = (stats['+companion P&L tabs'] || 0) + 1; if (tc.extra.some(x => x.kind === 'full')) stats['+full-period P&L tab'] = (stats['+full-period P&L tab'] || 0) + 1; if (/^1\. /.test(Object.keys(tc.sheets)[0])) stats['+numbered tab names'] = (stats['+numbered tab names'] || 0) + 1; }
   const F = [];
@@ -382,7 +391,9 @@ for (let i = 1; i <= COUNT; i++){
     /* Companion P&L tabs: every one is detected as a P&L, reaches the report (PDF / TOC sections), and the workbook
      * reconciles with no false mismatch; the "% of Income" figures are right. */
     if (tc.extra && tc.extra.length){
-      const plTabs = Object.keys(tc.sheets).filter(n => n !== 'Balance Sheet');
+      const plTabs = Object.keys(tc.sheets).filter(n => n !== 'Balance Sheet' && !/^Uncategorized/.test(n));
+      if (md.roles.summary) F.push(`"${md.roles.summary}" taken for the workbook's index`);
+      if (api.reportSections().some(x => x.id === 'index')) F.push('an index section in a workbook without an index sheet');
       const plRoles = ['pl', 'plMonthly', 'plComparative', 'plPercent'];
       for (const t of plTabs){
         const role = Object.entries(md.roles).find(([, v]) => v === t);

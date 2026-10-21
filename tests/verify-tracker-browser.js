@@ -327,6 +327,33 @@ function notesTabWorkbook(){
       notesLack: [client, 'Notes', 'Sr. No. — Notes'] } };
 }
 
+/* Greenwood Seneca layout (user, 2026-10-21): the first tab "Profit and Loss" names the other tabs ("Profit and
+ * Loss(Monthly)", "Profit and Loss(% of Income)", an "Uncategorized Income" line) — it is the P&L with its figures,
+ * never the index sheet; the Dashboard stays section 1 and the statements keep the workbook order. */
+function greenwoodWorkbook(){
+  const client = 'Greenwood Seneca', period = 'January-September, 2026';
+  const T = (t, p) => [[client], [t], [p || period], []];
+  const serial = (m, d) => Math.round((Date.UTC(2026, m - 1, d) - Date.UTC(1899, 11, 30)) / 864e5);
+  const body = f => [['Income'], ['Rental Income', ...f(51609.33)], ['Total Income', ...f(51609.33)], ['Gross Profit', ...f(51609.33)], ['Expenses'],
+    ['Bank Charges & Fees', ...f(112)], ['Business Loan Interest', ...f(130801.92)], ['Legal & Professional Services', ...f(3000)], ['Uncategorized Expense', ...f(516.34)],
+    ['Total Expenses', ...f(134430.26)], ['Net Operating Income', ...f(-82820.93)], ['Other Income'], ['Interest Income', ...f(50.41)], ['Uncategorized Income', ...f(47475)],
+    ['Total Other Income', ...f(47525.41)], ['Net Other Income', ...f(47525.41)], ['Net Income', ...f(-35295.52)]];
+  const M = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'];
+  const pl = [...T('Profit and Loss'), ['', 'Total'], ...body(v => [v])];
+  const plm = [...T('Profit and Loss'), ['', ...M.map(m => m + ' 2026'), 'Total'], ...body(v => [...M.map((_, i) => i < 8 ? +(v / 9).toFixed(2) : +(v - 8 * +(v / 9).toFixed(2)).toFixed(2)), v])];
+  const plp = [...T('Profit and Loss % of Total Income'), ['', 'Total', '% of Income'], ...body(v => [v, v / 51609.33])];
+  const bs = [...T('Balance Sheet', 'As of September 30, 2026'), ['', 'Total'], ['Assets'], ['Checking', 150000], ['Total Assets', 150000], ['Liabilities and Equity'],
+    ['Loan Payable', 100000], ['Total Liabilities', 100000], ['Equity'], ['Retained Earnings', 85295.52], ['Net Income', -35295.52], ['Total Equity', 50000],
+    ['Total Liabilities and Equity', 150000]];
+  const LH = ['Transaction date', 'Transaction type', 'Name', 'Description', 'Amount', "Unison's Comment"];
+  const ui = [...T('Transaction Report'), LH, [serial(3, 25), 'Deposit', 'Tenant', 'Deposit', 47475, 'Please advise']];
+  const ue = [...T('Transaction Report'), LH, [serial(2, 4), 'Expense', 'Vendor', 'Card', 300.18, 'Please advise']];
+  return { name: 'Greenwood: first tab "Profit and Loss" is the P&L, never the index', client, period,
+    sheets: { 'Profit and Loss': pl, 'Profit and Loss(Monthly)': plm, 'Profit and Loss(% of Income)': plp, 'Balance Sheet': bs, 'Uncategorized Income': ui, 'Uncategorized Exp': ue },
+    expect: { roles: { pl: 'Profit and Loss', plMonthly: 'Profit and Loss(Monthly)', plPercent: 'Profit and Loss(% of Income)', bs: 'Balance Sheet' }, income: 51609.33, net: -35295.52,
+      noIndex: true, sections: ['pl', 'plMonthly', 'plPercent', 'bs'], pdfHas: ['Business Loan Interest', 'Uncategorized Income'] } };
+}
+
 /* Strict rule (user, 2026-10-21): only the tabs the client can see are read. A hidden "Uncategorized Exp" list and a very
  * hidden old P&L copy (with different figures) must not reach the report, the Excel or the figures. */
 function hiddenTabsWorkbook(){
@@ -746,6 +773,10 @@ function checkWorkbook(w, r, excel, pdf, errors){
     toc.map(t => t.text).join(' | '));
   check(`${tag} No "No statement lines were found" page`, !r.pages.some(p => /No statement lines were found/i.test(p.text)), r.pages.filter(p => /No statement lines/i.test(p.text)).map(p => p.id).join(','));
   check(`${tag} No empty "No notes were found" page`, !r.pages.some(p => /No notes were found/i.test(p.text)));
+  if (e.noIndex){
+    check(`${tag} No index sheet: a statement tab is never taken for the workbook's index`, !r.roles.summary && !r.pages.some(p => p.id === 'index'), JSON.stringify(r.roles));
+    check(`${tag} Analytical Dashboard is section 1`, (toc[0] || {}).text && /^1\.\s*Analytical Dashboard/.test(toc[0].text), toc.map(t => t.text).join(' | '));
+  }
   /* Strict rule: only visible tabs; no made-up figures for a statement that was not uploaded. */
   for (const t of e.hiddenTabs || []){
     check(`${tag} Hidden tab "${t}" is not read`, !r.tabs.includes(t), r.tabs.join(', '));
@@ -954,7 +985,7 @@ function checkWorkbook(w, r, excel, pdf, errors){
     ? [{ name: path.basename(process.env.TRACKER_XLSX), file: fs.readFileSync(process.env.TRACKER_XLSX),
          /* TRACKER_EXPECT=expect.json adds the figures to check: { client, expect: { income, net, roles, periods, … } } */
          ...(process.env.TRACKER_EXPECT ? JSON.parse(fs.readFileSync(process.env.TRACKER_EXPECT, 'utf8')) : { expect: {} }) }]
-    : [row54Workbook(), plutoWorkbook(), plutoClientWorkbook(), uncategorizedWorkbook(), senecaWorkbook(), comparativePctWorkbook(), halfYearCashWorkbook(), threeBalanceSheetsWorkbook(), notesTabWorkbook(), hiddenTabsWorkbook(), balanceSheetOnlyWorkbook(), ...fixtureWorkbooks()])
+    : [row54Workbook(), plutoWorkbook(), plutoClientWorkbook(), uncategorizedWorkbook(), senecaWorkbook(), comparativePctWorkbook(), halfYearCashWorkbook(), threeBalanceSheetsWorkbook(), notesTabWorkbook(), greenwoodWorkbook(), hiddenTabsWorkbook(), balanceSheetOnlyWorkbook(), ...fixtureWorkbooks()])
     .filter(w => !process.env.TRACKER_ONLY || w.name.includes(process.env.TRACKER_ONLY));   // e.g. TRACKER_ONLY="Row 54"
   if (!books.length) throw new Error('No workbook matches TRACKER_ONLY=' + process.env.TRACKER_ONLY);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'udmr-'));
