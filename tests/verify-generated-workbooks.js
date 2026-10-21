@@ -37,7 +37,7 @@ ctx.window = ctx;
 vm.createContext(ctx);
 vm.runInContext(['src/core/util.js', 'src/core/state.js', 'src/core/parser.js', 'src/core/financials.js', 'src/core/recompute.js',
   'src/report/charts.js', 'src/report/report.js'].map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n;\n') +
-  '\n;globalThis.__api = { parseWorkbook, state, resetState, reportBasis, reportTableParts, displayColumns };', ctx);
+  '\n;globalThis.__api = { parseWorkbook, state, resetState, reportBasis, reportTableParts, displayColumns, reportSections, dataChecks };', ctx);
 const api = ctx.__api;
 
 /* ---------- deterministic random ---------- */
@@ -237,8 +237,54 @@ function makeCase(id){
   bb.push({ kind: 'total', name: totalName(style, 'Liabilities and Equity'), level: 0, vals: bCols(BT.totalLE) });
   const bsRows = render(style, 'Balance Sheet', client, `As of December 31, ${year}`, bHead, bb, basisLine);
 
-  const sheets = { [plTitle]: plRows, 'Balance Sheet': bsRows };
-  return { id, style, layout, months, basis, sheets, PT, BT, pl };
+  let sheets = { [plTitle]: plRows, 'Balance Sheet': bsRows };
+  /* Companion P&L tabs (user, 2026-10-15/21: "1. P&L", "2. P&L monthly", "3. P&L income" — every P&L tab must reach the
+   * report and the figures must stay right): the same truth as a full-period P&L and / or a "% of Income" P&L, under
+   * numbered or plain names, in a random tab order. A separate random source keeps the base cases unchanged. */
+  const extra = [];
+  let xs = (SEED ^ (id * 2654435761)) | 0;
+  const xr = () => { xs = (xs + 0x6D2B79F5) | 0; let t = Math.imul(xs ^ (xs >>> 15), 1 | xs); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const xpick = a => a[Math.floor(xr() * a.length)];
+  if (xr() < 0.5){
+    const tot = v => layout === 'monthly' ? r2(v.reduce((a, x) => a + x, 0)) : v[0];
+    const inc = tot(PT.income);
+    const blocksFor = cols => {
+      const out = [];
+      const sec2 = (key, name) => { if (!pl[key]) return; out.push({ kind: 'section', name, level: 0 }); out.push(...treeBlocks(style, pl[key], 1, cols)); out.push({ kind: 'total', name: totalName(style, name), level: 0, vals: cols(PT[key]) }); };
+      sec2('income', 'Income'); sec2('cogs', 'Cost of Goods Sold');
+      if (pl.cogs || style !== 'plain') out.push({ kind: 'total', name: 'Gross Profit', level: 0, vals: cols(PT.gross) });
+      sec2('expenses', 'Expenses');
+      if (pl.otherIncome || pl.otherExpenses){
+        out.push({ kind: 'total', name: 'Net Operating Income', level: 0, vals: cols(PT.noi) });
+        sec2('otherIncome', 'Other Income'); sec2('otherExpenses', 'Other Expenses');
+        out.push({ kind: 'total', name: 'Net Other Income', level: 0, vals: cols(PT.netOther) });
+      }
+      out.push({ kind: 'total', name: 'Net Income', level: 0, vals: cols(PT.net) });
+      return out;
+    };
+    const per = `Jan - ${layout === 'monthly' ? MN[months - 1] : 'Dec'} ${year}`;
+    if (layout === 'monthly' && months > 1)
+      extra.push({ kind: 'full', names: ['P&L', 'Profit and Loss', 'PL', 'Income Statement'], rows: render(style, 'Profit and Loss', client, period, [per], blocksFor(v => [tot(v)]), basisLine) });
+    if (inc){
+      const pctCell = v => (tot(v) / inc * 100).toFixed(2) + '%';
+      extra.push({ kind: 'pct', names: ['P&L income', 'PL (% Income)', 'Profit and Loss % of Income', 'P&L (% of Income)'], pctOf: v => r2(tot(v) / inc * 100),
+        rows: render(style, 'Profit and Loss % of Total Income', client, period, [per, '% of Income'], blocksFor(v => [tot(v), pctCell(v)]), basisLine) });
+    }
+    if (extra.length){
+      const numbered = xr() < 0.5;
+      const mainName = numbered ? (layout === 'monthly' ? xpick(['P&L monthly', 'P&L Monthly', 'PL_MoM']) : layout === 'comparative' ? xpick(['P&L comparative', 'PL_Comparative']) : xpick(['P&L', 'Profit and Loss'])) : plTitle;
+      const tabs = [[mainName, plRows], ...extra.map(x => [xpick(x.names), x.rows, x])];
+      for (let k = tabs.length - 1; k > 0; k--){ const j = Math.floor(xr() * (k + 1)); [tabs[k], tabs[j]] = [tabs[j], tabs[k]]; }
+      const used = new Set(); sheets = {};
+      tabs.forEach(([nm, rows, x], k) => {
+        let name = numbered ? `${k + 1}. ${nm}` : nm;
+        while (used.has(name) || name === 'Balance Sheet') name += ' (2)';
+        used.add(name); sheets[name] = rows; if (x) x.tab = name; else extra.mainTab = name;
+      });
+      sheets['Balance Sheet'] = bsRows;
+    }
+  }
+  return { id, style, layout, months, basis, sheets, PT, BT, pl, extra };
 }
 
 /* ---------- checks ---------- */
@@ -253,6 +299,7 @@ for (let i = 1; i <= COUNT; i++){
   if (process.env.WRITE) written.push({ id: i, style: tc.style, layout: tc.layout, sheets: tc.sheets });
   const tag = `#${i} ${tc.style}/${tc.layout}${tc.layout === 'monthly' ? tc.months : ''}/${tc.basis || 'no-basis'}`;
   stats[tc.style + '/' + tc.layout] = (stats[tc.style + '/' + tc.layout] || 0) + 1;
+  if (tc.extra && tc.extra.length){ stats['+companion P&L tabs'] = (stats['+companion P&L tabs'] || 0) + 1; if (tc.extra.some(x => x.kind === 'full')) stats['+full-period P&L tab'] = (stats['+full-period P&L tab'] || 0) + 1; if (/^1\. /.test(Object.keys(tc.sheets)[0])) stats['+numbered tab names'] = (stats['+numbered tab names'] || 0) + 1; }
   const F = [];
   const near = (label, got, exp, tol = 0.011) => {
     if (exp === null || exp === undefined) return;
@@ -305,6 +352,25 @@ for (let i = 1; i <= COUNT; i++){
     if (!B.liabilities[0] && lb.length) F.push('liabilities bifurcation shown with no liabilities');
     if (B.liabilities[0] && !['Current Liabilities', 'Long-Term Liabilities'].every(l => lb.some(x => x.label === l))) F.push('liabilities bifurcation missing Current or Long-Term row');
     [...md.bsComposition.assets, ...md.bsComposition.liabEquity, ...lb].forEach(x => { if (x.pct !== null && Math.abs(x.pct) > 100.001) F.push(`share ${x.label} ${x.pct.toFixed(2)}%`); });
+    /* Companion P&L tabs: every one is detected as a P&L, reaches the report (PDF / TOC sections), and the workbook
+     * reconciles with no false mismatch; the "% of Income" figures are right. */
+    if (tc.extra && tc.extra.length){
+      const plTabs = Object.keys(tc.sheets).filter(n => n !== 'Balance Sheet');
+      const plRoles = ['pl', 'plMonthly', 'plComparative', 'plPercent'];
+      for (const t of plTabs){
+        const role = Object.entries(md.roles).find(([, v]) => v === t);
+        if (!role || !plRoles.includes(role[0])) F.push(`P&L tab "${t}" not detected as a P&L (${role ? role[0] : 'none'})`);
+      }
+      api.state.model = md;
+      const inReport = api.reportSections().map(x => x.sheet);
+      for (const t of plTabs) if (!inReport.includes(t)) F.push(`P&L tab "${t}" missing from the report`);
+      const pctX = tc.extra.find(x => x.kind === 'pct');
+      if (pctX && md.roles.plPercent !== pctX.tab) F.push(`"% of Income" tab "${pctX.tab}" detected as ${Object.entries(md.roles).find(([, v]) => v === pctX.tab)?.[0]}`);
+    }
+    /* Every generated workbook adds up, so the data checks must not report a mismatch. */
+    let checks = [];
+    try { checks = api.dataChecks(md, api.state.sheets); } catch (e){ F.push('data checks error: ' + e.message); }
+    for (const c of checks.filter(c => c.sev === 'High')) F.push('false data-check mismatch: ' + c.msg);
     /* basis */
     const wantBasis = tc.basis === 'Cash' ? 'Cash Basis' : 'Accrual Basis';
     if (api.reportBasis() !== wantBasis) F.push(`cover basis ${api.reportBasis()} ≠ ${wantBasis}`);
