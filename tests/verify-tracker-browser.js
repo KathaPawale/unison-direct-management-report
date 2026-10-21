@@ -512,6 +512,10 @@ function inspectPage(){
 
   out.hasNotes = !!(state.notes || '').trim();
   out.tabs = Object.keys(state.sheets);
+  out.sections = reportSections().map(x => ({ id: x.id, title: x.title, sheet: x.sheet || null }));
+  out.listingTabs = reportListingSheets(state.model);
+  out.ledgerTabs = out.tabs.filter(n => isLedgerSheet(n, state.sheets[n]) || isTransactionDetailSheet(n, state.sheets[n]));
+  out.withFigures = out.tabs.filter(n => (state.sheets[n] || []).some(row => (row || []).some(v => typeof v === 'number' && !(Number.isInteger(v) && v >= 0 && v <= 999))));
   out.kpis = kpiTiles().map(t => ({ label: t.label, value: t.na ? null : t.value }));
   out.notesText = state.notes || '';
   out.graphCount = typeof window.dashboardGraphBlocks === 'function' ? window.dashboardGraphBlocks().length : 0;
@@ -773,6 +777,31 @@ function checkWorkbook(w, r, excel, pdf, errors){
     toc.map(t => t.text).join(' | '));
   check(`${tag} No "No statement lines were found" page`, !r.pages.some(p => /No statement lines were found/i.test(p.text)), r.pages.filter(p => /No statement lines/i.test(p.text)).map(p => p.id).join(','));
   check(`${tag} No empty "No notes were found" page`, !r.pages.some(p => /No notes were found/i.test(p.text)));
+  /* Strict sheet rules (user, 2026-10-21), for every workbook: only the client's sheets, every client sheet with figures,
+   * in the client's tab order, numbered 1, 2, 3 … without gaps, each under its own tab name — PDF, TOC and Excel. */
+  {
+    const fixed = new Set(['cover', 'toc', 'dash', 'notes', 'disc']);
+    const odd = r.sections.filter(x => x.sheet ? !r.tabs.includes(x.sheet) : !fixed.has(x.id));
+    check(`${tag} Strict: every report section is a client sheet (or Cover, Contents, Dashboard, Notes, Disclaimer)`, !odd.length, odd.map(x => x.title).join(', '));
+    const stmt = r.sections.filter(x => x.sheet && x.id !== 'index');
+    const pos = stmt.map(x => r.tabs.indexOf(x.sheet));
+    check(`${tag} Strict: sections follow the client's tab order`, pos.every((v, k) => !k || v > pos[k - 1]), stmt.map(x => x.sheet).join(' → ') + ' | tabs: ' + r.tabs.join(' → '));
+    const generic = n => /^(sheet|tab|page|table|data|worksheet|report)\s*\d*$/i.test(n);
+    const renamed = stmt.filter(x => !generic(x.sheet) && x.title !== x.sheet);
+    check(`${tag} Strict: each section heading is the client's tab name`, !renamed.length, renamed.map(x => x.sheet + ' → ' + x.title).join(', '));
+    const nums = toc.map(t => +((t.text.match(/^(\d+)\./) || [])[1])).filter(Boolean);
+    check(`${tag} Strict: section numbers run 1, 2, 3 … without gaps or repeats`, nums.length > 0 && nums.every((v, k) => v === k + 1), nums.join(','));
+    /* Documented exception: tracker row 27 — a cash-basis client's A/R aging is left out ("no A/R anywhere in the report"). */
+    const row27 = t => r.suppressAR && t === r.roles.ar;
+    const missing = r.withFigures.filter(t => !r.sections.some(x => x.sheet === t) && !r.listingTabs.includes(t) && !r.ledgerTabs.includes(t) && !row27(t));
+    check(`${tag} Strict: every client sheet with figures is in the report (transaction lists in Excel; cash-basis A/R per row 27)`, !missing.length, missing.join(', '));
+    if (excel.ok){
+      const own = new Set(['Cover', 'Analytical Summary', 'Disclaimer', 'Notes']);
+      const safe = t => t.replace(/[\\\/?*\[\]:]/g, '').slice(0, 31);
+      const extraTabs = excel.sheets.map(x => x.name).filter(n => !own.has(n) && !r.tabs.some(t => safe(t) === n));
+      check(`${tag} Strict: every Excel tab is a client sheet (or Cover, Analytical Summary, Notes, Disclaimer)`, !extraTabs.length, extraTabs.join(', '));
+    }
+  }
   if (e.noIndex){
     check(`${tag} No index sheet: a statement tab is never taken for the workbook's index`, !r.roles.summary && !r.pages.some(p => p.id === 'index'), JSON.stringify(r.roles));
     check(`${tag} Analytical Dashboard is section 1`, (toc[0] || {}).text && /^1\.\s*Analytical Dashboard/.test(toc[0].text), toc.map(t => t.text).join(' | '));

@@ -37,7 +37,7 @@ ctx.window = ctx;
 vm.createContext(ctx);
 vm.runInContext(['src/core/util.js', 'src/core/state.js', 'src/core/parser.js', 'src/core/financials.js', 'src/core/recompute.js',
   'src/report/charts.js', 'src/report/report.js'].map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n;\n') +
-  '\n;globalThis.__api = { parseWorkbook, state, resetState, reportBasis, reportTableParts, displayColumns, reportSections, dataChecks, visibleSheetNames };', ctx);
+  '\n;globalThis.__api = { parseWorkbook, state, resetState, reportBasis, reportTableParts, displayColumns, reportSections, dataChecks, visibleSheetNames, reportListingSheets, reportStatementTitles };', ctx);
 const XLSX = require('xlsx-js-style/dist/xlsx.bundle.js');
 const api = ctx.__api;
 
@@ -304,6 +304,12 @@ function makeCase(id){
       ['BS old', () => [['Old'], ['Balance Sheet'], ['', 'Total'], ['Checking', 5], ['Total Assets', 5], ['Total Liabilities', 0], ['Retained Earnings', 5], ['Total Equity', 5], ['Total Liabilities and Equity', 5]]]];
     for (const [nm, mk] of opts) if (xr() < 0.5 && !sheets[nm]) hidden[nm] = { rows: mk(), level: xr() < 0.5 ? 1 : 2 };
   }
+  /* Any tab order (the Balance Sheet first, P&L tabs in any order): the report must follow it. */
+  if (xr() < 0.4){
+    const keys = Object.keys(sheets);
+    for (let k = keys.length - 1; k > 0; k--){ const j = Math.floor(xr() * (k + 1)); [keys[k], keys[j]] = [keys[j], keys[k]]; }
+    const re = {}; for (const k of keys) re[k] = sheets[k]; sheets = re;
+  }
   return { id, style, layout, months, basis, sheets, PT, BT, pl, extra, hidden };
 }
 
@@ -319,6 +325,7 @@ for (let i = 1; i <= COUNT; i++){
   if (process.env.WRITE) written.push({ id: i, style: tc.style, layout: tc.layout, sheets: tc.sheets });
   const tag = `#${i} ${tc.style}/${tc.layout}${tc.layout === 'monthly' ? tc.months : ''}/${tc.basis || 'no-basis'}`;
   stats[tc.style + '/' + tc.layout] = (stats[tc.style + '/' + tc.layout] || 0) + 1;
+  if (Object.keys(tc.sheets)[0] === 'Balance Sheet') stats['+Balance Sheet first'] = (stats['+Balance Sheet first'] || 0) + 1;
   if (tc.extra && tc.extra.uncategorizedTabs) stats['+Uncategorized tabs'] = (stats['+Uncategorized tabs'] || 0) + 1;
   if (Object.keys(tc.hidden).length) stats['+hidden tabs'] = (stats['+hidden tabs'] || 0) + 1;
   if (tc.extra && tc.extra.length){ stats['+companion P&L tabs'] = (stats['+companion P&L tabs'] || 0) + 1; if (tc.extra.some(x => x.kind === 'full')) stats['+full-period P&L tab'] = (stats['+full-period P&L tab'] || 0) + 1; if (/^1\. /.test(Object.keys(tc.sheets)[0])) stats['+numbered tab names'] = (stats['+numbered tab names'] || 0) + 1; }
@@ -404,6 +411,23 @@ for (let i = 1; i <= COUNT; i++){
       for (const t of plTabs) if (!inReport.includes(t)) F.push(`P&L tab "${t}" missing from the report`);
       const pctX = tc.extra.find(x => x.kind === 'pct');
       if (pctX && md.roles.plPercent !== pctX.tab) F.push(`"% of Income" tab "${pctX.tab}" detected as ${Object.entries(md.roles).find(([, v]) => v === pctX.tab)?.[0]}`);
+    }
+    /* Strict sheet rules (user, 2026-10-21) for every workbook: the report shows only the client's sheets, every client
+     * sheet with figures, in the client's tab order, each under its own tab name. */
+    {
+      api.state.model = md;
+      const tabs = Object.keys(api.state.sheets);
+      const secs = api.reportSections();
+      const fixed = new Set(['cover', 'toc', 'dash', 'notes', 'disc']);
+      for (const x of secs) if (!x.sheet && !fixed.has(x.id)) F.push(`section "${x.title}" (${x.id}) is not a client sheet`);
+      for (const x of secs.filter(x => x.sheet)) if (!tabs.includes(x.sheet)) F.push(`section "${x.title}" from "${x.sheet}", not an uploaded tab`);
+      const order = secs.filter(x => x.sheet && x.id !== 'index').map(x => tabs.indexOf(x.sheet));
+      if (order.some((v, k) => k && v < order[k - 1])) F.push(`sections out of the workbook's tab order: ${secs.filter(x => x.sheet).map(x => x.sheet).join(' → ')} (tabs ${tabs.join(' → ')})`);
+      const ids = secs.map(x => x.id);
+      if (ids[0] !== 'cover' || ids[1] !== 'toc' || ids[ids.indexOf('dash') - 1] !== (ids.includes('index') ? 'index' : 'toc') || ids[ids.length - 1] !== 'disc') F.push(`fixed pages out of place: ${ids.join(',')}`);
+      for (const x of secs.filter(x => x.sheet && x.id !== 'index')) if (x.title !== x.sheet) F.push(`section heading "${x.title}" ≠ tab name "${x.sheet}"`);
+      const shown = new Set([...secs.map(x => x.sheet), ...api.reportListingSheets(md)]);
+      for (const t of tabs) if (!shown.has(t)) F.push(`client tab "${t}" missing from the report`);
     }
     /* Every generated workbook adds up, so the data checks must not report a mismatch. */
     let checks = [];
