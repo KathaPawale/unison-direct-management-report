@@ -646,6 +646,17 @@ function isIndexLikeSheet(name, rows, allNames){
   return hits.size >= 3;
 }
 
+/* Strict rule (user, 2026-10-21): only the tabs the client can see are the uploaded workbook. A tab hidden in Excel
+ * ("Hide" or "very hidden" — old copies, template tabs, an "Uncategorized" list) is never read: it would add a sheet the
+ * client did not send and could even replace the real figures. Returns the visible tab names in workbook order. */
+function visibleSheetNames(wb){
+  const meta = (wb && wb.Workbook && wb.Workbook.Sheets) || [];
+  return (wb.SheetNames || []).filter((n, i) => {
+    const m = meta.find(x => x && x.name === n) || meta[i];
+    return !(m && +m.Hidden > 0);
+  });
+}
+
 function detectRoles(sheets, sheetModels){
   const roles = { plMonthly: null, plComparative: null, plPercent: null, plClass: null, pl: null, bs: null, bsComparative: null, tb: null, ar: null, ap: null, notes: null, summary: null };
   const names = Object.keys(sheets);

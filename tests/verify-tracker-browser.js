@@ -327,6 +327,24 @@ function notesTabWorkbook(){
       notesLack: [client, 'Notes', 'Sr. No. — Notes'] } };
 }
 
+/* Strict rule (user, 2026-10-21): only the tabs the client can see are read. A hidden "Uncategorized Exp" list and a very
+ * hidden old P&L copy (with different figures) must not reach the report, the Excel or the figures. */
+function hiddenTabsWorkbook(){
+  const w = halfYearCashWorkbook();
+  const unc = [['Client'], ['Uncategorized Expenses'], [], ['Transaction date', 'Type', 'Name', 'Description', 'Amount', "Unison's Comment"],
+    [new Date(2026, 0, 5), 'Expense', 'Vendor X', 'Card charge', 250, '']];
+  const oldPl = [['Old P&L copy'], ['', 'Total'], ['Sales', 999999], ['Total Income', 999999], ['Net Income', 999999]];
+  return { ...w, name: 'Hidden tabs ignored (only visible sheets)', hiddenSheets: { 'Uncategorized Exp': { rows: unc, level: 1 }, 'Old PL': { rows: oldPl, level: 2 } },
+    expect: { ...w.expect, hiddenTabs: ['Uncategorized Exp', 'Old PL'] } };
+}
+
+/* A workbook with a Balance Sheet only: no P&L figures are made up ($0.00) — the P&L tiles say it is not in the workbook. */
+function balanceSheetOnlyWorkbook(){
+  const w = halfYearCashWorkbook();
+  return { name: 'Balance Sheet only (no made-up P&L figures)', client: w.client, period: w.period, sheets: { 'Balance Sheet': w.sheets['Balance Sheet'] },
+    expect: { noPL: true } };
+}
+
 function fixtureWorkbooks(){
   const fx = JSON.parse(fs.readFileSync(path.join(root, 'tests/calc-fixtures.json'), 'utf8'));
   const exp = fx.expected || {};
@@ -349,6 +367,10 @@ function toXlsx(wbDef){
     }
     XLSX.utils.book_append_sheet(wb, ws, tab);
   }
+  /* Tabs hidden in Excel (1 = hidden, 2 = very hidden): in the file, but not part of what the client sees. */
+  const hidden = wbDef.hiddenSheets || {};
+  for (const [n, { rows }] of Object.entries(hidden)) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), n);
+  if (Object.keys(hidden).length) wb.Workbook = { Sheets: wb.SheetNames.map(n => ({ name: n, Hidden: hidden[n] ? hidden[n].level : 0 })) };
   return Buffer.from(XLSX.write(wb, { type: 'array', bookType: 'xlsx' }));
 }
 
@@ -462,6 +484,8 @@ function inspectPage(){
     [...tr.cells].slice(1).every(td => !/^\(/.test(td.textContent.trim()) || td.classList.contains('neg')));
 
   out.hasNotes = !!(state.notes || '').trim();
+  out.tabs = Object.keys(state.sheets);
+  out.kpis = kpiTiles().map(t => ({ label: t.label, value: t.na ? null : t.value }));
   out.notesText = state.notes || '';
   out.graphCount = typeof window.dashboardGraphBlocks === 'function' ? window.dashboardGraphBlocks().length : 0;
   out.hasComposition = typeof window.dashboardGraphBlocks === 'function' && window.dashboardGraphBlocks().some(h => /Balance Sheet Composition/.test(h));
@@ -594,7 +618,7 @@ function checkWorkbook(w, r, excel, pdf, errors){
 
   /* Row 1: Revenue / Income on the dashboard */
   const inc = r.tiles.find(t => t.label === 'Revenue / Income');
-  check(`${tag} Row 1 Revenue / Income tile shows the P&L income`, inc && inc.value === r.money.income && r.metrics.income !== 0 && r.metrics.income !== null, inc && inc.value);
+  if (!e.noPL) check(`${tag} Row 1 Revenue / Income tile shows the P&L income`, inc && inc.value === r.money.income && r.metrics.income !== 0 && r.metrics.income !== null, inc && inc.value);
   if (e.income !== undefined) check(`${tag} Row 1 income = ${e.income}`, near(r.metrics.income, e.income), r.metrics.income);
   if (e.net !== undefined) check(`${tag} Net income = ${e.net}`, near(r.metrics.net, e.net), r.metrics.net);
   if (e.expenses !== undefined) check(`${tag} Total expenses = ${e.expenses}`, near(r.metrics.expenses, e.expenses), r.metrics.expenses);
@@ -670,7 +694,7 @@ function checkWorkbook(w, r, excel, pdf, errors){
     check(`${tag} Row 12 share = expense ÷ total expenses × 100`, eg.every(g => Math.abs(r.expenseTotal) < 0.01 || near(g.pct, g.value / Math.abs(r.expenseTotal) * 100, 0.02) || /activity/.test(r.expenseChartText)));
     check(`${tag} Row 28 expense % shown on the portal chart`, /\d+(\.\d+)?%/.test(r.expenseChartText));
   }
-  check(`${tag} Row 28 every KPI tile carries a percentage or reason`, r.tiles.every(t => /%|Not applicable|No A\/[RP]|Not shown/.test(t.sub)), r.tiles.map(t => t.sub).join(' | '));
+  check(`${tag} Row 28 every KPI tile carries a percentage or reason`, r.tiles.every(t => /%|Not applicable|No A\/[RP]|Not shown|in the workbook/.test(t.sub)), r.tiles.map(t => t.sub).join(' | '));
   check(`${tag} Row 36 composition shares within ±100%`, r.composition.every(x => x.pct === null || Math.abs(x.pct) <= 100.001));
   if (r.metrics.equity !== null && r.metrics.equity < 0) check(`${tag} Row 28 negative equity has a negative %`, r.equityPct < 0, r.equityPct);
   if (e.payroll !== undefined){
@@ -722,6 +746,17 @@ function checkWorkbook(w, r, excel, pdf, errors){
     toc.map(t => t.text).join(' | '));
   check(`${tag} No "No statement lines were found" page`, !r.pages.some(p => /No statement lines were found/i.test(p.text)), r.pages.filter(p => /No statement lines/i.test(p.text)).map(p => p.id).join(','));
   check(`${tag} No empty "No notes were found" page`, !r.pages.some(p => /No notes were found/i.test(p.text)));
+  /* Strict rule: only visible tabs; no made-up figures for a statement that was not uploaded. */
+  for (const t of e.hiddenTabs || []){
+    check(`${tag} Hidden tab "${t}" is not read`, !r.tabs.includes(t), r.tabs.join(', '));
+    check(`${tag} Hidden tab "${t}" is not in the report`, !r.pages.some(p => p.title === t), [...new Set(r.pages.map(p => p.title))].join(', '));
+    if (excel.ok) check(`${tag} Hidden tab "${t}" is not in the Excel`, !excel.sheets.some(x => x.name === t), excel.sheets.map(x => x.name).join(', '));
+  }
+  if (e.noPL){
+    check(`${tag} No P&L uploaded: P&L tiles show "—", not $0.00`, ['Revenue / Income', 'Gross Profit', 'Net Income'].every(l => { const t = r.kpis.find(k => k.label === l); return t && t.value === null; }),
+      JSON.stringify(r.kpis));
+    check(`${tag} No P&L uploaded: no P&L section in the report`, !r.pages.some(p => /^pl/.test(p.id)), [...new Set(r.pages.map(p => p.id))].join(','));
+  }
   /* Row 16 / 40: notes */
   for (const n of e.notes || []) check(`${tag} Row 16 note "${n}" in the report`, page('notes').some(p => p.text.includes(n)));
   if (w.fixture === 'D') check(`${tag} Row 16 imported notes reach the report`, page('notes').length && !/No notes were found/.test(page('notes')[0].text));
@@ -873,7 +908,9 @@ function checkWorkbook(w, r, excel, pdf, errors){
   /* The Analytical Summary shows the PDF's dashboard pages (the same graphs) as pictures. */
   /* Excel Analytical Summary: one picture per dashboard graph — the graphs only, not whole pages (user, 2026-10-07). */
   const summaryWs = excel.sheets.find(s => s.name === 'Analytical Summary');
-  check(`${tag} Excel graphs are on the right of the summary tables (tables unchanged on the left)`, summaryWs && summaryWs.pictureCol > 1 &&
+  /* Pictures only when there is a graph besides the Balance Sheet Composition (PDF only); the tables are always there. */
+  const excelGraphs = r.graphCount - (r.hasComposition ? 1 : 0);
+  check(`${tag} Excel graphs are on the right of the summary tables (tables unchanged on the left)`, summaryWs && (excelGraphs === 0 || summaryWs.pictureCol > 1) &&
     summaryWs.cells.filter(c => c.col === 'A').length > 5 && String(summaryWs.val('A1')).includes('Analytical Summary'), summaryWs && summaryWs.pictureCol);
   /* The Balance Sheet Composition diagram is in the PDF only (user, 2026-10-08): not on any Excel sheet. */
   const compGraphs = r.hasComposition ? 1 : 0;
@@ -883,7 +920,7 @@ function checkWorkbook(w, r, excel, pdf, errors){
     excel.sheets.every(x => !(x.pictureNames || []).some(n => /Balance Sheet Composition/i.test(n))), excel.sheets.filter(x => x.pictures).map(x => x.name + ':' + x.pictureNames.join('/')).join(' | '));
   check(`${tag} Excel pictures start below the frozen heading rows (never cut by the freeze line)`,
     excel.sheets.filter(x => x.pictures).every(x => x.pictureRow >= 5), excel.sheets.filter(x => x.pictures).map(x => x.name + ':' + x.pictureRow).join(','));
-  check(`${tag} Excel graph pictures are graphs only (no page header / footer)`, summaryWs && summaryWs.pictureNames.length > 0 &&
+  check(`${tag} Excel graph pictures are graphs only (no page header / footer)`, summaryWs && (excelGraphs === 0 || summaryWs.pictureNames.length > 0) &&
     summaryWs.pictureNames.every(n => !/page \d|Analytical Dashboard/i.test(n)), summaryWs && summaryWs.pictureNames.join(' | '));
   /* Row 40: Notes sheet formatted as a table (title, Line Item / Category | Note headings) */
   const notesWs = excel.sheets.find(s => s.name === notesTab);
@@ -917,7 +954,7 @@ function checkWorkbook(w, r, excel, pdf, errors){
     ? [{ name: path.basename(process.env.TRACKER_XLSX), file: fs.readFileSync(process.env.TRACKER_XLSX),
          /* TRACKER_EXPECT=expect.json adds the figures to check: { client, expect: { income, net, roles, periods, … } } */
          ...(process.env.TRACKER_EXPECT ? JSON.parse(fs.readFileSync(process.env.TRACKER_EXPECT, 'utf8')) : { expect: {} }) }]
-    : [row54Workbook(), plutoWorkbook(), plutoClientWorkbook(), uncategorizedWorkbook(), senecaWorkbook(), comparativePctWorkbook(), halfYearCashWorkbook(), threeBalanceSheetsWorkbook(), notesTabWorkbook(), ...fixtureWorkbooks()])
+    : [row54Workbook(), plutoWorkbook(), plutoClientWorkbook(), uncategorizedWorkbook(), senecaWorkbook(), comparativePctWorkbook(), halfYearCashWorkbook(), threeBalanceSheetsWorkbook(), notesTabWorkbook(), hiddenTabsWorkbook(), balanceSheetOnlyWorkbook(), ...fixtureWorkbooks()])
     .filter(w => !process.env.TRACKER_ONLY || w.name.includes(process.env.TRACKER_ONLY));   // e.g. TRACKER_ONLY="Row 54"
   if (!books.length) throw new Error('No workbook matches TRACKER_ONLY=' + process.env.TRACKER_ONLY);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'udmr-'));

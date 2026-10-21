@@ -426,6 +426,21 @@ function kpiTiles(){
   const join = (...xs) => xs.filter(Boolean).join(' · ');
   const arNA = m.ar === null;
   const apNA = m.ap === null;
+  const r = md.roles;
+  const noPL = !['pl', 'plMonthly', 'plComparative', 'plPercent', 'plClass'].some(k => r[k]);
+  const noBS = !r.bs && !r.bsComparative;
+  /* A statement the client did not upload: its tiles say so instead of showing a made-up figure. */
+  if (noPL || noBS){
+    const plMsg = 'No P&L in the workbook', bsMsg = 'No Balance Sheet in the workbook';
+    return [
+      noPL ? { label: 'Revenue / Income', value: null, na: true, sub: plMsg } : { label: 'Revenue / Income', value: m.income, sub: join(varianceChip(m.income, p.income), m.income ? `Expenses ${pctText(ratio(m.expenses, m.income))} of revenue` : '') },
+      noPL ? { label: 'Gross Profit', value: null, na: true, sub: plMsg } : { label: 'Gross Profit', value: m.gross, sub: join(`${pctText(ratio(m.gross, m.income))} gross margin`, varianceChip(m.gross, p.gross)) },
+      noPL ? { label: 'Net Income', value: null, na: true, sub: plMsg } : { label: 'Net Income', value: m.net, sub: join(m.net < 0 ? 'Net loss' : '', `${pctText(ratio(m.net, m.income))} net margin`, varianceChip(m.net, p.net)) },
+      noBS ? { label: 'Cash / Bank', value: null, na: true, sub: bsMsg } : { label: 'Cash / Bank', value: m.bank, sub: m.bank === null ? 'Not shown in Balance Sheet' : join(`${pctText(ratio(m.bank, m.assets))} of total assets`, varianceChip(m.bank, p.bank)) },
+      { label: 'A/R Total', value: m.ar, na: arNA, sub: arNA ? (/cash/i.test(reportBasis()) ? 'Not applicable — cash basis' : noBS ? bsMsg : 'No A/R in Balance Sheet') : join(`${pctText(ratio(m.ar, m.assets))} of total assets`, varianceChip(m.ar, p.ar)) },
+      { label: 'A/P Total', value: m.ap, na: apNA, sub: apNA ? (/cash/i.test(reportBasis()) ? 'Not applicable — cash basis' : noBS ? bsMsg : 'No A/P in Balance Sheet') : join(`${pctText(ratio(m.ap, m.liabilities || m.totalLE))} of total liabilities`, varianceChip(m.ap, p.ap)) }
+    ];
+  }
   return [
     { label: 'Revenue / Income', value: m.income, sub: join(varianceChip(m.income, p.income), m.income ? `Expenses ${pctText(ratio(m.expenses, m.income))} of revenue` : '') },
     { label: 'Gross Profit', value: m.gross, sub: join(`${pctText(ratio(m.gross, m.income))} gross margin`, varianceChip(m.gross, p.gross)) },

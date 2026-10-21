@@ -696,7 +696,7 @@ function downloadReportExcel(){
   ];
   rowsKpi.forEach((row, i) => {
     _wsSetCell(s, 3 + i, 0, row[0], XL_STYLES.plain);
-    if (row[1] === null || row[1] === undefined) _wsSetCell(s, 3 + i, 1, 'Not applicable', { ...XL_STYLES.plain, alignment: { horizontal: 'right' } });
+    if (row[1] === null || row[1] === undefined) _wsSetCell(s, 3 + i, 1, (i < 4 && !md.metrics.hasPL) || (i >= 4 && !md.metrics.hasBS) ? 'Not in workbook' : 'Not applicable', { ...XL_STYLES.plain, alignment: { horizontal: 'right' } });
     else _wsSetCell(s, 3 + i, 1, row[1], XL_STYLES.money);
     if (showPrior && row[2] !== null && row[2] !== undefined){
       _wsSetCell(s, 3 + i, 2, row[2], XL_STYLES.money);

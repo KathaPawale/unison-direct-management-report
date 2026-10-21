@@ -37,7 +37,8 @@ ctx.window = ctx;
 vm.createContext(ctx);
 vm.runInContext(['src/core/util.js', 'src/core/state.js', 'src/core/parser.js', 'src/core/financials.js', 'src/core/recompute.js',
   'src/report/charts.js', 'src/report/report.js'].map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n;\n') +
-  '\n;globalThis.__api = { parseWorkbook, state, resetState, reportBasis, reportTableParts, displayColumns, reportSections, dataChecks };', ctx);
+  '\n;globalThis.__api = { parseWorkbook, state, resetState, reportBasis, reportTableParts, displayColumns, reportSections, dataChecks, visibleSheetNames };', ctx);
+const XLSX = require('xlsx-js-style/dist/xlsx.bundle.js');
 const api = ctx.__api;
 
 /* ---------- deterministic random ---------- */
@@ -284,7 +285,18 @@ function makeCase(id){
       sheets['Balance Sheet'] = bsRows;
     }
   }
-  return { id, style, layout, months, basis, sheets, PT, BT, pl, extra };
+  /* Hidden tabs (user, 2026-10-21: a hidden "Uncategorized" list and an old P&L copy were printed and replaced the real
+   * figures): some workbooks also carry tabs hidden in Excel with wrong figures; only the visible tabs may be read. */
+  const hidden = {};
+  if (xr() < 0.35){
+    const junk = v => [['Old copy'], ['', 'Total'], ['Sales', v], ['Total Income', v], ['Rent', 1], ['Total Expenses', 1], ['Net Income', v - 1]];
+    const opts = [
+      ['Old PL', () => junk(987654.32)], ['P&L (old)', () => junk(123456.78)],
+      ['Uncategorized Exp', () => [['Client'], ['Uncategorized Expenses'], [], ['Transaction date', 'Type', 'Name', 'Description', 'Amount'], ['01/05/2026', 'Expense', 'Vendor', 'Card', 250]]],
+      ['BS old', () => [['Old'], ['Balance Sheet'], ['', 'Total'], ['Checking', 5], ['Total Assets', 5], ['Total Liabilities', 0], ['Retained Earnings', 5], ['Total Equity', 5], ['Total Liabilities and Equity', 5]]]];
+    for (const [nm, mk] of opts) if (xr() < 0.5) hidden[nm] = { rows: mk(), level: xr() < 0.5 ? 1 : 2 };
+  }
+  return { id, style, layout, months, basis, sheets, PT, BT, pl, extra, hidden };
 }
 
 /* ---------- checks ---------- */
@@ -299,6 +311,7 @@ for (let i = 1; i <= COUNT; i++){
   if (process.env.WRITE) written.push({ id: i, style: tc.style, layout: tc.layout, sheets: tc.sheets });
   const tag = `#${i} ${tc.style}/${tc.layout}${tc.layout === 'monthly' ? tc.months : ''}/${tc.basis || 'no-basis'}`;
   stats[tc.style + '/' + tc.layout] = (stats[tc.style + '/' + tc.layout] || 0) + 1;
+  if (Object.keys(tc.hidden).length) stats['+hidden tabs'] = (stats['+hidden tabs'] || 0) + 1;
   if (tc.extra && tc.extra.length){ stats['+companion P&L tabs'] = (stats['+companion P&L tabs'] || 0) + 1; if (tc.extra.some(x => x.kind === 'full')) stats['+full-period P&L tab'] = (stats['+full-period P&L tab'] || 0) + 1; if (/^1\. /.test(Object.keys(tc.sheets)[0])) stats['+numbered tab names'] = (stats['+numbered tab names'] || 0) + 1; }
   const F = [];
   const near = (label, got, exp, tol = 0.011) => {
@@ -307,7 +320,21 @@ for (let i = 1; i <= COUNT; i++){
   };
   let md;
   try {
-    api.resetState(); api.state.sheets = JSON.parse(JSON.stringify(tc.sheets));
+    api.resetState();
+    if (Object.keys(tc.hidden).length){
+      /* Written to a real .xlsx with the hidden tabs and read back the way an upload is (visible tabs only). */
+      const wb = XLSX.utils.book_new();
+      for (const [n, rows] of Object.entries(tc.sheets)) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), n);
+      for (const [n, { rows }] of Object.entries(tc.hidden)) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), n);
+      wb.Workbook = { Sheets: wb.SheetNames.map(n => ({ name: n, Hidden: tc.hidden[n] ? tc.hidden[n].level : 0 })) };
+      const back = XLSX.read(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }), { type: 'buffer' });
+      const vis = api.visibleSheetNames(back);
+      for (const n of Object.keys(tc.hidden)) if (vis.includes(n)) F.push(`hidden tab "${n}" read`);
+      if (vis.join('|') !== Object.keys(tc.sheets).join('|')) F.push(`visible tabs ${vis.join(', ')} ≠ ${Object.keys(tc.sheets).join(', ')}`);
+      const sheets = {};
+      for (const n of vis) sheets[n] = XLSX.utils.sheet_to_json(back.Sheets[n], { header: 1, raw: true, defval: '' });
+      api.state.sheets = sheets;
+    } else api.state.sheets = JSON.parse(JSON.stringify(tc.sheets));
     md = api.parseWorkbook(api.state.sheets); api.state.model = md;
   } catch (e){ F.push('parse error: ' + e.message); }
   if (md){
