@@ -85,8 +85,8 @@ for (const k of ['A', 'F']){
   const md = load(JSON.parse(JSON.stringify(fx[k])));
   const eq = md.bsComposition.liabEquity.find(x => x.label === 'Equity');
   c(`Hinton ${k} Bug 3 equity stays negative (${md.metrics.equity}) and its share is < 0`, md.metrics.equity < 0 && eq && eq.pct < 0);
-  c(`Hinton ${k} Bug 5 cash basis: no A/R figure, no A/R aging, no A/R section`,
-    md.suppressAR === true && md.metrics.ar === null && md.arAging === null && !api.reportSections().some(s => s.id === 'ar'));
+  c(`Hinton ${k} Bug 5 cash basis: no A/R figure or A/R aging chart; the client's A/R sheet is kept`,
+    md.suppressAR === true && md.metrics.ar === null && md.arAging === null && (!md.roles.ar || api.reportSections().some(s => s.id === 'ar')));
 }
 
 console.log('\nPart 2 — behaviour on synthetic workbooks');
@@ -112,8 +112,8 @@ const head = t => [['Pluto Test Co'], [t], ['As of December 31, 2025'], []];
       ['Liabilities and Equity'], ['Equity'], ['Retained Earnings', 1318.32], ['Total Equity', 1318.32], ['Total Liabilities and Equity', 1318.32]],
     'A/R Aging Summary': [...head('A/R Aging Summary'), ['', 'Current', '1 - 30', 'Total'], ['Customer A', 300, 18.32, 318.32], ['TOTAL', 300, 18.32, 318.32], [], ['Cash Basis Monday, February 3, 2026']]
   });
-  c('Bug 5 cash basis text on any sheet → suppressAR, A/R null, no A/R aging, no A/R section',
-    md.suppressAR === true && md.metrics.ar === null && md.arAging === null && !api.reportSections().some(s => s.id === 'ar'));
+  c('Bug 5 cash basis text on any sheet → suppressAR, A/R null, no A/R aging; the uploaded A/R sheet is kept',
+    md.suppressAR === true && md.metrics.ar === null && md.arAging === null && api.reportSections().some(s => s.id === 'ar'));
 }
 /* Bug 5 control: an accrual workbook keeps its A/R. */
 {

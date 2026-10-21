@@ -728,8 +728,10 @@ function reportStatementTitles(md){
 
 function _roleSection(md, role, title){
   if (!md.roles[role] || emptyStatementSheet(md, role)) return null;
-  if ((role === 'ar' && md.suppressAR) || (role === 'ap' && md.suppressAP)) return null;
-  const ag = role === 'ar' ? md.arAging : role === 'ap' ? md.apAging : null;
+  /* Strict rule (user, 2026-10-21): the client's uploaded aging sheet is always in the report, also for a cash-basis client
+   * (replaces tracker row 27's "no A/R anywhere"); only the dashboard leaves the A/R figure out ("Not applicable — cash
+   * basis"). The sheet is printed as uploaded. */
+  const ag = role === 'ar' ? (md.suppressAR ? null : md.arAging) : role === 'ap' ? (md.suppressAP ? null : md.apAging) : null;
   title = reportStatementTitles(md)[role] || title;
   return { id: role, title, sheet: md.roles[role], ...(role === 'ar' || role === 'ap' ? { aging: ag && ag.fromDetail ? ag : null } : {}) };
 }
