@@ -656,25 +656,30 @@ function analyzeFinancials(model, sheets){
   const apAging = suppressAP ? null : agingSummary(sheets, S('ap'));
 
   const pick = (a, b) => (a !== null && a !== undefined ? a : b);
+  /* Strict rule (user, 2026-10-21): figures come only from the sheets the client uploaded. With no P&L in the workbook the
+   * P&L figures are "not in the workbook" (null → "—"), never a made-up $0.00; likewise the Balance Sheet totals. */
+  const hasPL = !!plTotals, hasBS = !!bs;
+  const plz = v => hasPL ? (v ?? 0) : null, bsz = v => hasBS ? (v ?? 0) : null;
   const metrics = {
-    income: plCur.income ?? 0,
+    income: plz(plCur.income),
     cogs: plCur.cogs ?? null,
-    gross: pick(plCur.gross, plCur.income) ?? 0,
-    expenses: plCur.expenses ?? 0,
+    gross: plz(pick(plCur.gross, plCur.income)),
+    expenses: plz(plCur.expenses),
     otherIncome: plCur.otherIncome ?? null,
     otherExpenses: plCur.otherExpenses ?? null,
-    net: plCur.net ?? 0,
+    net: plz(plCur.net),
     bank: bsCur.bank ?? null,
     ar: suppressAR ? null : pick(bsCur.ar, arAging ? arAging.total : null),
     ap: pick(bsCur.ap, (!cashBasis && apAging) ? apAging.total : null),
-    assets: bsCur.assets ?? 0,
+    assets: bsz(bsCur.assets),
     currentAssets: bsCur.currentAssets ?? null,
     fixedAssets: bsCur.fixedAssets ?? null,
-    liabilities: bsCur.liabilities ?? 0,
+    liabilities: bsz(bsCur.liabilities),
     currentLiabilities: bsCur.currentLiabilities ?? null,
     longTermLiabilities: bsCur.longTermLiabilities ?? null,
-    equity: bsCur.equity ?? 0,
-    totalLE: bsCur.totalLE ?? null
+    equity: bsz(bsCur.equity),
+    totalLE: bsCur.totalLE ?? null,
+    hasPL, hasBS
   };
   const prior = {
     income: plPri ? plPri.income : null,
