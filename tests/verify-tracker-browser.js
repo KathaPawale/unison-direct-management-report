@@ -767,8 +767,9 @@ function checkWorkbook(w, r, excel, pdf, errors){
     check(`${tag} Row 36 negative-equity alert uses the composition share (${r.equityPctText})`, r.attention.includes('which is ' + r.equityPctText + ' of total'), (r.attention.match(/Equity is negative[^\n]*/) || [''])[0]);
 
   /* Row 13, 27: aging + cash basis */
-  if (e.noAR) check(`${tag} Row 27 cash basis: no A/R anywhere in the report`, r.suppressAR && !r.pages.some(p => p.id === 'ar') && !r.pages.some(p => /5,205\.70/.test(p.text)));
-  if (r.roles.ar && !r.suppressAR) check(`${tag} Row 13 A/R aging in PDF and Excel`, r.pages.some(p => p.id === 'ar') && excel.sheets.some(s => s.name === tabOf(r.roles.ar)));
+  /* Cash basis (strict rule, user 2026-10-21): no A/R figure on the dashboard, but the client's A/R aging sheet is kept. */
+  if (e.noAR) check(`${tag} Row 27 cash basis: no A/R figure on the dashboard`, r.suppressAR && !r.pages.some(p => p.id === 'dash' && /5,205\.70/.test(p.text)));
+  if (r.roles.ar) check(`${tag} Row 13 A/R aging in PDF and Excel`, r.pages.some(p => p.id === 'ar') && excel.sheets.some(s => s.name === tabOf(r.roles.ar)));
   if (r.roles.ap && !r.pages.every(p => p.id !== 'ap')) check(`${tag} Row 13 A/P aging in Excel`, excel.sheets.some(s => s.name === tabOf(r.roles.ap)));
 
   /* Notes (user, 2026-10-08): one Notes section, only when the workbook has notes (or notes were entered) — never an
@@ -791,10 +792,8 @@ function checkWorkbook(w, r, excel, pdf, errors){
     check(`${tag} Strict: each section heading is the client's tab name`, !renamed.length, renamed.map(x => x.sheet + ' → ' + x.title).join(', '));
     const nums = toc.map(t => +((t.text.match(/^(\d+)\./) || [])[1])).filter(Boolean);
     check(`${tag} Strict: section numbers run 1, 2, 3 … without gaps or repeats`, nums.length > 0 && nums.every((v, k) => v === k + 1), nums.join(','));
-    /* Documented exception: tracker row 27 — a cash-basis client's A/R aging is left out ("no A/R anywhere in the report"). */
-    const row27 = t => r.suppressAR && t === r.roles.ar;
-    const missing = r.withFigures.filter(t => !r.sections.some(x => x.sheet === t) && !r.listingTabs.includes(t) && !r.ledgerTabs.includes(t) && !row27(t));
-    check(`${tag} Strict: every client sheet with figures is in the report (transaction lists in Excel; cash-basis A/R per row 27)`, !missing.length, missing.join(', '));
+    const missing = r.withFigures.filter(t => !r.sections.some(x => x.sheet === t) && !r.listingTabs.includes(t) && !r.ledgerTabs.includes(t));
+    check(`${tag} Strict: every client sheet with figures is in the report (transaction lists in Excel)`, !missing.length, missing.join(', '));
     if (excel.ok){
       const own = new Set(['Cover', 'Analytical Summary', 'Disclaimer', 'Notes']);
       const safe = t => t.replace(/[\\\/?*\[\]:]/g, '').slice(0, 31);

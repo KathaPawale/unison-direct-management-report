@@ -749,8 +749,8 @@ function downloadReportExcel(){
     const title = titles[role] || stdTitle;
     const name = md.roles[role];
     if (!name || emptyStatementSheet(md, role)) continue;
-    if ((role === 'ar' && md.suppressAR) || (role === 'ap' && md.suppressAP)) continue;
-    const ag = role === 'ar' ? md.arAging : role === 'ap' ? md.apAging : null;
+    /* The client's aging sheet is kept for a cash-basis client too (strict rule), printed as uploaded. */
+    const ag = role === 'ar' ? (md.suppressAR ? null : md.arAging) : role === 'ap' ? (md.suppressAP ? null : md.apAging) : null;
     if (ag && ag.fromDetail){
       const ws = {};
       [state.client, title, md.bsAsOf || state.period].forEach((t, r) => {
