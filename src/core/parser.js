@@ -635,6 +635,14 @@ function statementFingerprint(keys){
 /* A sheet whose cells name at least three of the workbook's other sheets ("Profit and Loss(Comparative)", "AP Aging",
  * "Uncategorized Expenses" for the "Uncategorized Exp" tab): the workbook's index / summary sheet. */
 function isIndexLikeSheet(name, rows, allNames){
+  /* An index holds sheet names and serial numbers (1, 2, 3 …), never amounts. A statement whose lines happen to name other
+   * tabs ("Profit and Loss" title next to "Profit and Loss(Monthly)", an "Uncategorized Income" line next to an
+   * "Uncategorized Income" tab) is the statement, not the index (user, 2026-10-21). */
+  let amounts = 0;
+  for (const row of rows || []) for (const v of row || []){
+    const a = typeof v === 'number' ? v : parseAmount(v);
+    if (a !== null && a !== undefined && !(Number.isInteger(a) && a >= 0 && a <= 999) && ++amounts >= 3) return false;
+  }
   const others = (allNames || []).filter(n => n !== name).map(n => normLabel(n)).filter(Boolean);
   const hits = new Set();
   for (const row of rows || []) for (const v of row || []){
